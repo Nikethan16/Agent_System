@@ -1,0 +1,26 @@
+# ============================================================================
+#  MCP SERVERS  —  connect external tools; they become agent tools automatically.
+# ============================================================================
+#  Each server is launched (stdio) and its tools are registered as
+#  mcp__<server>__<tool>, granted ONLY to the listed agents (least privilege),
+#  and labelled with the given risk (drives the security gate). Add a server =
+#  a YAML entry; no code change. Remove the example block to disable it.
+#
+#  `command: python` is resolved to the current interpreter. For real connectors
+#  you'd typically use an npx/uvx command, e.g.:
+#    - name: github
+#      command: npx
+#      args: ["-y", "@modelcontextprotocol/server-github"]
+#      risk: write
+#      requires_human: false
+#      agents: [coder, research]
+# ============================================================================
+
+servers:
+  - name: example                       # bundled demo server (echo, add)
+    command: python
+    args: ["tools/mcp_example_server.py"]
+    risk: safe
+    requires_human: false
+    agents: []                          # granted to NO agent by default (demo only;
+                                        # add real agents here when you wire a real server)
