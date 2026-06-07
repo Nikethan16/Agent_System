@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AGENT // CORE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b0c0e; --panel:#121417; --panel2:#171a1e; --line:#24282e;
+    --ink:#e9e6df; --muted:#878c94; --faint:#5a5f67;
+    --amber:#f5b841; --live:#57d9a3; --err:#ff7a7a;
+    --t1:#6ea8fe; --t2:#f5b841; --t3:#ff7a7a;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+    --disp:'Syne',sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--ink); font-family:var(--mono);
+    font-size:13.5px; line-height:1.5; overflow:hidden;
+    background-image:
+      radial-gradient(900px 500px at 88% -8%, rgba(245,184,65,.10), transparent 60%),
+      radial-gradient(700px 500px at -5% 110%, rgba(87,217,163,.07), transparent 60%),
+      linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+    background-size:auto,auto,26px 26px,26px 26px;
+  }
+  .app{display:grid;grid-template-rows:auto 1fr;height:100vh}
+
+  /* ---------- top bar ---------- */
+  header{
+    display:flex;align-items:center;gap:18px;
+    padding:14px 22px;border-bottom:1px solid var(--line);
+    background:rgba(11,12,14,.7);backdrop-filter:blur(6px);
+  }
+  .brand{font-family:var(--disp);font-weight:800;font-size:19px;letter-spacing:1px}
+  .brand b{color:var(--amber)}
+  .slash{color:var(--faint)}
+  .status{display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:1.5px;
+    padding:4px 10px;border:1px solid var(--line);border-radius:100px;color:var(--muted)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--live);box-shadow:0 0 0 0 var(--live);
+    animation:pulse 1.8s infinite}
+  .status.demo .dot{background:var(--amber)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(87,217,163,.5)}70%{box-shadow:0 0 0 7px rgba(87,217,163,0)}100%{box-shadow:0 0 0 0 rgba(87,217,163,0)}}
+  .spacer{flex:1}
+  .cost-meter{text-align:right;font-size:11px;color:var(--muted);letter-spacing:.5px}
+  .cost-meter b{display:block;font-size:21px;color:var(--ink);font-weight:600;letter-spacing:0}
+  .cost-meter b span{color:var(--amber)}
+
+  /* ---------- main grid ---------- */
+  main{display:grid;grid-template-columns:320px 1fr;min-height:0}
+  .rail{border-right:1px solid var(--line);padding:20px;overflow-y:auto;background:rgba(18,20,23,.45)}
+  .stage{display:grid;grid-template-rows:auto 1fr;min-height:0}
+
+  .sec-label{font-size:10px;letter-spacing:2.5px;color:var(--faint);margin:0 0 12px;font-weight:600}
+  .rail .block + .block{margin-top:26px}
+
+  /* tier cards */
+  .tier{border:1px solid var(--line);border-radius:10px;padding:13px;margin-bottom:11px;
+    background:var(--panel);position:relative;transition:.25s}
+  .tier.active{border-color:currentColor;box-shadow:0 0 0 1px currentColor, 0 0 24px -10px currentColor}
+  .tier .head{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .chip{font-size:10px;font-weight:600;letter-spacing:1px;padding:3px 8px;border-radius:5px;
+    background:color-mix(in srgb,currentColor 16%,transparent);color:currentColor;border:1px solid color-mix(in srgb,currentColor 35%,transparent)}
+  .t1{color:var(--t1)} .t2{color:var(--t2)} .t3{color:var(--t3)}
+  .tier .lbl{font-size:11px;color:var(--muted)}
+  select{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    border-radius:7px;padding:8px 9px;font-family:var(--mono);font-size:12px;cursor:pointer;
+    appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+    background-position:calc(100% - 16px) 51%,calc(100% - 11px) 51%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+  select:focus{outline:none;border-color:var(--amber)}
+
+  .limit-row{display:flex;gap:10px}
+  .field{flex:1}
+  .field label{display:block;font-size:10px;letter-spacing:1.5px;color:var(--faint);margin-bottom:6px}
+  .field input{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    border-radius:7px;padding:9px;font-family:var(--mono);font-size:13px}
+  .field input:focus{outline:none;border-color:var(--amber)}
+
+  .note{font-size:10.5px;color:var(--faint);line-height:1.55;margin-top:14px;border-left:2px solid var(--line);padding-left:10px}
+
+  /* task bar */
+  .taskbar{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:flex-end}
+  .taskbar .field{flex:1}
+  textarea{width:100%;resize:none;height:50px;background:var(--panel2);color:var(--ink);
+    border:1px solid var(--line);border-radius:9px;padding:11px 13px;font-family:var(--mono);font-size:13.5px}
+  textarea:focus{outline:none;border-color:var(--amber)}
+  .run{font-family:var(--disp);font-weight:700;font-size:14px;letter-spacing:1px;
+    background:var(--amber);color:#1a1408;border:none;border-radius:9px;padding:14px 26px;cursor:pointer;
+    transition:.18s;white-space:nowrap}
+  .run:hover{transform:translateY(-1px);box-shadow:0 8px 24px -8px var(--amber)}
+  .run:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
+
+  /* feed */
+  .feed{overflow-y:auto;padding:22px 24px 80px}
+  .feed-empty{color:var(--faint);text-align:center;margin-top:14vh;font-size:12.5px;letter-spacing:.5px}
+  .feed-empty .big{font-family:var(--disp);font-size:15px;color:var(--muted);letter-spacing:1px;display:block;margin-bottom:8px}
+
+  .ev{border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-bottom:11px;
+    background:var(--panel);animation:rise .35s ease both}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .ev .top{display:flex;align-items:center;gap:9px;font-size:10px;letter-spacing:1.5px;color:var(--faint);margin-bottom:8px}
+  .ev .tag{font-weight:600;padding:2px 7px;border-radius:4px;font-size:9.5px}
+  .ev .body{font-size:13px;color:var(--ink)}
+  .ev .sub{color:var(--muted);font-size:12px;margin-top:5px}
+
+  .tag.route{background:rgba(110,168,254,.15);color:var(--t1)}
+  .tag.plan{background:rgba(245,184,65,.15);color:var(--amber)}
+  .tag.assign{background:rgba(87,217,163,.15);color:var(--live)}
+  .tag.thought{background:rgba(255,255,255,.07);color:var(--muted)}
+  .tag.tool{background:rgba(245,184,65,.12);color:var(--amber)}
+  .tag.final{background:var(--live);color:#06140e}
+  .tag.error,.tag.limit{background:rgba(255,122,122,.18);color:var(--err)}
+
+  .model-pill{font-size:10.5px;color:var(--muted);border:1px solid var(--line);padding:2px 7px;border-radius:5px}
+  .tool-line{font-family:var(--mono);font-size:12px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:6px;padding:8px 10px;margin-top:4px;color:var(--amber);overflow-x:auto;white-space:pre}
+  .tool-line .fn{color:var(--ink)}
+  .sub-list{margin:6px 0 0;padding-left:0;list-style:none}
+  .sub-list li{padding:6px 0 6px 18px;position:relative;color:var(--muted);font-size:12.5px;border-top:1px dashed var(--line)}
+  .sub-list li:before{content:'▸';position:absolute;left:2px;color:var(--amber)}
+  .final-card{border-color:var(--live);box-shadow:0 0 40px -18px var(--live)}
+  .final-card .body{white-space:pre-wrap}
+  .ev .cost{float:right;color:var(--live)}
+  .agent-name{color:var(--ink);font-weight:600;letter-spacing:1px}
+  ::-webkit-scrollbar{width:9px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:9px}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">AGENT<span class="slash">//</span><b>CORE</b></div>
+    <div class="status" id="status"><span class="dot"></span><span id="status-text">CONNECTING</span></div>
+    <div class="spacer"></div>
+    <div class="cost-meter">RUN COST<b>$<span id="cost">0.0000</span></b></div>
+  </header>
+
+  <main>
+    <!-- ============ CONFIG RAIL ============ -->
+    <aside class="rail">
+      <div class="block">
+        <p class="sec-label">MODEL ROUTING</p>
+        <div id="tiers"></div>
+      </div>
+
+      <div class="block">
+        <p class="sec-label">RUN LIMITS</p>
+        <div class="limit-row">
+          <div class="field">
+            <label>MAX COST ($)</label>
+            <input id="max-usd" type="number" step="0.05" value="0.50">
+          </div>
+          <div class="field">
+            <label>MAX LOOPS</label>
+            <input id="max-iter" type="number" value="8">
+          </div>
+        </div>
+        <p class="note">Hard caps stop runaway agents. A run halts the moment it
+          hits either limit — no surprise bills.</p>
+      </div>
+
+      <div class="block">
+        <p class="sec-label">HOW SWAPPING WORKS</p>
+        <p class="note">Pick any model per tier above. The whole pipeline —
+          router, workers, synthesizer — uses whatever you choose. Swapping a
+          model never touches code; it's one selection (or one line in
+          <span style="color:var(--amber)">models.yaml</span>).</p>
+      </div>
+    </aside>
+
+    <!-- ============ STAGE ============ -->
+    <section class="stage">
+      <div class="taskbar">
+        <div class="field">
+          <label style="font-size:10px;letter-spacing:1.5px;color:var(--faint);display:block;margin-bottom:6px">TASK</label>
+          <textarea id="task" placeholder="Describe a task. Hard tasks get decomposed across subagents automatically.">Build a Python module with add/subtract/multiply/divide functions, write pytest tests for all four, and run them to confirm they pass.</textarea>
+        </div>
+        <button class="run" id="run">RUN ▸</button>
+      </div>
+
+      <div class="feed" id="feed">
+        <div class="feed-empty" id="empty">
+          <span class="big">SYSTEM IDLE</span>
+          Submit a task to watch the router classify it and the agents work.
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+/* ============================================================
+   The UI talks to the FastAPI backend when it's reachable.
+   If not (e.g. opened as a standalone file), it drops into
+   DEMO MODE and simulates a full run so you can see the flow.
+   ============================================================ */
+const API = location.origin.startsWith('http') ? location.origin : '';
+let DEMO = false;
+let CATALOG = [];
+let TIERS = {};
+
+const DEMO_CATALOG = [
+  {id:'claude-haiku-4-5-20251001',provider:'anthropic'},
+  {id:'claude-sonnet-4-6',provider:'anthropic'},
+  {id:'claude-opus-4-7',provider:'anthropic'},
+  {id:'gpt-5.5',provider:'openai'},
+  {id:'gpt-4o-mini',provider:'openai'},
+  {id:'gemini/gemini-3.1-pro',provider:'google'},
+  {id:'deepseek/deepseek-chat',provider:'deepseek'},
+  {id:'ollama/qwen2.5-coder:32b',provider:'local'},
+];
+const DEMO_TIERS = {
+  tier1:{label:'Fast & cheap',model:'claude-haiku-4-5-20251001'},
+  tier2:{label:'Balanced',model:'claude-sonnet-4-6'},
+  tier3:{label:'Frontier',model:'claude-opus-4-7'},
+};
+
+const $ = s => document.querySelector(s);
+const feed = $('#feed'), empty = $('#empty');
+
+async function boot(){
+  try{
+    const r = await fetch(API + '/api/models', {signal:AbortSignal.timeout(1500)});
+    if(!r.ok) throw 0;
+    const d = await r.json();
+    TIERS = d.tiers; CATALOG = d.catalog;
+    setStatus(false);
+  }catch(e){
+    DEMO = true; TIERS = structuredClone(DEMO_TIERS); CATALOG = DEMO_CATALOG;
+    setStatus(true);
+  }
+  renderTiers();
+}
+
+function setStatus(demo){
+  const s = $('#status'), t = $('#status-text');
+  if(demo){ s.classList.add('demo'); t.textContent = 'DEMO MODE'; }
+  else { t.textContent = 'BACKEND LIVE'; }
+}
+
+function renderTiers(){
+  const order=['tier1','tier2','tier3'], cls={tier1:'t1',tier2:'t2',tier3:'t3'};
+  $('#tiers').innerHTML = order.map(k=>{
+    const t = TIERS[k]; if(!t) return '';
+    const opts = CATALOG.map(c=>`<option value="${c.id}" ${c.id===t.model?'selected':''}>${c.id}</option>`).join('');
+    return `<div class="tier ${cls[k]}" id="card-${k}">
+      <div class="head"><span class="chip">${k.toUpperCase()}</span><span class="lbl">${t.label}</span></div>
+      <select data-tier="${k}">${opts}</select>
+    </div>`;
+  }).join('');
+  document.querySelectorAll('select[data-tier]').forEach(sel=>{
+    sel.addEventListener('change', async e=>{
+      const tier=e.target.dataset.tier, model=e.target.value;
+      TIERS[tier].model = model;
+      if(!DEMO){
+        try{ await fetch(API+'/api/models/tier',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({tier,model})}); }catch(_){}
+      }
+      flash(tier);
+    });
+  });
+}
+function flash(tier){const c=$('#card-'+tier);c.classList.add('active');setTimeout(()=>c.classList.remove('active'),700);}
+
+/* ---------- event rendering ---------- */
+function addEvent(ev){
+  empty.style.display='none';
+  const el=document.createElement('div'); el.className='ev';
+  const A = ev.agent ? `<span class="agent-name">${ev.agent}</span>` : '';
+  if(ev.type==='route'){
+    el.innerHTML=`<div class="top"><span class="tag route">ROUTED</span> TIER ${ev.tier} · ${ev.task_type?ev.task_type.toUpperCase():''}</div>
+      <div class="body">${ev.reason||'classified'} <span class="model-pill">${ev.routed_model||''}</span></div>`;
+    flash('tier'+ev.tier);
+  } else if(ev.type==='plan'){
+    el.innerHTML=`<div class="top"><span class="tag plan">PLAN</span> DECOMPOSED INTO ${ev.subtasks.length} SUBTASKS</div>
+      <ul class="sub-list">${ev.subtasks.map(s=>`<li>${esc(s)}</li>`).join('')}</ul>`;
+  } else if(ev.type==='assign'){
+    el.innerHTML=`<div class="top"><span class="tag assign">ASSIGN</span> ${A}</div>
+      <div class="body">${ev.subtask?esc(ev.subtask):'handling task'} <span class="model-pill">${ev.model||''}</span></div>`;
+  } else if(ev.type==='thought'){
+    el.innerHTML=`<div class="top"><span class="tag thought">THINKING</span> ${A}</div>
+      <div class="body sub">${esc(ev.text).slice(0,400)}</div>`;
+  } else if(ev.type==='tool'){
+    const args = ev.args?Object.entries(ev.args).map(([k,v])=>`${k}=${JSON.stringify(v).slice(0,60)}`).join(', '):'';
+    el.innerHTML=`<div class="top"><span class="tag tool">TOOL</span> ${A}</div>
+      <div class="tool-line"><span class="fn">${ev.name}</span>(${esc(args)})</div>`;
+  } else if(ev.type==='final'){
+    el.className='ev final-card';
+    el.innerHTML=`<div class="top"><span class="tag final">DELIVERED</span> RUN COMPLETE <span class="cost">$${(ev.cost||0).toFixed(4)}</span></div>
+      <div class="body">${esc(ev.text||'')}</div>`;
+  } else if(ev.type==='limit'||ev.type==='error'){
+    el.innerHTML=`<div class="top"><span class="tag ${ev.type}">${ev.type.toUpperCase()}</span> ${A}</div>
+      <div class="body">${esc(ev.text||'')}</div>`;
+  } else { return; }
+  feed.appendChild(el); feed.scrollTop=feed.scrollHeight;
+  if(ev.cost!==undefined) $('#cost').textContent=(ev.cost).toFixed(4);
+}
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+/* ---------- run ---------- */
+$('#run').addEventListener('click', run);
+async function run(){
+  const task=$('#task').value.trim(); if(!task) return;
+  const btn=$('#run'); btn.disabled=true; btn.textContent='RUNNING…';
+  feed.innerHTML=''; feed.appendChild(empty); $('#cost').textContent='0.0000';
+  const budget={max_usd:parseFloat($('#max-usd').value)||0.5, max_iterations:parseInt($('#max-iter').value)||8};
+  try{
+    if(DEMO) await runDemo(task);
+    else await runLive(task, budget);
+  }finally{ btn.disabled=false; btn.textContent='RUN ▸'; }
+}
+
+async function runLive(task, budget){
+  const res=await fetch(API+'/api/run',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({task,...budget})});
+  const reader=res.body.getReader(), dec=new TextDecoder(); let buf='';
+  while(true){
+    const {done,value}=await reader.read(); if(done) break;
+    buf+=dec.decode(value,{stream:true});
+    const parts=buf.split('\n\n'); buf=parts.pop();
+    for(const p of parts){
+      const line=p.split('\n').find(l=>l.startsWith('data:'));
+      if(line){ try{ addEvent(JSON.parse(line.slice(5).trim())); }catch(_){} }
+    }
+  }
+}
+
+/* scripted run for standalone preview */
+async function runDemo(task){
+  const wait=ms=>new Promise(r=>setTimeout(r,ms));
+  let cost=0; const tick=c=>{cost+=c;return +cost.toFixed(4)};
+  const t3=TIERS.tier3.model, t2=TIERS.tier2.model;
+  addEvent({type:'route',tier:3,task_type:'coding',reason:'multi-file code + tests',routed_model:t3}); await wait(650);
+  addEvent({type:'plan',subtasks:[
+    'Create calculator.py with add, subtract, multiply, divide (raise on /0)',
+    'Create test_calculator.py with pytest tests for all four functions',
+    'Run pytest and confirm all tests pass']}); await wait(750);
+  const subs=[
+    {a:'worker-1',th:'Writing the four arithmetic functions; divide raises ValueError on zero.',tool:{name:'write_file',args:{path:'calculator.py'}}},
+    {a:'worker-2',th:'Adding pytest cases including the divide-by-zero edge case.',tool:{name:'write_file',args:{path:'test_calculator.py'}}},
+    {a:'worker-3',th:'Executing the test suite.',tool:{name:'run_bash',args:{command:'pytest -q'}}},
+  ];
+  for(const s of subs){
+    addEvent({type:'assign',agent:s.a,model:t2,subtask:s.th.slice(0,52)+'…'}); await wait(500);
+    addEvent({type:'thought',agent:s.a,text:s.th}); await wait(550);
+    addEvent({type:'tool',agent:s.a,name:s.tool.name,args:s.tool.args}); tick(0.004); $('#cost').textContent=cost.toFixed(4); await wait(650);
+  }
+  addEvent({type:'final',cost:tick(0.011),
+    text:'Built calculator.py (4 functions, divide guards against zero) and test_calculator.py. '+
+         'Ran pytest: 4 passed in 0.03s. All tests green.'});
+}
+
+boot();
+</script>
+</body>
+</html>
