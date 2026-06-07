@@ -14,8 +14,14 @@ import time
 # Allow running as `python scripts/smoke_test.py` from the project root.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Isolate test data so we never touch the user's real ./data.
+# Isolate test data so we never touch the user's real ./data. Start FRESH each run
+# (only wiping the dir WE chose, never a user-supplied DATA_DIR) so persisted rows
+# — e.g. approved procedural rules — can't leak between runs and break assertions.
+_smoke_owned = "DATA_DIR" not in os.environ
 os.environ.setdefault("DATA_DIR", os.path.join(os.path.dirname(__file__), "..", "data", "_smoke"))
+if _smoke_owned:
+    import shutil
+    shutil.rmtree(os.environ["DATA_DIR"], ignore_errors=True)
 os.environ.setdefault("AUDIT_LOG", os.path.join(os.environ["DATA_DIR"], "audit.log"))
 # The API now requires a token for non-loopback callers (TestClient's host is
 # "testclient", not 127.0.0.1), so configure one and send it on every request below.
