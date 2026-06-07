@@ -1,0 +1,59 @@
+# ============================================================================
+#  EVAL CASES — the fixed task set used to verify a model swap didn't regress.
+# ============================================================================
+#  Add a case by appending to `cases:` — no code change needed. Each case runs
+#  through the real pipeline; it PASSES only if EVERY grader passes (concrete
+#  yes/no, never a 1-10 score).
+#
+#  Grader types (see evals/graders.py):
+#    contains      {any: [...]} and/or {all: [...]}   substrings in the answer
+#    not_contains  {any: [...]} / {all: [...]}         must be ABSENT
+#    regex         {pattern: "...", ignorecase: true}
+#    file_exists   {path: "x.py", non_empty: true}     a file in the workspace
+#    file_contains {path: "x.py", all: [...]}          file holds these strings
+#    bash_check    {command: "...", expect_exit: 0}    runs it; checks exit code
+#    llm_judge     {criteria: "..."}                   strict pass/fail by a model
+#  expect_tier (optional, per case) also asserts the router chose that tier,
+#  so a swap that changes routing behavior is caught too.
+# ============================================================================
+
+suite:
+  max_usd: 2.0          # whole-suite spend ceiling (hard safety brake)
+  pass_threshold: 1.0   # fraction of cases that must pass for exit code 0
+
+cases:
+  - id: summarize-basic
+    task: >
+      Summarize the following in one short sentence:
+      "The mitochondria is the powerhouse of the cell; it produces most of the
+      cell's supply of ATP, the molecule used as a source of chemical energy."
+    budget: { max_usd: 0.05, max_iterations: 4 }
+    expect_tier: 1
+    graders:
+      - { type: contains, any: ["cell", "energy", "atp", "mitochondri", "power"] }
+      - { type: not_contains, all: ["error", "i cannot", "as an ai"] }
+
+  - id: write-and-run-script
+    task: >
+      Create a file named add.py in the workspace. It must define a function
+      add(a, b) that returns a + b, and include a self-check block that runs
+      assert add(2, 3) == 5 when the file is executed. Make sure running
+      `python add.py` exits with code 0 and prints nothing on failure.
+    budget: { max_usd: 0.50, max_iterations: 8 }
+    expect_tier: 2
+    graders:
+      - { type: file_exists, path: add.py }
+      - { type: file_contains, path: add.py, all: ["def add"] }
+      - { type: bash_check, command: "python add.py", expect_exit: 0 }
+
+  - id: research-prose
+    task: >
+      In two or three sentences, explain why an AI system might route incoming
+      tasks into difficulty tiers and use cheaper models for easy tasks.
+    budget: { max_usd: 0.20, max_iterations: 6 }
+    graders:
+      - type: llm_judge
+        criteria: >
+          The answer must explain a cost-versus-quality (or cost-versus-capability)
+          trade-off — i.e. cheaper/smaller models for easy work and stronger/more
+          expensive models for hard work — and read as coherent prose.

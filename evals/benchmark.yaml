@@ -1,0 +1,97 @@
+# ============================================================================
+#  MODEL BENCHMARK — the task battery the "Model Lab" runs to score a model.
+# ============================================================================
+#  Each case is tagged with an `aspect` and graded on CONCRETE pass/fail checks
+#  (same graders as cases.yaml — never a 1-10 score). A model's aspect score is
+#  simply how many of that aspect's tasks it passed.
+#
+#  Two run modes (chosen in the UI):
+#    raw      — one agent pinned to the model (measures the MODEL's own ability)
+#    pipeline — the full multi-agent orchestrator using the model (model + harness)
+#
+#  Add a case by appending here with an `aspect` and `graders`. No code change.
+# ============================================================================
+
+suite:
+  max_usd: 2.0                 # whole-benchmark spend ceiling (hard brake)
+  default_max_usd: 0.15        # per-task cost cap
+  default_max_iterations: 12   # per-task loop cap
+
+cases:
+  # ---- coding & debugging (executed and graded by exit code) ----
+  - id: code-fizzbuzz
+    aspect: coding
+    task: >
+      Create a file fizzbuzz.py in the workspace defining a function fizzbuzz(n)
+      that returns "Fizz" if n is divisible by 3, "Buzz" if divisible by 5,
+      "FizzBuzz" if divisible by both, otherwise str(n). Add a self-check block so
+      that running `python fizzbuzz.py` asserts fizzbuzz(15)=="FizzBuzz" and exits 0.
+      Then run it to confirm.
+    graders:
+      - { type: file_exists, path: "fizzbuzz.py" }
+      - { type: bash_check, command: "python fizzbuzz.py", expect_exit: 0 }
+  - id: code-prime-test
+    aspect: coding
+    task: >
+      Create primes.py with a function is_prime(n) (numbers < 2 are not prime), and
+      a file test_primes.py that asserts is_prime(7) is true and is_prime(8) is
+      false. Make `python test_primes.py` exit 0. Run it to confirm.
+    graders:
+      - { type: file_exists, path: "primes.py" }
+      - { type: bash_check, command: "python test_primes.py", expect_exit: 0 }
+
+  # ---- reasoning & math (graded on the exact answer) ----
+  - id: reason-speed
+    aspect: reasoning
+    task: >
+      A train travels 60 km in 1.5 hours. What is its average speed in km/h?
+      Reply with just the number.
+    graders:
+      - { type: regex, pattern: "\\b40\\b" }
+  - id: reason-mult
+    aspect: reasoning
+    task: "What is 17 multiplied by 24? Give only the number."
+    graders:
+      - { type: regex, pattern: "\\b408\\b" }
+  - id: reason-ball
+    aspect: reasoning
+    task: >
+      A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball.
+      How much does the ball cost? Give the amount.
+    graders:
+      - { type: regex, pattern: "0\\.05|5 ?cents?" }
+
+  # ---- writing & summarization ----
+  - id: write-passive
+    aspect: writing
+    task: "Rewrite this sentence in the passive voice: 'The cat chased the mouse.'"
+    graders:
+      - { type: regex, pattern: "was chased by the cat" }
+  - id: write-summary
+    aspect: writing
+    task: >
+      In ONE sentence, summarize: "Photosynthesis is the process by which green
+      plants use sunlight to make food from carbon dioxide and water."
+    graders:
+      - { type: contains, any: ["plant", "sunlight", "light", "food", "energy"] }
+      - { type: not_contains, all: ["as an ai", "i cannot"] }
+
+  # ---- instruction-following & format (strict checks) ----
+  - id: instr-json
+    aspect: instruction
+    task: >
+      Output ONLY valid JSON (no prose, no code fences) with exactly two keys:
+      "name" set to "Alex" and "age" set to the number 30.
+    graders:
+      - { type: regex, pattern: "\\{[^}]*\"name\"\\s*:\\s*\"Alex\"[^}]*\"age\"\\s*:\\s*30[^}]*\\}" }
+      - { type: not_contains, any: ["```"] }
+  - id: instr-exact
+    aspect: instruction
+    task: "Reply with exactly the single word BANANA in uppercase and nothing else."
+    graders:
+      - { type: regex, pattern: "^\\s*BANANA\\s*$", ignorecase: false }
+  - id: instr-list
+    aspect: instruction
+    task: "List the first five prime numbers separated by commas, and nothing else."
+    graders:
+      - { type: contains, all: ["2", "3", "5", "7", "11"] }

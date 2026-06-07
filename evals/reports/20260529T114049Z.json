@@ -1,0 +1,89 @@
+{
+  "mode": "single",
+  "run": {
+    "config": "C:\\Project\\agent_system\\core\\..\\config\\models.yaml",
+    "models": {
+      "tier1": "claude-haiku-4-5-20251001",
+      "tier2": "claude-sonnet-4-6",
+      "tier3": "claude-opus-4-7"
+    },
+    "dry_run": true,
+    "total_cost": 0.0,
+    "pass_threshold": 1.0,
+    "results": [
+      {
+        "id": "summarize-basic",
+        "passed": false,
+        "tier": 1,
+        "cost": 0.0,
+        "iterations": 2,
+        "duration": 0.0,
+        "results": [
+          [
+            "expect_tier",
+            true,
+            "routed tier1 vs expected tier1"
+          ],
+          [
+            "contains",
+            false,
+            "none of ['cell', 'energy', 'atp', 'mitochondri', 'power'] found"
+          ],
+          [
+            "not_contains",
+            true,
+            "no forbidden terms"
+          ]
+        ],
+        "error": null
+      },
+      {
+        "id": "write-and-run-script",
+        "passed": false,
+        "tier": 1,
+        "cost": 0.0,
+        "iterations": 2,
+        "duration": 0.0,
+        "results": [
+          [
+            "expect_tier",
+            false,
+            "routed tier1 vs expected tier2"
+          ],
+          [
+            "file_exists",
+            false,
+            "file not found: add.py"
+          ],
+          [
+            "file_contains",
+            false,
+            "file not found: add.py"
+          ],
+          [
+            "bash_check",
+            false,
+            "`python add.py` exit=2 (want 0): python: can't open file 'C:\\\\Project\\\\agent_system\\\\evals\\\\.workspace\\\\add.py': [Errno 2] No such file or directory"
+          ]
+        ],
+        "error": null
+      },
+      {
+        "id": "research-prose",
+        "passed": false,
+        "tier": 1,
+        "cost": 0.0,
+        "iterations": 3,
+        "duration": 0.0,
+        "results": [
+          [
+            "llm_judge",
+            false,
+            "judge: unparseable verdict: '[dry-run] simulated answer; no real model was called.'"
+          ]
+        ],
+        "error": null
+      }
+    ]
+  }
+}

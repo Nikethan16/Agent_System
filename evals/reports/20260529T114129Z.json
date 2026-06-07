@@ -1,0 +1,81 @@
+{
+  "mode": "compare",
+  "A": {
+    "config": "config/models.yaml",
+    "models": {
+      "tier1": "claude-haiku-4-5-20251001",
+      "tier2": "claude-sonnet-4-6",
+      "tier3": "claude-opus-4-7"
+    },
+    "dry_run": true,
+    "total_cost": 0.0,
+    "pass_threshold": 1.0,
+    "results": [
+      {
+        "id": "summarize-basic",
+        "passed": false,
+        "tier": 1,
+        "cost": 0.0,
+        "iterations": 2,
+        "duration": 0.0,
+        "results": [
+          [
+            "expect_tier",
+            true,
+            "routed tier1 vs expected tier1"
+          ],
+          [
+            "contains",
+            false,
+            "none of ['cell', 'energy', 'atp', 'mitochondri', 'power'] found"
+          ],
+          [
+            "not_contains",
+            true,
+            "no forbidden terms"
+          ]
+        ],
+        "error": null
+      }
+    ]
+  },
+  "B": {
+    "config": "config/models.yaml",
+    "models": {
+      "tier1": "claude-haiku-4-5-20251001",
+      "tier2": "claude-sonnet-4-6",
+      "tier3": "claude-opus-4-7"
+    },
+    "dry_run": true,
+    "total_cost": 0.0,
+    "pass_threshold": 1.0,
+    "results": [
+      {
+        "id": "summarize-basic",
+        "passed": false,
+        "tier": 1,
+        "cost": 0.0,
+        "iterations": 2,
+        "duration": 0.0,
+        "results": [
+          [
+            "expect_tier",
+            true,
+            "routed tier1 vs expected tier1"
+          ],
+          [
+            "contains",
+            false,
+            "none of ['cell', 'energy', 'atp', 'mitochondri', 'power'] found"
+          ],
+          [
+            "not_contains",
+            true,
+            "no forbidden terms"
+          ]
+        ],
+        "error": null
+      }
+    ]
+  }
+}
