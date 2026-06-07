@@ -1,0 +1,34 @@
+# ============================================================================
+#  SECURITY POLICY — deterministic gate rules (Layer 2). Easy to tune here.
+# ============================================================================
+#  Evaluated by core/policy.py BEFORE any tool runs. Three outcomes:
+#    hard_block  → never runs, no matter who approves (obvious destruction)
+#    escalate    → must pass the security-manager agent AND/OR a human
+#    allow       → runs (still audited)
+#  Matching is done (case-insensitive) against the stringified tool arguments.
+# ============================================================================
+
+# Never run these, period. Regexes.
+hard_block:
+  - "rm\\s+-rf\\s+(/|~|\\*|\\.\\.)"      # wiping root / home / parent
+  - ":\\(\\)\\s*\\{.*\\};:"                # classic fork bomb
+  - "mkfs\\."                              # formatting a filesystem
+  - "dd\\s+if=.*of=/dev/"                  # overwriting block devices
+  - "shutdown|reboot|halt\\b"
+
+# Always require a HUMAN to approve (in addition to the manager agent), because
+# they are irreversible. Regexes.
+require_human:
+  - "drop\\s+(table|database|schema)"     # DB destruction
+  - "delete\\s+from\\s+"                   # bulk DB delete
+  - "truncate\\s+table"
+  - "git\\s+push\\s+.*--force"
+  - "rm\\s+-rf\\b"                          # any recursive force delete
+  - "(kubectl|helm)\\s+delete"
+  - "terraform\\s+(apply|destroy)"
+  - "(deploy|publish)\\b"                   # shipping to the outside world
+
+# Tool risk levels (see core/toolbelt.py) also drive escalation:
+#   critical tools always escalate to the manager agent;
+#   tools flagged requires_human always also ask the human.
+# The lists above let you escalate by *content* even for non-critical tools.

@@ -1,0 +1,183 @@
+"""
+registry.py — loads config/models.yaml and resolves tier -> model.
+
+This is the abstraction that makes models swappable. Nothing else in the core
+hardcodes a model name; everything asks the registry.
+
+Two resolution strategies (defaults.model_strategy in models.yaml):
+  * "fixed"    — each tier uses its configured `model:` (the classic behaviour).
+  * "cheapest" — pick the CHEAPEST catalog model that is (a) capable enough for the
+    tier and (b) AVAILABLE (its required provider key is set). As you add free
+    providers' keys, cheaper/free models unlock and get chosen automatically. This is
+    the cost-first mode.
+
+The catalog = the models.yaml `catalog:` PLUS any models the model-scout agent has
+discovered (config/models.discovered.yaml). Add/remove of discovered models is done
+via the registry (update_catalog / remove_from_catalog), so the curated, commented
+models.yaml stays pristine.
+"""
+import os
+import logging
+import threading
+import yaml
+
+log = logging.getLogger(__name__)
+
+_DIR = os.path.dirname(__file__)
+_DEFAULT_PATH = os.path.join(_DIR, "..", "config", "models.yaml")
+CONFIG_PATH = os.environ.get("MODELS_CONFIG", _DEFAULT_PATH)
+DISCOVERED_PATH = os.environ.get(
+    "MODELS_DISCOVERED", os.path.join(_DIR, "..", "config", "models.discovered.yaml"))
+
+
+class ModelRegistry:
+    def __init__(self, path: str = CONFIG_PATH):
+        self.path = path
+        self._lock = threading.Lock()
+        self.reload()
+
+    def reload(self):
+        with open(self.path) as f:
+            self.cfg = yaml.safe_load(f)
+        self._discovered = self._load_discovered()
+
+    def _load_discovered(self):
+        try:
+            with open(DISCOVERED_PATH) as f:
+                data = yaml.safe_load(f) or {}
+            return data.get("catalog", []) or []
+        except FileNotFoundError:
+            return []
+        except Exception as e:
+            log.warning("could not load discovered models from %s: %s", DISCOVERED_PATH, e)
+            return []
+
+    # ---- tier resolution -------------------------------------------------
+    def tier(self, name: str) -> dict:
+        return self.cfg["tiers"][name]
+
+    def model_for_tier(self, name: str, task_type: str = None) -> str:
+        if self.model_strategy() == "cheapest":
+            needed = self._level(name)
+            picked = self.cheapest_for(needed, task_type)
+            if picked:
+                return picked
+        return self.cfg["tiers"][name]["model"]
+
+    def max_tokens_for_tier(self, name: str) -> int:
+        return self.cfg["tiers"][name].get("max_tokens", 4096)
+
+    def classifier_tier(self) -> str:
+        return self.cfg["defaults"]["classifier_tier"]
+
+    def fallback_tier(self) -> str:
+        return self.cfg["defaults"]["fallback_tier"]
+
+    def worker_tier(self) -> str:
+        return self.cfg.get("worker_tier", "tier2")
+
+    def model_strategy(self) -> str:
+        return self.cfg.get("defaults", {}).get("model_strategy", "fixed")
+
+    # ---- catalog (base + discovered) ------------------------------------
+    def catalog(self) -> list:
+        base = self.cfg.get("catalog", []) or []
+        by_id = {m["id"]: m for m in base}
+        for m in self._discovered:                 # discovered overrides/extends base
+            by_id[m["id"]] = m
+        return list(by_id.values())
+
+    # ---- cost-first selection -------------------------------------------
+    @staticmethod
+    def _level(name) -> int:
+        s = str(name)
+        return int(s[-1]) if s and s[-1].isdigit() else 2
+
+    @staticmethod
+    def _available(m: dict) -> bool:
+        env = m.get("requires_env")
+        return (not env) or bool(os.environ.get(env))
+
+    @staticmethod
+    def _cost_key(m: dict):
+        # free first, then lowest relative cost
+        return (0 if m.get("free") else 1, m.get("cost", 999))
+
+    def cheapest_for(self, needed_level: int, task_type: str = None):
+        cands = [m for m in self.catalog()
+                 if self._available(m) and m.get("tier_hint", 2) >= needed_level]
+        if task_type:
+            pref = [m for m in cands if task_type in (m.get("good_for") or [])]
+            if pref:
+                cands = pref
+        if not cands:
+            return None
+        cands.sort(key=self._cost_key)
+        return cands[0]["id"]
+
+    # ---- live swap (used by the UI) -------------------------------------
+    def set_tier_model(self, tier: str, model: str):
+        with self._lock:
+            if tier not in self.cfg["tiers"]:
+                raise KeyError(f"unknown tier: {tier}")
+            self.cfg["tiers"][tier]["model"] = model
+        return self.cfg["tiers"][tier]
+
+    # ---- catalog curation (the model-scout writes here) -----------------
+    def _save_discovered(self):
+        with open(DISCOVERED_PATH, "w", encoding="utf-8") as f:
+            yaml.safe_dump({"catalog": self._discovered}, f, sort_keys=False)
+
+    # Only these keys are persisted from a (possibly LLM- or client-supplied) entry,
+    # each coerced to a safe type — so a malformed/hostile proposal can't inject
+    # arbitrary fields that later get treated as config.
+    @staticmethod
+    def _clean_entry(m: dict):
+        mid = m.get("id")
+        if not isinstance(mid, str) or not mid.strip() or len(mid) > 200:
+            return None
+        out = {"id": mid.strip()}
+        if isinstance(m.get("provider"), str):
+            out["provider"] = m["provider"][:80]
+        if isinstance(m.get("requires_env"), str):
+            out["requires_env"] = m["requires_env"][:80]
+        out["free"] = bool(m.get("free", False))
+        out["open_source"] = bool(m.get("open_source", False))
+        try:
+            out["cost"] = max(0, int(m.get("cost", 999)))
+        except (TypeError, ValueError):
+            out["cost"] = 999
+        try:
+            out["tier_hint"] = min(3, max(1, int(m.get("tier_hint", 2))))
+        except (TypeError, ValueError):
+            out["tier_hint"] = 2
+        gf = m.get("good_for") or []
+        out["good_for"] = [str(x)[:40] for x in gf if isinstance(x, (str, int))][:20] \
+            if isinstance(gf, list) else []
+        return out
+
+    def update_catalog(self, models: list):
+        """Add/replace discovered models (by id). Validates + persists + reloads."""
+        if not isinstance(models, list):
+            raise ValueError("models must be a list")
+        with self._lock:
+            by_id = {m["id"]: m for m in self._discovered}
+            for raw in models:
+                if not isinstance(raw, dict):
+                    continue
+                clean = self._clean_entry(raw)
+                if clean:
+                    by_id[clean["id"]] = clean
+            self._discovered = list(by_id.values())
+            self._save_discovered()
+        return self.catalog()
+
+    def remove_from_catalog(self, model_id: str):
+        with self._lock:
+            self._discovered = [m for m in self._discovered if m["id"] != model_id]
+            self._save_discovered()
+        return self.catalog()
+
+
+# single shared instance
+registry = ModelRegistry()
