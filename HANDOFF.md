@@ -87,9 +87,11 @@ The frontend is built into `web/dist`; the backend serves it. For UI dev with ho
   The ANTHROPIC/OPENAI/DEEPSEEK/OPENROUTER vars are 1-char placeholders (not real).
 - **The Python venv is `.venv`** — run things as `.venv\Scripts\python.exe …`. If a shell's
   working dir drifts (e.g. after `cd web` to build), use the absolute venv path.
-- **GitHub:** the repo is **github.com/Nikethan16/Agent_System** (private). Git identity on
-  this machine is `Gaurav Savalkar <gaurav.savalkar@bp.com>`. `gh` CLI is **not** installed —
-  pushes use Git Credential Manager (a browser sign-in may pop up the first time).
+- **GitHub:** the repo is **github.com/Nikethan16/Agent_System** (private). Commit identity for
+  this repo is `Nikethan <nikethan160902@gmail.com>` (set repo-locally; the machine's *global*
+  git is a different work identity and was intentionally left unchanged — don't touch it).
+  `gh` CLI is **not** installed — pushes use Git Credential Manager (a browser sign-in may pop
+  up the first time).
 - **Owner's git preferences:** do **not** add a Claude co-author trailer; split work into
   logical, version-wise commits.
 - **Respect the invariants in `CLAUDE.md`:** no hardcoded model names (use the registry);
