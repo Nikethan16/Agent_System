@@ -8,7 +8,7 @@ import SettingsModal from "./components/SettingsModal";
 import BenchmarkModal from "./components/BenchmarkModal";
 
 export default function App() {
-  const { init, connected, running, cost, exportChat, newSession } = useStore();
+  const { init, connected, running, cost, newSession } = useStore();
   const [settings, setSettings] = useState(false);
   const [bench, setBench] = useState(false);
   const [leftOpen, setLeftOpen] = useState(false);   // mobile sidebar drawer
@@ -43,20 +43,13 @@ export default function App() {
             </div>
           </div>
           <div className="flex items-center gap-5">
-            <button onClick={exportChat} className="text-[11px] uppercase tracking-widest text-light-muted hover:text-on-surface dark:hover:text-dark-text flex items-center gap-1">
-              <span className="material-symbols-outlined text-[18px]">download</span> export
-            </button>
-            <button onClick={() => setBench(true)} title="Model Lab — benchmark & compare models" aria-label="Model Lab"
-              className="text-light-muted hover:text-on-surface dark:hover:text-dark-text flex items-center gap-1 text-[11px] uppercase tracking-widest">
-              <span className="material-symbols-outlined text-[18px]">science</span> bench
-            </button>
-            <button onClick={() => setSettings(true)} title="Settings" aria-label="Settings" className="text-light-muted hover:text-on-surface dark:hover:text-dark-text">
-              <span className="material-symbols-outlined text-[20px]">settings</span>
-            </button>
             <div className="text-right">
               <div className="text-[9px] uppercase tracking-widest text-light-muted leading-none">Run cost</div>
               <div className="text-sm font-semibold">$<span className="text-accent-terracotta">{cost.toFixed(4)}</span></div>
             </div>
+            <button onClick={() => setSettings(true)} title="Settings" aria-label="Settings" className="text-light-muted hover:text-on-surface dark:hover:text-dark-text">
+              <span className="material-symbols-outlined text-[20px]">settings</span>
+            </button>
             <button onClick={() => setRightOpen(true)} title="Artifacts & panels"
               className="md:hidden text-light-muted hover:text-on-surface dark:hover:text-dark-text">
               <span className="material-symbols-outlined text-[22px]">dashboard</span>
@@ -67,7 +60,7 @@ export default function App() {
         <Composer />
       </main>
       <RightPanel open={rightOpen} onClose={() => setRightOpen(false)} />
-      {settings && <SettingsModal onClose={() => setSettings(false)} />}
+      {settings && <SettingsModal onClose={() => setSettings(false)} onOpenBench={() => { setSettings(false); setBench(true); }} />}
       {bench && <BenchmarkModal onClose={() => setBench(false)} />}
     </div>
   );
