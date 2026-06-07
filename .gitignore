@@ -1,0 +1,46 @@
+# ---- secrets (NEVER commit) ------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- python ----------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- node / frontend -------------------------------------------------------
+web/node_modules/
+web/dist/
+node_modules/
+npm-debug.log*
+
+# ---- runtime data / artifacts (do not version) -----------------------------
+data/
+workspace/
+audit.log
+config/models.discovered.yaml
+
+# ---- editor / OS -----------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# ---- misc imports staged locally -------------------------------------------
+_stitch_import/
+
+# ---- generated demo / build artifacts (not source) -------------------------
+_deck_build/
+/Recent_Advances_in_Agentic_AI.pptx
+*.pptx
+!skills/**/*.pptx
+
+# local backups
+backups/

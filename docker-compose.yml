@@ -1,0 +1,13 @@
+# Run the whole app in one container: docker compose up --build
+# Then open http://localhost:8000
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env          # provider keys etc. (copy from .env.example; see docs/PLACEHOLDERS.md)
+    volumes:
+      - ./data:/app/data   # persist chats, files, checkpoints across restarts
+    # No auto-restart: Docker is optional here. The normal way to run is `.\run.ps1`
+    # (uvicorn) on port 8000 — Docker won't reclaim the port behind your back.
