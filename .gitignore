@@ -27,10 +27,11 @@ workspace/
 audit.log
 config/models.discovered.yaml
 
-# ---- editor / OS -----------------------------------------------------------
+# ---- editor / OS / tooling -------------------------------------------------
 .DS_Store
 .idea/
 .vscode/
+.claude/
 *.swp
 
 # ---- misc imports staged locally -------------------------------------------
