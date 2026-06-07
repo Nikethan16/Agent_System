@@ -1,145 +1,101 @@
 # HANDOFF — read this first
 
-_Last updated: 2026-06-07. Plain-language status of the whole project: what it is, what's
-done, what's left, and what needs **your** input. For the deep technical account see
-[`docs/PROJECT_OVERVIEW.md`](docs/PROJECT_OVERVIEW.md); the rules + architecture are in
-[`CLAUDE.md`](CLAUDE.md); the detailed feature tracker is [`STATUS.md`](STATUS.md)._
+_Last updated: 2026-06-07. The single entry point for the next person/chat picking this up
+(the prior chat may have been deleted). For "what it can do" read `docs/CAPABILITIES.md`;
+for "how it works" read `docs/PROJECT_OVERVIEW.md`; the durable rules are in `CLAUDE.md`._
 
----
+## TL;DR
+- **The app is feature-complete for local single-user use, verified, and running.** Offline
+  smoke test passes **60/60**; real-model runs work (it has planned, searched, coded, and
+  made documents end-to-end).
+- **Two free provider keys are configured** in `.env` (Google **Gemini** + **NVIDIA NIM**),
+  so it runs at **$0**. Web search (Tavily) and semantic memory (Gemini embeddings) are also
+  enabled.
+- **The project is paused** (2026-06-07) for a few days. Everything below is current; the UI
+  redesign just landed and is merged to `main`.
+- Run it: `.\run.ps1` → http://localhost:8800.
 
-## 1. What this app is (in one paragraph)
+## What changed in the last working session (2026-06-07)
+All verified; smoke stays 60/60; the web build is clean.
 
-It's a **private, local "AI work assistant"** that runs in your web browser — think of it as
-your own Claude Code / ChatGPT, but running on your machine, using whichever AI models you
-choose (including **free** ones), and showing you every step it takes. You chat with it; it
-plans the work, writes and runs code, builds real documents (Word / Excel / PowerPoint /
-PDF), does web research, and saves everything. It **asks your permission before anything
-risky**, and it **can never spend more than the dollar limit you set**.
+1. **Web search now actually works.** `tools/web.py:web_search` was a broken stub (unreachable
+   return + wrong request shape). Rewrote it for **Tavily** (correct request, result
+   formatting, kept the SSRF guard + untrusted-data wrapper). A free Tavily key is set as
+   `SEARCH_API_KEY` in `.env`. Verified end-to-end (raw + through the research agent).
+2. **Fixed a missing dependency: `tenacity`.** LiteLLM's retry/backoff path imports it, but it
+   wasn't installed or in `requirements.txt`, so every rate-limit retry crashed. Added +
+   installed. This restores free-tier resilience (retries now recover instead of crashing).
+3. **Fixed a dead tier-3 model.** `nvidia_nim/deepseek-ai/deepseek-r1` now 404s on NVIDIA NIM
+   (it was the cost-first pick for tier-3, so research/hard tasks crashed). Swapped to the
+   verified-working **`nvidia_nim/nvidia/llama-3.3-nemotron-super-49b-v1.5`** (free, reasoning,
+   supports tool-calling) in `config/models.yaml`.
+4. **Enabled semantic memory.** The docs' suggested embedding model (`text-embedding-004`) was
+   retired/404. Set `EMBED_MODEL=gemini/gemini-embedding-001` in `.env` (verified it produces
+   meaningful embeddings; similar sentences score ~0.76 vs ~0.46 for unrelated).
+5. **Made the smoke test hermetic** (`scripts/smoke_test.py`) — it reused a persistent data dir
+   and leaked approved rules between runs; now it starts fresh each run.
+6. **UI redesign integrated** (from a Google Stitch design — see `docs/UI_STRUCTURE_PLAN.md`).
+   A structural declutter, no backend changes, all wiring preserved:
+   - **Composer** is now minimal: type · attach · send, plus a **"Run options" popover** that
+     holds approval mode, plan-first, force-QA, parallel, stream, and per-run max $/loops.
+   - **Top bar** slimmed to status · run cost · settings (Export + Model Lab moved into Settings).
+   - **Right panel** down from 6 tabs to **4** (Files, Rewind, Skills, Tasks) with count badges;
+     **Memory** and **Models** moved into Settings.
+   - **Settings** is now a **5-tab** modal (General, Limits & cost, Models, Memory, Security).
 
-**The one big idea:** anything that might change — which AI models it uses, which specialist
-"agents" it has, which tools they can use — lives in simple **config files**, not buried in
-code. So you can swap the AI model behind the whole thing by changing one line. That's the
-point of the project.
+> Lesson reinforced this session: **model strings (chat, embedding, and reasoning) go stale
+> fast.** We hit three retired names. When something 404s, list the provider's current models
+> (`/v1/models`) and update `config/models.yaml` / `.env`.
 
----
+## Current state by area
+| Area | State |
+|---|---|
+| Engine, platform, security, memory, persistence, jobs, tracing | ✅ done |
+| Web search (Tavily) · semantic memory (Gemini embeddings) | ✅ working |
+| UI (decluttered redesign) | ✅ integrated + built |
+| Image generation | ⏸ off — code ready, needs an image model + key |
+| Cloud tracing (Langfuse) | ⏸ off — local traces work; needs keys |
+| Production hardening (exposed deploy) | 🟡 partial — see "deployment" below |
 
-## 2. Current status: it works ✅
+## What's LEFT (optional — nothing blocking)
+**A. UI polish not yet done (low priority):** the right panel auto-collapsing to a badge-only
+rail, and a command palette (⌘K currently just opens a new chat). Core declutter is done.
 
-I verified this today (2026-06-07), not just trusted the docs:
+**B. In-code, no inputs needed:** make the Docker host port configurable (don't hardcode);
+broaden tests beyond the 60-check smoke.
 
-- **The automated test suite passes 60 out of 60** (`scripts/smoke_test.py`) — this checks the
-  engine, security gate, memory, the multi-agent loop, and the web server, all offline.
-- **Two working AI keys are already set up** in your `.env`: **Google Gemini** and **NVIDIA
-  NIM** — both on **free tiers**. So the app can run **at $0 cost** right now.
-- **The website front-end is already built** and ready to serve.
-- No secrets are hardcoded anywhere in the code (I scanned for it).
+**C. Needs the owner (keys/decisions, all optional):** a *paid* model key (removes free-tier
+rate limits), an `image_model:` + key (image gen), `LANGFUSE_*` keys (cloud tracing). See
+`docs/PLACEHOLDERS.md`.
 
-**Bottom line: the application is finished and usable for personal/local use.** There is no
-half-built feature blocking you. What remains is either *optional power-ups* (which need a
-key or a decision from you) or *deployment hardening* you'd only do if you put it on the
-public internet.
+**D. Deployment-only (before exposing off localhost):** run `run_bash` inside a real container
+sandbox (keep `AGENT_DISABLE_BASH=1` until then).
 
----
+**E. Intentionally out of scope:** multi-user accounts (single-user local app by design).
 
-## 3. What's been built (the whole thing, in plain terms)
-
-| Area | What it means for you | Done? |
-|---|---|---|
-| **The brain (engine)** | Reads your request, decides if it's easy or hard, and routes it to the right helper. Hard jobs get a "lead" agent that makes a to-do list and hands steps to specialists. | ✅ |
-| **Swappable AI models** | Change the AI model behind everything by editing one config file or clicking a dropdown. Works with Google, OpenAI, Anthropic, free providers, or local models. | ✅ |
-| **Cost control** | Every job has a hard dollar cap and a step cap. Plus an optional daily spending limit. It literally cannot run up a surprise bill. | ✅ |
-| **Specialist agents** | A coder, a front-end builder, a researcher, a document writer, an image generator, a QA reviewer — each with only the tools it needs. | ✅ |
-| **Safety / permissions** | Risky actions (deleting files, running shell commands) are checked by rules, then by a "security manager" AI, then by **you** clicking Approve/Deny. Everything is logged. | ✅ |
-| **Memory** | Remembers the conversation, recalls relevant things from past chats, learns durable facts about you, and can follow rules you approve. | ✅ |
-| **Documents** | Produces **real** Word, Excel, PowerPoint, and PDF files (not just text). Verified end-to-end. | ✅ |
-| **The website (UI)** | Chat window, a live feed of what the agents are doing, a file/preview panel, approval pop-ups, a memory panel, settings, dark mode, mobile layout. | ✅ |
-| **Web research** | Can fetch and read web pages today; full web *search* needs a key (see below). | ✅ / 🟡 |
-| **Model Lab** | A "Bench" screen to score and compare different AI models on real tasks before you commit to one. | ✅ |
-| **Saving & undo** | Every chat and file is saved. It snapshots your files before each turn so you can rewind. One-command backups. | ✅ |
-| **Quality tools** | A test/eval harness and the 60-check smoke test so you can confirm a model swap didn't break anything. | ✅ |
-
----
-
-## 4. What's left
-
-### A. Nothing is blocking — the app is usable today.
-
-### B. Optional polish (I can do these anytime — **no input needed from you**)
-1. **Lock the recent bug-fixes into the test suite** so they can't regress (greeting fast-path,
-   empty-response guard, router fallback, document-skill gating).
-2. **Make the Docker port configurable** instead of a fixed number, and ship a ready-made
-   production settings template.
-3. **Add retry-on-rate-limit to the worker loops** so long multi-step jobs recover smoothly
-   when a free model briefly rate-limits.
-4. **Per-turn live streaming as the default** with a nicer live "typing" lane in the chat.
-
-### C. Needs YOUR input (this is the part you asked about) 👇
-| # | What you'd provide | What it unlocks | Required? |
-|---|---|---|---|
-| 1 | **Push to GitHub:** decide a repo **name** + **public or private**; and since the GitHub CLI isn't installed, either install it or create an empty repo on github.com and give me the link | Gets the code backed up / shareable on GitHub | To push today |
-| 2 | A **paid** model key (e.g. OpenAI, Anthropic, or paid Gemini) | Removes the free-tier "5 requests/minute" speed limit so big multi-step jobs run faster | Optional |
-| 3 | `SEARCH_API_KEY` in `.env` (Tavily/SerpAPI) | Turns on real web **search** for the research agent (reading pages already works) | Optional |
-| 4 | `image_model:` in `config/models.yaml` + its provider key | Turns on AI **image generation** | Optional |
-| 5 | `EMBED_MODEL` + its key | Upgrades memory recall from keyword-match to **meaning-based** | Optional |
-| 6 | `LANGFUSE_*` keys | Cloud dashboards for tracing (local trace files already work) | Optional |
-| 7 | Confirm/choose the **model names** in `config/models.yaml` | Model strings go stale fast; worth a sanity check against your providers | Recommended |
-
-> The full, exhaustive checklist of every optional input lives in
-> [`docs/PLACEHOLDERS.md`](docs/PLACEHOLDERS.md).
-
-### D. Only needed if you put this on the public internet (not for personal use)
-- Run the shell tool inside a real container sandbox (today it's off-by-default and asks
-  permission every time).
-- A broader unit-test suite beyond the 60-check smoke test.
-
-### E. Intentionally NOT built (by earlier agreement)
-- Multiple user accounts / logins. This is a **single-user, local** app on purpose. (There is
-  a single shared access-token option if you ever expose it to your network.)
-
----
-
-## 5. How to run it
-
+## How to run & verify
 ```powershell
-# one-time: install Python deps + build the website (already done once on this machine)
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-npm --prefix web install ; npm --prefix web run build
-
-# start it (easiest):
-.\run.ps1                  # then open http://localhost:8800
+.\run.ps1                                       # serves http://localhost:8800
+.venv\Scripts\python.exe scripts\smoke_test.py  # offline, 60/60, no key
 ```
+The frontend is built into `web/dist`; the backend serves it. For UI dev with hot reload:
+`npm --prefix web run dev` (port 5173, proxies to 8800) alongside the server.
 
-**Verify nothing is broken (no cost, no key needed):**
-```powershell
-.venv\Scripts\python.exe scripts\smoke_test.py     # should say "60 passed, 0 failed"
-```
+## Context for the next chat (don't re-discover these)
+- **`.env` already has working keys** (gitignored, never pushed): `GEMINI_API_KEY`,
+  `NVIDIA_NIM_API_KEY`, `SEARCH_API_KEY` (Tavily), `EMBED_MODEL=gemini/gemini-embedding-001`.
+  The ANTHROPIC/OPENAI/DEEPSEEK/OPENROUTER vars are 1-char placeholders (not real).
+- **The Python venv is `.venv`** — run things as `.venv\Scripts\python.exe …`. If a shell's
+  working dir drifts (e.g. after `cd web` to build), use the absolute venv path.
+- **GitHub:** the repo is **github.com/Nikethan16/Agent_System** (private). Git identity on
+  this machine is `Gaurav Savalkar <gaurav.savalkar@bp.com>`. `gh` CLI is **not** installed —
+  pushes use Git Credential Manager (a browser sign-in may pop up the first time).
+- **Owner's git preferences:** do **not** add a Claude co-author trailer; split work into
+  logical, version-wise commits.
+- **Respect the invariants in `CLAUDE.md`:** no hardcoded model names (use the registry);
+  every model call via `core/llm.py` under a Budget; tools sandboxed to the session workspace.
 
----
-
-## 6. How we'll push to GitHub
-
-The project is **not yet a git repository**, and the **GitHub CLI (`gh`) is not installed**.
-So the push is a short, deliberate process — and I've already done the safety prep:
-
-- ✅ Your `.env` (real API keys), your saved chats (`data/`), logs, and build folders are all
-  in `.gitignore`, so **none of them will ever be uploaded**.
-- ✅ I scanned the code — **no keys are hardcoded** anywhere.
-- ✅ I excluded big throwaway build artifacts so the repo stays clean.
-
-**What I still need from you to actually push** (just answer and I'll do the rest):
-1. **Repo name** (e.g. `agent-core`).
-2. **Public or Private?** (I recommend **Private** for a personal project.)
-3. **How to create it** — either:
-   - **(a)** you create an empty repo at github.com and paste me the URL, **or**
-   - **(b)** you let me install the GitHub CLI (`winget install GitHub.cli`) and sign in, and
-     I'll create + push it for you.
-
-Once you tell me those, I'll `git init`, make a clean first commit, and push.
-
----
-
-## 7. Where to read more
-- [`docs/PROJECT_OVERVIEW.md`](docs/PROJECT_OVERVIEW.md) — the complete technical account (start here for depth).
-- [`CLAUDE.md`](CLAUDE.md) — the durable rules + architecture (the things never to break).
-- [`STATUS.md`](STATUS.md) — the detailed feature-by-feature tracker + changelog.
-- [`docs/PLACEHOLDERS.md`](docs/PLACEHOLDERS.md) — every optional input and what it unlocks.
+## How to resume
+1. `cd C:\Project\agent_system && claude` (auto-loads `CLAUDE.md`).
+2. Read `docs/CAPABILITIES.md` (what it does) → this file (state) → `STATUS.md` (detail).
+3. After any change: `python scripts\smoke_test.py` (keep 60/60) and update `STATUS.md`.

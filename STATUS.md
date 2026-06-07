@@ -1,9 +1,9 @@
 # AGENT // CORE — Project Tracker
 
-_Last updated: 2026-06-03_
+_Last updated: 2026-06-07 (project paused)_
 
 The single source of truth for **where we are** and **what's left**. Companion docs:
-[`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md) (how it works),
+[`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) (what it does), [`docs/PROJECT_OVERVIEW.md`](docs/PROJECT_OVERVIEW.md) (how it works),
 [`docs/PLACEHOLDERS.md`](docs/PLACEHOLDERS.md) (inputs you provide),
 [`docs/COMPETITIVE.md`](docs/COMPETITIVE.md) (peer-tool research).
 
@@ -124,7 +124,7 @@ The single source of truth for **where we are** and **what's left**. Companion d
 | Item | Status | Needs (see PLACEHOLDERS.md) |
 |---|---|---|
 | `web_fetch` (research) | ✅ | nothing (keyless) |
-| `web_search` (research) | 🟡 | `SEARCH_API_KEY` |
+| `web_search` (research) | ✅ | working — Tavily (`SEARCH_API_KEY` set 2026-06-07) |
 | `generate_image` (image agent) | 🟡 | `image_model:` + provider key |
 | Embedding-backed memory | 🟡 | `EMBED_MODEL` + key (else lexical) |
 | MCP connectors | ✅ | bundled example works; real servers via `config/mcp.yaml` |
@@ -154,6 +154,23 @@ mitigated today by `requires_human` + `AGENT_DISABLE_BASH=1` (Docker default); b
 ---
 
 ## Changelog
+- **2026-06-07** — **Web search live + dep/model fixes + semantic memory + UI redesign. Project paused.**
+  Full per-item detail in `HANDOFF.md`; capabilities catalogued in `docs/CAPABILITIES.md`.
+  - **Web search now works** — `tools/web.py:web_search` was a broken stub; rewrote it for
+    **Tavily** (correct request + result formatting, SSRF guard + untrusted-data wrapper kept).
+    Free `SEARCH_API_KEY` set in `.env`. Verified raw + through the research agent.
+  - **Added missing `tenacity` dep** — LiteLLM's retry/backoff imports it; it was uninstalled,
+    so every rate-limit retry crashed. Added to `requirements.txt` + installed (free-tier resilience).
+  - **Fixed dead tier-3 model** — `nvidia_nim/deepseek-ai/deepseek-r1` 404s now; swapped to
+    `nvidia_nim/nvidia/llama-3.3-nemotron-super-49b-v1.5` (free, reasoning, tool-calling). `config/models.yaml`.
+  - **Enabled semantic memory** — `EMBED_MODEL=gemini/gemini-embedding-001` (the docs' `text-embedding-004`
+    was retired/404). Verified meaningful embeddings.
+  - **Smoke test made hermetic** — wiped its own data dir each run (was leaking approved rules → 59/60 on re-run).
+  - **UI redesign integrated** (Stitch design, `docs/UI_STRUCTURE_PLAN.md`): minimal composer + **Run-options
+    popover**, slim top bar, right panel 6→4 tabs with badges, **5-tab Settings** absorbing Models + Memory.
+    Layout/disclosure only — no backend changes, all wiring preserved. Build clean.
+  - **Repo cleanup** — removed redundant/superseded docs (DOCUMENTATION, CLAUDE_PARITY, FRONTEND_BRIEF,
+    UI_REDESIGN_BRIEF, architecture.html) and the legacy `ui/` panel; added `docs/CAPABILITIES.md`.
 - **2026-06-06 (session 2)** — **Live validation + 4 fixes + handoff.** See `HANDOFF.md`.
   - Real-model pipeline validated end-to-end (built+ran a CLI todo app, tests pass; tier-3
     LEAD planning + delegation confirmed).

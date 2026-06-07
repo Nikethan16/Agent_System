@@ -146,7 +146,7 @@ evals/                 the eval harness: cases.yaml + graders + runner (python -
 scripts/
   smoke_test.py        26 offline regression checks with a fake model
   import_skill.py      copy a skill folder (e.g. from anthropics/skills) into skills/
-docs/                  this file + DOCUMENTATION/PLACEHOLDERS/COMPETITIVE/CLAUDE_PARITY
+docs/                  this file + CAPABILITIES/PLACEHOLDERS/COMPETITIVE/MODEL_REQUIREMENTS/UI_STRUCTURE_PLAN
 data/                  runtime: app.db, workspaces/<session>, checkpoints/, traces/
 audit.log              append-only log of every tool call + every gate decision
 ```

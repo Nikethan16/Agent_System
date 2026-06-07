@@ -3,10 +3,11 @@
 Context for Claude Code. Read the README.md for the full picture; this file is
 the durable rules + roadmap you should hold every session.
 
-> **NEW CHAT? START HERE:** `docs/PROJECT_OVERVIEW.md` is the single complete,
-> plain-language account of what this app is, where we are, how every feature was
-> built, the OpenClaw comparison, how to run it (port 8800), and what's left. Read
-> it first to recover full context.
+> **NEW CHAT? START HERE (project paused 2026-06-07):** read `HANDOFF.md` (current
+> state + what changed last + context for you), then `docs/CAPABILITIES.md` (what the
+> app can do), then `docs/PROJECT_OVERVIEW.md` (the complete account of how every
+> feature works). Runs at http://localhost:8800. Web search + semantic memory are now
+> live; the UI was decluttered (composer Run-options popover + 5-tab Settings).
 
 ## What this is
 A provider-agnostic multi-agent core. A task is classified into a difficulty
@@ -60,7 +61,6 @@ server/spend.py      global daily spend cap (cumulative, above the per-run Budge
 server/benchmark.py  Model Lab: score/compare a model on a task battery (raw + pipeline) via subprocess
 server/api/*.py      REST: sessions/messages/workspace/models/agents/memory/benchmark + ws.py (live run)
 web/                 React + TS + Vite frontend (chat, activity, artifacts, memory panel, Model Lab)
-ui/index.html        legacy single-page control panel (superseded by web/)
 evals/               eval harness: cases.yaml (swap-safety) + benchmark.yaml (Model Lab) + graders
 scripts/             backup.py (zip all stateful data) + run_benchmark.py (isolated bench runner)
 ```
@@ -113,7 +113,7 @@ artifact preview is rendered in a script-disabled sandboxed iframe. Detail: `doc
 `POST /api/sessions/{id}/restore`. Snapshots live under `data/checkpoints/`.
 
 ## Event contract (emitted through `emit`, streamed over WebSocket to the React UI)
-Each event is a dict with a `type`. `web/` and `ui/index.html` render these, so keep
+Each event is a dict with a `type`. The `web/` React UI renders these, so keep
 names stable and update the UI if you add one:
 `route`, `plan`, `assign`, `thought`, `tool`, `final`, `limit`, `error`,
 plus the platform/security additions: `manager_review`, `approval_request`,
