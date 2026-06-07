@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>AGENT // CORE — System Architecture</title>
+<style>
+  :root {
+    --navy: #1B3A6B;
+    --ink: #1f2937;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --bg: #f8fafc;
+
+    /* Engine (core, offline) — terracotta */
+    --engine-bg: #fff7ed;
+    --engine-ring: #f97316;
+    --engine-fg: #c2410c;
+
+    /* Server / online (WebSocket) — green */
+    --server-bg: #ecfdf5;
+    --server-ring: #10b981;
+    --server-fg: #047857;
+
+    /* Stateful component — indigo */
+    --data-bg: #eef2ff;
+    --data-ring: #6366f1;
+    --data-fg: #4338ca;
+
+    /* External model (via LiteLLM) — red */
+    --llm-bg: #fef2f2;
+    --llm-ring: #ef4444;
+    --llm-fg: #b91c1c;
+
+    /* Security gate — violet */
+    --sec-bg: #f5f3ff;
+    --sec-ring: #7c3aed;
+    --sec-fg: #6d28d9;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  body { padding: 32px 24px 48px; }
+  .page { max-width: 1280px; margin: 0 auto; }
+  h1 { text-align: center; color: var(--navy); font-size: 26px; margin: 0 0 6px; font-weight: 700; }
+  .subtitle { text-align: center; color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+  .legend { text-align: center; color: var(--muted); font-size: 12px; margin-bottom: 28px; }
+  .legend .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #fff; border: 1px solid var(--line); margin: 0 4px 6px; font-size: 11px; }
+
+  .pipeline {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 22px;
+  }
+  .pipeline h2 { font-size: 16px; margin: 0 0 4px; color: var(--navy); }
+  .pipeline .pipeline-meta { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+
+  .flow { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  .step { display: grid; grid-template-columns: 36px 1fr; gap: 12px; align-items: stretch; }
+  .step-num {
+    background: var(--step-ring);
+    color: #fff;
+    border-radius: 50%;
+    width: 30px; height: 30px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px;
+    margin-top: 8px; margin-left: 4px;
+  }
+  .step-card {
+    background: var(--step-bg);
+    border-left: 3px solid var(--step-ring);
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+  .step-card .title { font-weight: 700; color: var(--step-fg); font-size: 13.5px; margin: 0 0 3px; }
+  .step-card .meta { font-size: 11.5px; color: var(--muted); margin-bottom: 4px; }
+  .step-card ul { margin: 4px 0 0; padding-left: 18px; font-size: 12.2px; line-height: 1.55; }
+  .step-card ul li { margin: 1px 0; }
+  .step-card code { background: rgba(15, 23, 42, 0.05); padding: 0 4px; border-radius: 3px; font-size: 11.5px; font-family: ui-monospace, monospace; }
+
+  .engine { --step-bg: var(--engine-bg); --step-ring: var(--engine-ring); --step-fg: var(--engine-fg); }
+  .server { --step-bg: var(--server-bg); --step-ring: var(--server-ring); --step-fg: var(--server-fg); }
+  .data   { --step-bg: var(--data-bg);   --step-ring: var(--data-ring);   --step-fg: var(--data-fg); }
+  .llm    { --step-bg: var(--llm-bg);    --step-ring: var(--llm-ring);    --step-fg: var(--llm-fg); }
+  .sec    { --step-bg: var(--sec-bg);    --step-ring: var(--sec-ring);    --step-fg: var(--sec-fg); }
+
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; line-height: 1.4; background: rgba(0,0,0,0.04); color: var(--ink); margin-right: 4px; }
+  .pill.k { background: #f1f5f9; color: var(--muted); font-family: ui-monospace, monospace; font-size: 11px; }
+  .pill.warn { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 22px; }
+
+  .stack-card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+  .stack-card .title { color: var(--navy); font-weight: 700; margin: 0 0 4px; font-size: 14px; }
+  .stack-card .meta { font-size: 11.5px; color: var(--muted); }
+  .stack-card table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  .stack-card th, .stack-card td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .stack-card th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .stack-card code { background: rgba(15,23,42,0.05); padding: 0 4px; border-radius: 3px; font-size: 11px; font-family: ui-monospace, monospace; }
+
+  .key-numbers { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 22px; }
+  .key-numbers h3 { font-size: 13px; margin: 0 0 8px; color: var(--navy); }
+  .knb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+  .knb { background: var(--bg); border-radius: 8px; padding: 8px 10px; border-left: 3px solid var(--data-ring); }
+  .knb .v { font-weight: 700; color: var(--data-fg); font-size: 15px; }
+  .knb .k { font-size: 11px; color: var(--muted); line-height: 1.3; }
+
+  .topology { background:#fff; border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:22px; }
+  .topology h3 { font-size:13px; margin:0 0 10px; color:var(--navy); }
+  .topology pre { margin:0; font-family: ui-monospace, monospace; font-size:11.5px; line-height:1.5; color:var(--ink); white-space:pre; overflow-x:auto; }
+
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+  footer code { background: #eef2ff; color: #3730a3; padding: 1px 6px; border-radius: 4px; font-size: 11px; }
+
+  @media print { body { background: #fff; } .pipeline, .stack-card, .key-numbers, .topology { box-shadow: none; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>AGENT // CORE — System Architecture</h1>
+  <p class="subtitle">A local, provider-agnostic multi-agent platform · config-driven model/agent/tool swap · one model-call point · every run budget-capped</p>
+  <p class="legend">
+    <span class="badge" style="background: var(--server-bg); border-color: var(--server-ring); color: var(--server-fg)">Server / online (WebSocket)</span>
+    <span class="badge" style="background: var(--engine-bg); border-color: var(--engine-ring); color: var(--engine-fg)">Engine (core/, offline)</span>
+    <span class="badge" style="background: var(--sec-bg); border-color: var(--sec-ring); color: var(--sec-fg)">Security gate</span>
+    <span class="badge" style="background: var(--data-bg); border-color: var(--data-ring); color: var(--data-fg)">Stateful component</span>
+    <span class="badge" style="background: var(--llm-bg); border-color: var(--llm-ring); color: var(--llm-fg)">External model (via LiteLLM)</span>
+  </p>
+
+  <!-- ───────────────────────────────── TOPOLOGY -->
+  <div class="topology">
+    <h3>System topology — browser → server → engine → model provider</h3>
+<pre>BROWSER (React + TS + Vite + Tailwind, :8800)
+  Chat thread · live Agent-Activity timeline · Files/Artifacts (preview·diff·versions) · Approve/Deny · Stop
+     │  REST: sessions / messages / files / models / skills        ▲ WebSocket /api/ws/&lt;session&gt;
+     ▼  (create · load · swap)                                     │ (events out · approvals/stop in)
+SERVER (FastAPI, server/)
+  api/ws.py ─ runs the turn in a worker THREAD; bridges events to the socket via an asyncio.Queue
+  chat.py ── context (history + memory + project + attachments) → using_workspace() → handle_task()
+  approvals.py ── security-manager agent + human Approve/Deny (blocks worker on a threading.Event)
+  db.py (SQLite/SQLModel) ── sessions · messages · events · checkpoints · per-session workspace
+     │ persist + emit
+     ▼
+ENGINE (core/) — provider-agnostic, OFFLINE, no model strings, no web, no UI
+  orchestrator.handle_task → router.classify → [tier 1-2: one specialist] / [tier 3: LEAD master loop]
+  agent loop (think→act→observe) · toolbelt (risk labels) · policy gate · blackboard · skills
+     every model call ⟶ llm.complete()  under the run Budget (max_usd + max_iterations)
+     ▼
+MODEL PROVIDER (resolved from config/models.yaml — never hardcoded)
+  LiteLLM normalizes 100+ providers ⟶ NVIDIA NIM (free) · Gemini · OpenRouter :free · Ollama (local)</pre>
+  </div>
+
+  <!-- ───────────────────────────────── KEY NUMBERS -->
+  <div class="key-numbers">
+    <h3>Tuning constants &amp; caps — at-a-glance</h3>
+    <div class="knb-grid">
+      <div class="knb"><div class="v">cheapest</div><div class="k">Model strategy · cheapest AVAILABLE + capable model per tier (cost-first); "fixed" pins each tier</div></div>
+      <div class="knb"><div class="v">tier 1 / 2 / 3</div><div class="k">Difficulty router · trivial / moderate / hard → cheapest capable model, task-aware</div></div>
+      <div class="knb"><div class="v">$0.50 · 20</div><div class="k">Default run Budget · max_usd · max_iterations (UI-set; engine default 24)</div></div>
+      <div class="knb"><div class="v">8</div><div class="k"><code>MAX_TOOL_ROUNDS</code> · per-agent tool rounds before a final answer is forced</div></div>
+      <div class="knb"><div class="v">16 · 10</div><div class="k"><code>MAX_MASTER_ROUNDS</code> · <code>MAX_DELEGATIONS</code> · LEAD loop + subagent-spawn caps</div></div>
+      <div class="knb"><div class="v">6 turns</div><div class="k">Conversation history fed back as context per turn</div></div>
+      <div class="knb"><div class="v">safe · write · critical</div><div class="k">Tool risk labels driving the security gate (+ <code>requires_human</code>)</div></div>
+      <div class="knb"><div class="v">auto · careful · trusted</div><div class="k">Permission modes · human gate scope per run</div></div>
+      <div class="knb"><div class="v">30 s</div><div class="k"><code>run_bash</code> timeout · sandboxed to the per-session workspace</div></div>
+      <div class="knb"><div class="v">3 registries</div><div class="k">Models · Agents · Tools — all declarative (add one = config edit)</div></div>
+    </div>
+  </div>
+
+  <!-- ───────────────────────────────── TURN PIPELINE -->
+  <div class="pipeline">
+    <h2>Turn pipeline — runs per user message over the WebSocket</h2>
+    <p class="pipeline-meta">Trigger: <code>{"type":"run", text, max_usd, max_iterations, mode, plan_first, review, stream}</code> on <code>/api/ws/{session_id}</code> · returns a live stream of events + a final answer</p>
+
+    <div class="flow">
+      <div class="step">
+        <div class="server step-num">1</div>
+        <div class="server step-card">
+          <p class="title">Accept run · build Budget + ApprovalBroker · spawn a worker thread</p>
+          <p class="meta"><code>server/api/ws.py</code></p>
+          <ul>
+            <li><code>Budget(max_usd, max_iterations)</code> from the UI caps · <code>ApprovalBroker(mode)</code> for the gate</li>
+            <li>The agent run is synchronous → runs in a daemon <b>thread</b>; events bridge to the async socket via a thread-safe <code>asyncio.Queue</code></li>
+            <li><b>Stop</b> = set <code>budget.max_iterations = iterations</code> → next <code>check()</code> halts the run cooperatively</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="data step-num">2</div>
+        <div class="data step-card">
+          <p class="title">Checkpoint the workspace · save the message</p>
+          <p class="meta"><code>server/chat.py</code> → <code>server/db.py</code></p>
+          <ul>
+            <li><code>create_checkpoint()</code> · <code>copytree</code> snapshot of <code>data/workspaces/&lt;session&gt;</code> <b>before</b> the turn → user can rewind</li>
+            <li>Persist the user message to SQLite (WAL mode + 30 s busy-timeout so worker + API don't collide)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="server step-num">3</div>
+        <div class="server step-card">
+          <p class="title">Assemble context (so it feels like a conversation)</p>
+          <p class="meta"><code>chat.py: run_turn</code></p>
+          <ul>
+            <li>Last <b>6 turns</b> of history + cross-session <b>memory recall</b> (top-k notes from other chats)</li>
+            <li>+ <b>Project</b> instructions/knowledge files · + <b>attachment</b> text (PDFs text-extracted via pypdf)</li>
+            <li>Enter the session's isolated sandbox: <code>using_workspace(data/workspaces/&lt;session&gt;)</code> (a contextvar)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="engine step-num">4</div>
+        <div class="engine step-card">
+          <p class="title">Classify &amp; route — cheap tier-1 model call</p>
+          <p class="meta"><code>core/router.py: classify</code> → emits <code>route</code></p>
+          <ul>
+            <li>Returns <code>{tier:1|2|3, task_type, requires_web, reason}</code> · JSON-only · falls back to a safe tier on junk</li>
+            <li>Category exposed as <code>task_type</code> (never a bare <code>type</code>) so spreading into the event can't clobber it</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="engine step-num">5</div>
+        <div class="engine step-card">
+          <p class="title">Branch by difficulty</p>
+          <p class="meta"><code>core/orchestrator.py: handle_task</code></p>
+          <ul>
+            <li><b>tier 1-2</b> → the dispatcher picks ONE specialist (<code>select_agent</code>) → emits <code>assign</code> → that agent's own loop (step 6)</li>
+            <li><b>tier 3</b> → the <b>LEAD master loop</b> (see the second pipeline below) — todos + delegation</li>
+            <li><b>plan-first</b> mode → emit the plan and stop for approval; approval re-enters with <code>subtasks=[…]</code></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="engine step-num">6</div>
+        <div class="engine step-card">
+          <p class="title">Specialist agent loop — think → act → observe</p>
+          <p class="meta"><code>core/agent.py: run_agent</code> · model = <code>registry.model_for_tier(tier, task_type)</code></p>
+          <ul>
+            <li>Only the agent's <b>allowed tools</b> are offered (least privilege, from <code>config/agents.yaml</code>)</li>
+            <li>Relevant <b>Skills</b> are auto-selected, staged into <code>./.skills/</code>, and injected → emits <code>skill</code></li>
+            <li>Emits <code>thought</code> / <code>tool</code> events; after <code>MAX_TOOL_ROUNDS=8</code> tools are dropped to force a final answer</li>
+            <li>Provider error / rate-limit → graceful message, not a crash (LiteLLM <code>num_retries=3</code> first)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="sec step-num">7</div>
+        <div class="sec step-card">
+          <p class="title">Every tool call passes the security gate</p>
+          <p class="meta"><code>core/agent.py: _run_one_tool</code> → <code>core/policy.py</code> / <code>server/approvals.py</code></p>
+          <ul>
+            <li>Deterministic <b>policy gate</b>: <code>hard_block</code> → block · <code>critical</code>/<code>require_human</code> → escalate · else allow</li>
+            <li>Escalation → <b>security-manager agent</b> (approve/deny) → maybe a <b>human</b> Approve/Deny card (worker blocks on a <code>threading.Event</code>)</li>
+            <li>Sandboxed execution; <b>every</b> decision appended to <code>audit.log</code> (full detail in the 3rd pipeline)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="engine step-num">8</div>
+        <div class="engine step-card">
+          <p class="title">Auto-QA (critic) — concrete pass/fail, one retry</p>
+          <p class="meta"><code>orchestrator._auto_review</code> · tri-state <code>review</code> = auto / force-on / off</p>
+          <ul>
+            <li>On by default for tier-3 and tier-2 coding/writing/data/math · skipped for trivial + look-up tasks</li>
+            <li><b>critic</b> agent returns strict pass/fail JSON (never a 1-10 score) → emits <code>critic</code></li>
+            <li>On fail → the same agent gets the issues back as feedback and fixes them <b>once</b></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="data step-num">9</div>
+        <div class="data step-card">
+          <p class="title">Persist · stream · remember</p>
+          <p class="meta"><code>chat.py</code> → <code>db.py</code> / <code>memory.py</code> / <code>trace.py</code></p>
+          <ul>
+            <li>Final answer streamed as <code>token</code> events + emitted as <code>final</code> (with run cost)</li>
+            <li>Saved to SQLite (message + cost + every event); written to <code>data/traces/&lt;session&gt;.jsonl</code></li>
+            <li><b>Remember</b> "Request → Outcome" for future cross-session recall · <code>run_complete</code> closes the socket turn</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────────────────────────── MASTER LOOP PIPELINE -->
+  <div class="pipeline">
+    <h2>LEAD master loop — runs for complex (tier-3) tasks · Claude-Code-style single-threaded supervisor</h2>
+    <p class="pipeline-meta"><code>core/orchestrator.py: _master_loop</code> · the LEAD keeps a live todo list and DELEGATES scoped steps to specialists (depth-limited)</p>
+
+    <div class="flow">
+      <div class="step">
+        <div class="engine step-num">1</div>
+        <div class="engine step-card">
+          <p class="title">Build the lead · seed an explicit plan</p>
+          <ul>
+            <li>LEAD uses a <b>reasoning-tier</b> model · system prompt embeds the live <b>agent menu</b> + <b>skills menu</b></li>
+            <li><code>_make_plan</code> asks a tier-3 model for 3-6 ordered steps → emits <code>plan</code> with the <b>todo list</b> (guarantees a visible breakdown)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="engine step-num">2</div>
+        <div class="engine step-card">
+          <p class="title">Loop — the lead works the plan (≤ MAX_MASTER_ROUNDS = 16)</p>
+          <p class="meta">Meta-tools available to the lead each round:</p>
+          <ul>
+            <li><code>write_todos</code> — create/update the plan → re-emits <code>plan</code></li>
+            <li><code>delegate(agent, instruction, skill?)</code> — hand a scoped step to a specialist</li>
+            <li><code>read_file / list_files / write_file / run_bash</code> — small steps the lead does itself</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="engine step-num">3</div>
+        <div class="engine step-card">
+          <p class="title">Delegate → a specialist subagent runs (depth-limited)</p>
+          <p class="meta">emits <code>assign</code> · <code>MAX_DELEGATIONS = 10</code> · subagents CANNOT delegate again</p>
+          <ul>
+            <li>Agent chosen by id (or keyword fallback) · runs its own think→act→observe loop with its own tools</li>
+            <li>Gets the <b>blackboard digest</b> (earlier results) as context · can load the named <b>skill</b> (docx/xlsx/pptx/pdf/…)</li>
+            <li>Result posted back to the shared <code>Blackboard</code> for downstream steps</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="engine step-num">4</div>
+        <div class="engine step-card">
+          <p class="title">Reminder injection — keep the plan in front of the model</p>
+          <ul>
+            <li>After each round the current todo list is re-appended to the messages → the lead never loses track</li>
+            <li>(This is the key trick that makes "break down the task and stay on it" reliable on weaker models)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="engine step-num">5</div>
+        <div class="engine step-card">
+          <p class="title">Finish</p>
+          <ul>
+            <li>LEAD replies with <b>no tool call</b> → that text is the final answer (mentions files produced)</li>
+            <li>Budget exhausted mid-flight → <code>_finalize_from_board</code> synthesizes an answer from the blackboard so you still get output</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────────────────────────── SECURITY GATE PIPELINE -->
+  <div class="pipeline">
+    <h2>Security gate — runs before any risky tool executes · defense in depth</h2>
+    <p class="pipeline-meta">Single hook <code>approve(tool, args, decision)</code> in the agent loop · every decision is audited · irreversible actions need BOTH the manager agent AND a human</p>
+
+    <div class="flow">
+      <div class="step">
+        <div class="sec step-num">0</div>
+        <div class="sec step-card">
+          <p class="title">Least privilege (config)</p>
+          <ul><li>Each agent only holds the tools listed for it in <code>config/agents.yaml</code> · the <code>doc</code> agent literally cannot run shell; only <code>coder</code>/<code>frontend</code> can</li></ul>
+        </div>
+      </div>
+      <div class="step">
+        <div class="sec step-num">1</div>
+        <div class="sec step-card">
+          <p class="title">Tool risk label (config)</p>
+          <ul><li><code>safe</code> (read/list/search) · <code>write</code> (write_file) · <code>critical</code> (run_bash, deletes, deploys) · plus a <code>requires_human</code> flag</li></ul>
+        </div>
+      </div>
+      <div class="step">
+        <div class="sec step-num">2</div>
+        <div class="sec step-card">
+          <p class="title">Deterministic policy gate (no model)</p>
+          <p class="meta"><code>core/policy.py</code> + <code>config/policy.yaml</code></p>
+          <ul>
+            <li><code>hard_block</code> pattern (e.g. <code>rm -rf /</code>, fork bombs) → <b>BLOCK</b> · zero LLM cost</li>
+            <li><code>require_human</code> pattern OR a <code>critical</code> tool → <b>ESCALATE</b> · else <b>ALLOW</b></li>
+          </ul>
+        </div>
+      </div>
+      <div class="step">
+        <div class="sec step-num">3</div>
+        <div class="sec step-card">
+          <p class="title">Security-manager agent (Layer 3)</p>
+          <p class="meta"><code>server/approvals.py: _manager_review</code></p>
+          <ul><li>Reviews the action in context → approve/deny + reason · <b>fails closed</b> (denies) if it can't decide · skipped only in <code>trusted</code> mode</li></ul>
+        </div>
+      </div>
+      <div class="step">
+        <div class="sec step-num">4</div>
+        <div class="sec step-card">
+          <p class="title">Human Approve / Deny (Layer 4)</p>
+          <p class="meta">emits <code>approval_request</code> → UI card → <code>approval_response</code></p>
+          <ul>
+            <li>Always in <code>careful</code> mode · only for <code>requires_human</code> actions in <code>auto</code> mode · never in <code>trusted</code></li>
+            <li>Worker thread blocks on a <code>threading.Event</code> until you click (or 300 s timeout → deny)</li>
+          </ul>
+        </div>
+      </div>
+      <div class="step">
+        <div class="sec step-num">5</div>
+        <div class="sec step-card">
+          <p class="title">Audit (always)</p>
+          <ul><li>Every allow / deny / block is appended to <code>audit.log</code> (agent · tool · args · decision · reason) — nothing destructive happens silently</li></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────────────────────────── STACK + TRADE-OFFS -->
+  <div class="twocol">
+    <div class="stack-card">
+      <p class="title">Stack — which layer does what</p>
+      <table>
+        <thead><tr><th>Layer</th><th>Library / Mechanism</th></tr></thead>
+        <tbody>
+          <tr><td>Model gateway</td><td>LiteLLM — one call point, 100+ providers normalized to OpenAI format</td></tr>
+          <tr><td>Models (default)</td><td>NVIDIA NIM (free) · Gemini · OpenRouter <code>:free</code> · Ollama (local) — chosen cost-first</td></tr>
+          <tr><td>Orchestration</td><td>custom supervisor + Claude-Code master loop (<code>core/orchestrator.py</code>)</td></tr>
+          <tr><td>Agent loop</td><td><code>core/agent.py</code> — OpenAI tool-calling, least-privilege tools</td></tr>
+          <tr><td>Registries</td><td>Models (<code>models.yaml</code>) · Agents (<code>agents.yaml</code>) · Tools (<code>toolbelt.py</code>)</td></tr>
+          <tr><td>Security</td><td>policy gate (<code>policy.py</code>) + manager agent + human + <code>audit.log</code></td></tr>
+          <tr><td>Skills</td><td>Claude-format <code>SKILL.md</code> · select / inject / stage (<code>core/skills.py</code>)</td></tr>
+          <tr><td>Doc output</td><td>python-docx · openpyxl · python-pptx · reportlab · pdfplumber · pypdf</td></tr>
+          <tr><td>Web backend</td><td>FastAPI + Uvicorn (ASGI; WebSocket)</td></tr>
+          <tr><td>Persistence</td><td>SQLite via SQLModel (WAL) · per-session workspace dirs · checkpoints</td></tr>
+          <tr><td>Live channel</td><td>WebSocket — events out, approvals/stop in (worker thread ↔ async queue)</td></tr>
+          <tr><td>Frontend</td><td>React 18 + TypeScript + Vite + Tailwind + Zustand · react-markdown · highlight.js · mermaid</td></tr>
+          <tr><td>Memory / Tracing</td><td>cross-session recall (embedding-or-lexical) · per-run JSONL traces (+ optional Langfuse)</td></tr>
+          <tr><td>Queue / MCP</td><td>SQLite job queue + worker · real stdio MCP adapter</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="stack-card">
+      <p class="title">Design decisions a reviewer might probe</p>
+      <table>
+        <thead><tr><th>Decision</th><th>Rationale</th></tr></thead>
+        <tbody>
+          <tr><td>Single model-call point + Budget caps</td><td>Every call enforces <code>max_usd</code> + <code>max_iterations</code> centrally · no code path can loop or spend uncapped (the #1 invariant)</td></tr>
+          <tr><td>Cost-first "cheapest" selector</td><td>Auto-picks the cheapest <i>available + capable</i> model · add a free key and free models unlock automatically · no hardcoded names</td></tr>
+          <tr><td>Supervisor + blackboard (not free-form A2A)</td><td>Agents collaborate through a coordinator + shared scratchpad · loop-safe + budget-safe + traceable (free agent-to-agent chatter is the #1 cause of runaway cost)</td></tr>
+          <tr><td>Master loop with reminder injection</td><td>Re-showing the todo list each round keeps weaker models on-plan · depth-limited delegation prevents runaway subagent spawning</td></tr>
+          <tr><td>Deterministic policy gate before the LLM gate</td><td>Catches obvious danger (<code>rm -rf</code>, <code>DROP TABLE</code>) at zero cost; the manager agent + human handle the judgment calls</td></tr>
+          <tr><td>WebSocket (not SSE)</td><td>Chat needs two-way: stream events out AND receive approvals / stop in</td></tr>
+          <tr><td>SQLite + per-session workspaces</td><td>One file, no extra server · isolated on-disk artifacts per chat · WAL handles worker + API concurrency</td></tr>
+          <tr><td>Contextvar sandbox root</td><td>Per-session workspace without changing the containment check — tools stay sandboxed, only the <i>location</i> is per-session</td></tr>
+          <tr><td>Skills via progressive disclosure</td><td>Only name+description scanned until relevant; full body + scripts loaded on selection · drop-in from anthropics/skills</td></tr>
+          <tr><td>Critic judges concrete pass/fail</td><td>"does it run? do tests pass? all requirements met?" — never a self-assigned 1-10 score</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>
+    Local single-user app · runs at <code>http://localhost:8800</code> from <code>.venv</code> on free models · engine stays offline + provider-agnostic · full write-up in <code>docs/PROJECT_OVERVIEW.md</code>
+    <br>Generated 2026-06-02
+  </footer>
+</div>
+</body>
+</html>
