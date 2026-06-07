@@ -54,7 +54,7 @@ worker_tier: tier2
 # image_model: "gemini/imagen-3.0-generate-002"
 
 # Embedding-backed memory (optional): set EMBED_MODEL in .env. For Gemini:
-#   EMBED_MODEL=gemini/text-embedding-004
+#   EMBED_MODEL=gemini/gemini-embedding-001   (text-embedding-004 was retired/404s)
 
 # ---- CATALOG: the pool the cost-first selector chooses from ----------------
 # Fields per model:
@@ -98,7 +98,7 @@ catalog:
     cost: 0
     tier_hint: 2
     good_for: [coding, writing, general]
-  - id: "nvidia_nim/deepseek-ai/deepseek-r1"
+  - id: "nvidia_nim/nvidia/llama-3.3-nemotron-super-49b-v1.5"
     provider: "nvidia_nim"
     requires_env: "NVIDIA_NIM_API_KEY"
     free: true
