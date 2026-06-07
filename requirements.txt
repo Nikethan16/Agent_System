@@ -1,6 +1,7 @@
 # Upper bounds prevent a fresh install from silently pulling a breaking major
 # version (litellm in particular moves fast). Bump deliberately, then re-test.
 litellm>=1.55,<2
+tenacity>=8.0,<10    # litellm's retry/backoff path needs it (free-tier rate-limit resilience)
 fastapi>=0.110,<1
 uvicorn[standard]>=0.27,<1
 pydantic>=2.5,<3
