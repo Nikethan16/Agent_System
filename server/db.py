@@ -128,6 +128,7 @@ def init_db():
     from . import spend     # noqa: F401  (registers the Spend table)
     from . import benchmark  # noqa: F401  (registers the BenchmarkRun table)
     from . import scheduler  # noqa: F401  (registers the Schedule table)
+    from . import runs       # noqa: F401  (registers RunState + Approval tables)
     SQLModel.metadata.create_all(engine)
     _migrate()
 

@@ -16,6 +16,26 @@ from core.llm import complete, Budget
 from core.registry import registry
 from core.agents import agents as agent_registry
 
+from . import runs
+
+# Process-global registry of pending human approvals: req_id -> the broker waiting on it.
+# This is what lets an approval be answered from ANYWHERE in the process (the WS that
+# raised it, a different tab via REST, or Telegram) — not just the originating socket.
+_GLOBAL_PENDING: dict[str, "ApprovalBroker"] = {}
+_GLOBAL_LOCK = threading.Lock()
+
+
+def resolve(req_id: str, allowed: bool, reason: str = "", decided_by: str = "user") -> bool:
+    """Answer a pending approval from any caller (REST / Telegram / WS). Returns True if
+    a waiting run was found and unblocked."""
+    with _GLOBAL_LOCK:
+        broker = _GLOBAL_PENDING.get(req_id)
+    if broker is None:
+        # No live waiter (e.g. the worker already timed out) — still record the verdict.
+        runs.resolve_approval(req_id, "approved" if allowed else "denied", decided_by)
+        return False
+    return broker.resolve(req_id, allowed, reason, decided_by=decided_by)
+
 
 def _manager_review(tool, args, task_context, budget):
     """Layer 3 — the security-manager agent gives a binary approve/deny + reason."""
@@ -48,7 +68,8 @@ class ApprovalBroker:
     when the human answers."""
 
     def __init__(self, emit, budget: Budget = None, mode: str = "auto",
-                 task_context: str = "", timeout: float = 300.0):
+                 task_context: str = "", timeout: float = 300.0,
+                 session_id: str = "", run_id: str = ""):
         # mode: "auto"    -> manager agent + human only for require-human actions
         #       "careful" -> manager agent + human for EVERY escalated action
         #       "trusted" -> auto-approve everything except hard-blocks (no manager/human)
@@ -57,6 +78,8 @@ class ApprovalBroker:
         self.mode = mode
         self.task_context = task_context
         self.timeout = timeout
+        self.session_id = session_id
+        self.run_id = run_id
         self._pending: dict[str, dict] = {}
 
     # called inside the worker thread (this is the core `approve` callback)
@@ -81,19 +104,39 @@ class ApprovalBroker:
         req_id = uuid.uuid4().hex
         ev = threading.Event()
         self._pending[req_id] = {"event": ev, "result": (False, "no response")}
+        # Persist + register globally BEFORE emitting, so an answer that arrives from a
+        # different client (reconnect / second tab / Telegram) can always find this waiter.
+        try:
+            runs.create_approval(req_id, self.session_id, self.run_id, tool.name,
+                                 json.dumps(args, default=str), tool.risk,
+                                 decision.reason, manager_reason or "")
+        except Exception:
+            pass
+        with _GLOBAL_LOCK:
+            _GLOBAL_PENDING[req_id] = self
         self.emit({"type": "approval_request", "id": req_id, "tool": tool.name,
                    "args": args, "risk": tool.risk, "reason": decision.reason,
                    "manager_reason": manager_reason})
-        if not ev.wait(timeout=self.timeout):
-            self._pending.pop(req_id, None)
-            return False, "approval timed out"
-        return self._pending.pop(req_id)["result"]
+        try:
+            if not ev.wait(timeout=self.timeout):
+                self._pending.pop(req_id, None)
+                runs.resolve_approval(req_id, "timeout", "timeout")
+                return False, "approval timed out"
+            return self._pending.pop(req_id)["result"]
+        finally:
+            with _GLOBAL_LOCK:
+                _GLOBAL_PENDING.pop(req_id, None)
 
-    # called from the ws handler when the client answers
-    def resolve(self, req_id, allowed, reason=""):
+    # called when the client answers — from the WS, OR via the module-level resolve()
+    # (REST / Telegram). Idempotent: the first answer wins.
+    def resolve(self, req_id, allowed, reason="", decided_by="user"):
         p = self._pending.get(req_id)
         if p:
             p["result"] = (bool(allowed), reason or ("approved by user" if allowed else "denied by user"))
+            try:
+                runs.resolve_approval(req_id, "approved" if allowed else "denied", decided_by)
+            except Exception:
+                pass
             p["event"].set()
             return True
         return False

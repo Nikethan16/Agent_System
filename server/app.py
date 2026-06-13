@@ -22,6 +22,7 @@ from .api import memory as memory_api
 from .api import benchmark as benchmark_api
 from .api import schedules as schedules_api
 from .api import fleet as fleet_api
+from .api import runs as runs_api
 
 import tools  # noqa: F401  (registers web_search/web_fetch/generate_image/mcp_call)
 
@@ -40,6 +41,7 @@ app.include_router(memory_api.router, dependencies=_auth)
 app.include_router(benchmark_api.router, dependencies=_auth)
 app.include_router(schedules_api.router, dependencies=_auth)
 app.include_router(fleet_api.router, dependencies=_auth)
+app.include_router(runs_api.router, dependencies=_auth)
 app.include_router(ws.router)
 
 # Create tables at import so every entrypoint (uvicorn, TestClient, scripts) is ready.
@@ -48,6 +50,8 @@ db.init_db()
 
 @app.on_event("startup")
 def _resume_jobs():
+    from . import runs
+    runs.mark_stale_running_done()   # any run still "running" is orphaned from a prior process
     jobs.start_worker()          # resume any queued jobs after a restart
     scheduler.start_scheduler()  # start firing due scheduled tasks
     from . import telegram

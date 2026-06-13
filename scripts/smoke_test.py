@@ -628,6 +628,52 @@ orch.team.run = _orig_run_cr
 check("coding quality: acceptance criteria reach the critic's rubric",
       "must output exactly 42" in _capr.get("p", ""))
 
+# ---- unattended runs: persistent approvals + run state ----------------------
+print("\n[unattended runs]")
+import threading as _th
+import time as _tm
+from server import approvals as APV, runs as RUNS
+_runsess = _db.create_session("runs chat")
+_rid = RUNS.start_run(_runsess.id, "approve me")
+check("runs: active_run reports the in-flight run", (RUNS.active_run(_runsess.id) or {}).get("id") == _rid)
+# An approval is persisted, survives the originating caller, and is answerable from
+# ANYWHERE in the process via approvals.resolve() (REST / Telegram / a second tab).
+_evs = []
+_brk = APV.ApprovalBroker(lambda e: _evs.append(e), mode="careful",
+                          session_id=_runsess.id, run_id=_rid)
+_tool = toolbelt.get("run_bash")
+_dec = type("D", (), {"reason": "risky", "requires_human": True})()
+_res = {}
+def _wait_approve():
+    _res["r"] = _brk._ask_human(_tool, {"command": "ls"}, _dec, "mgr approved")
+_t = _th.Thread(target=_wait_approve)
+_t.start()
+for _ in range(100):
+    if any(e.get("type") == "approval_request" for e in _evs):
+        break
+    _tm.sleep(0.02)
+_areq = next((e for e in _evs if e.get("type") == "approval_request"), {})
+check("approval: persisted as pending while waiting",
+      any(a["id"] == _areq.get("id") for a in RUNS.pending_approvals(_runsess.id)))
+check("approval: resolvable out-of-band (global resolve unblocks the run)",
+      APV.resolve(_areq.get("id"), True, "ok") is True)
+_t.join(timeout=3)
+check("approval: the waiting run received the verdict", _res.get("r", (False,))[0] is True)
+check("approval: DB row marked approved", (RUNS.get_approval(_areq.get("id")) or {}).get("status") == "approved")
+RUNS.finish_run(_rid, "done", 0.0)
+check("runs: a finished run is no longer active", RUNS.active_run(_runsess.id) is None)
+# Telegram approve-from-chat: "/yes <id>" resolves a pending approval (offline; stub send)
+_orig_tgsend = TG._send
+TG._send = lambda cid, t: None
+_os.environ["TELEGRAM_ALLOWED_CHAT_IDS"] = "424242"
+RUNS.create_approval("tgapprovalreq0000000000000000abc", _runsess.id, "", "run_bash", "{}",
+                     "critical", "why", "mgr")
+TG._handle({"message": {"chat": {"id": 424242}, "text": "/yes tgapprovalreq0000000000000000abc"}})
+TG._send = _orig_tgsend
+_os.environ.pop("TELEGRAM_ALLOWED_CHAT_IDS", None)
+check("telegram: /yes <id> resolves a pending approval from the phone",
+      (RUNS.get_approval("tgapprovalreq0000000000000000abc") or {}).get("status") == "approved")
+
 # ---- server (REST + queue + diff + memory) ----------------------------------
 print("\n[server / app]")
 from fastapi.testclient import TestClient
@@ -695,6 +741,17 @@ with TestClient(app, headers=_AUTH_HEADERS) as c:
     h = c.get("/api/fleet/health").json()
     check("fleet health API returns keys/models/recent/caches",
           all(k in h for k in ("keys", "models", "recent", "caches")))
+
+    # unattended runs: active-run + answer-an-approval-later endpoints
+    ar = c.get(f"/api/sessions/{sid}/active-run").json()
+    check("active-run API returns {run, pending}", "run" in ar and "pending" in ar)
+    RUNS.create_approval("apitest1234567890abcdef", sid, "", "run_bash", "{}", "critical", "why", "mgr")
+    check("approvals API lists the pending request",
+          any(a["id"] == "apitest1234567890abcdef" for a in c.get(f"/api/sessions/{sid}/approvals").json()["pending"]))
+    _rv = c.post("/api/approvals/apitest1234567890abcdef/resolve", json={"allowed": False, "reason": "no"}).json()
+    check("resolve API records a verdict", _rv.get("ok") and _rv.get("status") == "denied")
+    check("resolve API 404s an unknown approval",
+          c.post("/api/approvals/doesnotexist/resolve", json={"allowed": True}).status_code == 404)
 
     c.delete(f"/api/sessions/{sid}")
 

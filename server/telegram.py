@@ -3,8 +3,10 @@ telegram.py — control the agent from your phone via a Telegram bot.
 
 A long-polling bot (getUpdates) so it works from localhost with NO public URL/webhook.
 Each Telegram chat maps to a persistent session, so memory + project state carry over
-between messages just like the web UI. Runs unattended (auto-approve path, same as the
-job queue; policy hard-blocks still apply — there's no Approve button in chat yet).
+between messages just like the web UI. Each task runs in its own thread (so the poll loop
+stays responsive); risky actions that need a human are sent to the chat and you answer
+with `/yes <id>` or `/no <id>` — the same approval that the web UI raises, now answerable
+from your phone. Policy hard-blocks still apply.
 
 PLACEHOLDERS you provide (in .env) — the bot is a NO-OP until the token is set:
   TELEGRAM_BOT_TOKEN          from @BotFather (https://t.me/BotFather → /newbot)
@@ -91,22 +93,65 @@ def _handle(update: dict):
 
     if text in ("/start", "/help"):
         _send(chat_id, "AGENT // CORE bot. Send me a task and I'll run it (research, code, "
-                       "documents…). /new starts a fresh chat.")
+                       "documents…). /new starts a fresh chat. When I need permission for a "
+                       "risky action I'll ask — reply /yes <id> or /no <id>.")
         return
     if text == "/new":
         _MAP[chat_id] = db.create_session(title=f"Telegram {chat_id}").id
         _send(chat_id, "Started a fresh chat. ✨")
         return
 
+    # Answer a pending approval from the phone: "/yes <id>" or "/no <id>".
+    low = text.lower()
+    if low.startswith(("/yes", "/no", "/approve", "/deny")):
+        from . import approvals
+        parts = text.split()
+        req_id = parts[1] if len(parts) > 1 else ""
+        allow = low.startswith(("/yes", "/approve"))
+        ok = bool(req_id) and approvals.resolve(req_id, allow, "via telegram", decided_by="telegram")
+        if not ok:           # no live waiter — still record the verdict if the row exists
+            from . import runs
+            ok = runs.resolve_approval(req_id, "approved" if allow else "denied", "telegram")
+        _send(chat_id, ("✅ approved" if allow else "🚫 denied") if ok
+                       else "Couldn't find that pending approval — check the id.")
+        return
+
     sid = _session_for(chat_id)
     _send(chat_id, "🤖 on it…")
-    try:
+    _run_task_async(chat_id, sid, text)
+
+
+def _run_task_async(chat_id: str, sid: str, text: str):
+    """Run one task in its OWN thread so the long-poll loop stays free to receive the
+    user's /yes /no approval replies while the task waits on them."""
+    from . import chat, runs, approvals
+    from core.llm import Budget
+
+    def _emit(ev):
+        # Only surface approval prompts to the chat (other events would be noise); the
+        # user answers with /yes <id> or /no <id>, which approvals.resolve() routes back.
+        if isinstance(ev, dict) and ev.get("type") == "approval_request":
+            _send(chat_id, f"⚠️ Approval needed: tool {ev.get('tool')} (risk={ev.get('risk')}).\n"
+                           f"{ev.get('reason', '')}\nReply /yes {ev.get('id')} to approve, "
+                           f"or /no {ev.get('id')} to deny.")
+
+    def _worker():
         budget = Budget(max_usd=float(os.environ.get("TELEGRAM_MAX_USD", "0.5")),
                         max_iterations=30)
-        final = chat.run_turn(sid, text, budget=budget)
-        _send(chat_id, final or "(done)")
-    except Exception as e:
-        _send(chat_id, f"⚠️ error: {type(e).__name__}: {e}")
+        run_id = runs.start_run(sid, text)
+        broker = approvals.ApprovalBroker(_emit, budget=budget, mode="auto",
+                                          task_context=text, session_id=sid, run_id=run_id)
+        status = "done"
+        try:
+            final = chat.run_turn(sid, text, budget=budget, approve=broker.approve)
+            _send(chat_id, final or "(done)")
+        except Exception as e:
+            status = "error"
+            _send(chat_id, f"⚠️ error: {type(e).__name__}: {e}")
+        finally:
+            runs.finish_run(run_id, status, budget.spent_usd)
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def maybe_notify(session_id: str, text: str) -> bool:

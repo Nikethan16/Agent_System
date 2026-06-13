@@ -13,6 +13,7 @@ the async socket via a thread-safe queue. Approvals block the worker thread unti
 client answers (ApprovalBroker). Stop is cooperative (trips the budget's iteration cap).
 """
 import os
+import json
 import asyncio
 import threading
 
@@ -22,6 +23,7 @@ from core.llm import Budget
 from ..chat import run_turn
 from ..approvals import ApprovalBroker
 from ..auth import ws_authorized
+from .. import runs
 
 router = APIRouter()
 
@@ -57,6 +59,21 @@ async def run_socket(websocket: WebSocket, session_id: str):
 
     sender_task = asyncio.create_task(sender())
 
+    # Reattach: if a run for this session is still in flight (e.g. the browser reloaded),
+    # re-surface any pending approval requests so they can be answered here. The waiting
+    # worker thread is unblocked by approvals.resolve() regardless of which socket answers.
+    try:
+        for a in runs.pending_approvals(session_id):
+            emit({"type": "approval_request", "id": a["id"], "tool": a["tool"],
+                  "args": json.loads(a.get("args") or "{}"), "risk": a.get("risk", ""),
+                  "reason": a.get("reason", ""), "manager_reason": a.get("manager_reason", ""),
+                  "reattached": True})
+        _ar = runs.active_run(session_id)
+        if _ar:
+            emit({"type": "reattach", "run": _ar})
+    except Exception:
+        pass
+
     try:
         while True:
             msg = await websocket.receive_json()
@@ -77,8 +94,11 @@ async def run_socket(websocket: WebSocket, session_id: str):
                     max_usd=max(0.0, min(req_usd, _MAX_USD_CEILING)),
                     max_iterations=max(1, min(req_iter, _MAX_ITER_CEILING)),
                 )
-                broker = ApprovalBroker(emit, budget=budget,
-                                        mode=msg.get("mode", "auto"), task_context=text)
+                # Persist a run record so the UI can reattach after a reload, and so the
+                # broker can store approvals against this run (answerable out-of-band).
+                run_id = runs.start_run(session_id, text)
+                broker = ApprovalBroker(emit, budget=budget, mode=msg.get("mode", "auto"),
+                                        task_context=text, session_id=session_id, run_id=run_id)
                 state["broker"], state["budget"] = broker, budget
                 plan_first = bool(msg.get("plan_first", False))
                 subtasks = msg.get("subtasks") or None
@@ -90,10 +110,11 @@ async def run_socket(websocket: WebSocket, session_id: str):
                 attachments = msg.get("attachments") or None
                 acceptance = (msg.get("acceptance") or "").strip()
 
-                def worker(text=text, budget=budget, broker=broker,
+                def worker(text=text, budget=budget, broker=broker, run_id=run_id,
                            plan_first=plan_first, subtasks=subtasks, review=review,
                            parallel=parallel, stream=stream, attachments=attachments,
                            acceptance=acceptance):
+                    status = "done"
                     try:
                         run_turn(session_id, text, budget=budget, emit=emit,
                                  approve=broker.approve, plan_first=plan_first,
@@ -101,8 +122,10 @@ async def run_socket(websocket: WebSocket, session_id: str):
                                  parallel=parallel, stream=stream, attachments=attachments,
                                  acceptance=acceptance)
                     except Exception as e:
+                        status = "error"
                         emit({"type": "error", "text": f"{type(e).__name__}: {e}"})
                     finally:
+                        runs.finish_run(run_id, status, budget.spent_usd)
                         emit({"type": "run_complete", "cost": round(budget.spent_usd, 6)})
 
                 threading.Thread(target=worker, daemon=True).start()
