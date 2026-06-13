@@ -74,7 +74,7 @@ agents:
   - id: research
     label: Research Analyst
     tier: tier2
-    tools: [web_search, web_fetch, read_file, parse_document, write_file]
+    tools: [web_search, web_fetch, safety_check, read_file, parse_document, write_file]
     capabilities: [research, web, investigation, recommendations]
     when_to_use: "Find information online, investigate options, recommend next steps."
     prompt: |

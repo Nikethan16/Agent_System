@@ -90,5 +90,12 @@ def audit(record: dict) -> None:
         d = os.path.dirname(_AUDIT_PATH)
         if d:
             os.makedirs(d, exist_ok=True)   # never crash a tool call on a missing log dir
+        # G6: rotate when the log gets big so it can't grow without bound (keep one .1).
+        try:
+            cap = int(os.environ.get("AUDIT_LOG_MAX_BYTES", "5000000"))
+            if os.path.exists(_AUDIT_PATH) and os.path.getsize(_AUDIT_PATH) > cap:
+                os.replace(_AUDIT_PATH, _AUDIT_PATH + ".1")
+        except OSError:
+            pass
         with open(_AUDIT_PATH, "a", encoding="utf-8") as f:
             f.write(line + "\n")

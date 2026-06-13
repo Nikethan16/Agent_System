@@ -51,6 +51,11 @@ def main(argv=None):
     report.print_run(run)
     path = report.write_report({"mode": "single", "run": run})
     print(f"  report written: {path}")
+    # --dry-run uses simulated answers, so the pass-rate is meaningless — its job is to
+    # validate that the harness LOADS + RUNS every case offline. Exit 0 once it has
+    # (so it works as a CI smoke of the harness itself); real runs gate on the threshold.
+    if args.dry_run:
+        return 0
     return report.exit_code_for(run)
 
 

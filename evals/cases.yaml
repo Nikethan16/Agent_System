@@ -57,3 +57,21 @@ cases:
           The answer must explain a cost-versus-quality (or cost-versus-capability)
           trade-off — i.e. cheaper/smaller models for easy work and stronger/more
           expensive models for hard work — and read as coherent prose.
+
+  - id: architect-design
+    task: >
+      Produce a short technical design for a URL-shortener service: list the key
+      requirements, the main components, and an ordered build plan.
+    budget: { max_usd: 0.50, max_iterations: 12 }
+    graders:
+      - { type: contains, any: ["requirement", "component", "plan", "step", "design"] }
+      - { type: not_contains, all: ["as an ai", "i cannot"] }
+
+  - id: data-compute
+    task: >
+      Compute and state clearly both the sum and the average of these numbers:
+      4, 8, 15, 16, 23, 42.
+    budget: { max_usd: 0.40, max_iterations: 8 }
+    graders:
+      - { type: contains, all: ["108"] }
+      - { type: contains, any: ["18", "average", "mean", "avg"] }
