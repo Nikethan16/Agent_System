@@ -21,6 +21,8 @@ load_dotenv()
 import litellm
 
 from . import keypool
+from . import cache
+from . import metrics
 
 # Silently drop params a given provider doesn't support, so the same call
 # works across OpenAI / Anthropic / Gemini / local without branching.
@@ -208,6 +210,7 @@ def complete(model, messages, tools=None, max_tokens=4096,
         key = pool.acquire() if pool else None
         if key is not None:
             kwargs["api_key"] = key.value
+        _t0 = time.time()
         try:
             resp = litellm.completion(**kwargs)
         except _RATE_LIMIT as e:                 # this key is throttled — cool it, rotate
@@ -226,6 +229,7 @@ def complete(model, messages, tools=None, max_tokens=4096,
         if not getattr(resp, "choices", None):
             raise EmptyResponse(f"{model} returned no choices")
         cost = _cost_of(resp)
+        metrics.record(model, time.time() - _t0, ok=True, cost=cost)
         if budget:
             budget.add_cost(cost)
             budget.tick()
@@ -263,6 +267,7 @@ def complete_chain(models, messages, tools=None, max_tokens=4096, budget: Budget
         except Exception as e:                     # rate-limit-exhausted / timeout / 5xx / empty
             last_exc = e
             nxt = chain[i + 1] if i + 1 < len(chain) else None
+            metrics.record(model, 0.0, ok=False, fallback=bool(nxt), error=type(e).__name__)
             if nxt and on_fallback:
                 try:
                     on_fallback(model, nxt, f"{type(e).__name__}: {str(e)[:120]}")
@@ -330,22 +335,35 @@ def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
 
 def embed(texts, model, budget: Budget = None):
     """Provider-agnostic embeddings through the single call point + Budget.
-    Returns (list_of_vectors, cost). Requires an embedding model + provider key."""
+    Returns (list_of_vectors, cost). Requires an embedding model + provider key.
+
+    Embeddings are deterministic, so results are CACHED per (model, text) — only the
+    UNcached texts hit the provider (one call), which makes RAG re-indexing and repeated
+    recall near-free on the rate-limited free tier. An all-cached call spends nothing."""
     one = isinstance(texts, str)
-    if budget:
-        budget.check()
-    resp = litellm.embedding(model=model, input=[texts] if one else list(texts),
-                             api_key=_key_for(model))
+    items = [texts] if one else list(texts)
+    ec = cache.get_cache("embed", ttl=86400, max_entries=4096)
+    keys = [cache.key_for("embed", model, t) for t in items]
+    out = [ec.get(k) for k in keys]
+    missing = [i for i in range(len(items)) if out[i] is None]
     cost = 0.0
-    try:
-        cost = resp._hidden_params.get("response_cost") or 0.0
-    except Exception:
-        cost = 0.0
-    if budget:
-        budget.add_cost(cost)
-        budget.tick()
-    vecs = [(d["embedding"] if isinstance(d, dict) else d.embedding) for d in resp.data]
-    return (vecs[0] if one else vecs), cost
+    if missing:
+        if budget:
+            budget.check()
+        resp = litellm.embedding(model=model, input=[items[i] for i in missing],
+                                 api_key=_key_for(model))
+        try:
+            cost = resp._hidden_params.get("response_cost") or 0.0
+        except Exception:
+            cost = 0.0
+        vecs = [(d["embedding"] if isinstance(d, dict) else d.embedding) for d in resp.data]
+        for i, v in zip(missing, vecs):
+            out[i] = v
+            ec.put(keys[i], v)
+        if budget:
+            budget.add_cost(cost)
+            budget.tick()
+    return (out[0] if one else out), cost
 
 
 def stream_complete_tools(model, messages, tools=None, max_tokens=4096,

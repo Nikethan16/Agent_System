@@ -10,6 +10,8 @@ import difflib
 import contextvars
 import subprocess
 
+from . import cache
+
 # Default sandbox root (env-configurable). Per-session code can override the root
 # for the duration of a call via using_workspace(); the containment check below is
 # unchanged — tools stay sandboxed, only the *location* of the sandbox is per-session.
@@ -69,19 +71,34 @@ def parse_document(path: str) -> str:
         return f"ERROR: {e}"
     if not os.path.isfile(full):
         return f"ERROR: no such file: {path}"
+    # Cache the parse keyed on path + mtime + size, so a repeated read is instant but a
+    # CHANGED file re-parses (no stale content). Parsing PDFs/DOCX is slow, so this helps.
+    _pc = cache.get_cache("parse_document")
+    try:
+        st = os.stat(full)
+        ckey = cache.key_for("parse", full, st.st_mtime_ns, st.st_size)
+        hit = _pc.get(ckey)
+        if hit is not None:
+            return hit
+    except OSError:
+        ckey = None
     try:
         from markitdown import MarkItDown
         md = MarkItDown().convert(full)
-        return (getattr(md, "text_content", None) or str(md))[:20000]
+        out = (getattr(md, "text_content", None) or str(md))[:20000]
     except Exception as e:
         try:
             if full.lower().endswith(".pdf"):
                 from pypdf import PdfReader
-                return "\n".join((p.extract_text() or "") for p in PdfReader(full).pages)[:20000]
-            with open(full, encoding="utf-8", errors="replace") as f:
-                return f.read(20000)
+                out = "\n".join((p.extract_text() or "") for p in PdfReader(full).pages)[:20000]
+            else:
+                with open(full, encoding="utf-8", errors="replace") as f:
+                    out = f.read(20000)
         except Exception as e2:
             return f"ERROR parsing {path}: {e}; fallback failed: {e2}"
+    if ckey:
+        _pc.put(ckey, out)
+    return out
 
 
 def write_file(path: str, content: str) -> str:

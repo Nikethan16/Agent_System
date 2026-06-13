@@ -10,6 +10,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from core import keypool
+from core import metrics
+from core import cache as core_cache
 from core.registry import registry
 from core.llm import complete, Budget
 
@@ -76,6 +78,27 @@ def test_provider(body: ProviderIn):
 @router.get("/usage")
 def usage():
     return keypool.report_all()
+
+
+# ---- model health (per-key usage + per-call metrics + cache hit-rates) ------
+# NOTE: namespaced under /api/fleet/* so it can't collide with the app's /api/health
+# liveness probe.
+@router.get("/fleet/health")
+def fleet_health():
+    """The Model Health dashboard feed: per-key pool usage/429-cooldowns, per-model call
+    metrics (calls, errors, avg latency, fallbacks, cost), the most recent calls, and
+    cache hit-rates (web/doc-parse/embeddings). All offline-derived; no secrets."""
+    return {"keys": keypool.report_all(),
+            "models": metrics.summary(),
+            "recent": metrics.recent(60),
+            "caches": core_cache.all_stats()}
+
+
+@router.post("/fleet/health/reset")
+def fleet_health_reset():
+    """Clear the in-memory call metrics (the pool/cache keep their own state)."""
+    metrics.reset()
+    return {"ok": True}
 
 
 # ---- routing (view + edit the fallback chains) ------------------------------
