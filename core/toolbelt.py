@@ -73,12 +73,18 @@ def _obj(props, required=None):
 
 
 # ---- built-in OFFLINE sandboxed tools (file/shell) --------------------------
-from .tools import read_file, write_file, edit_file, list_files, run_bash  # noqa: E402
+from .tools import read_file, write_file, edit_file, list_files, run_bash, parse_document  # noqa: E402
 
 register_fn(
     "read_file", lambda path: read_file(path),
     _obj({"path": {"type": "string"}}, ["path"]),
     "Read the full contents of a file in the workspace.", RISK_SAFE,
+)
+register_fn(
+    "parse_document", lambda path: parse_document(path),
+    _obj({"path": {"type": "string"}}, ["path"]),
+    "Convert a document (PDF/DOCX/PPTX/XLSX/HTML) in the workspace to clean markdown — "
+    "use this to read a spec/FRS/report with its structure (headings, tables) intact.", RISK_SAFE,
 )
 register_fn(
     "list_files", lambda directory=".": list_files(directory),

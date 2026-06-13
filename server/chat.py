@@ -169,10 +169,26 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
     if summary:
         blocks.append("Summary of earlier in this conversation:\n" + summary)
 
-    # 4) Project knowledge (instructions + files) shared across the project's chats.
-    proj_ctx = projects.context(project_id)
-    if proj_ctx:
-        blocks.append(proj_ctx)
+    # 4) Project knowledge — use RAG (retrieve only the RELEVANT chunks) when an
+    # embedding model is available; otherwise fall back to whole-file injection. This
+    # keeps big FRS/doc sets usable without overflowing the context (C4).
+    if project_id and not subtasks:
+        used_rag = False
+        try:
+            from . import rag
+            if rag.enabled():
+                rag.ensure_indexed(project_id)
+                hits = rag.retrieve(text, f"project:{project_id}", k=5)
+                if hits:
+                    blocks.append("Relevant excerpts from project knowledge (reference):\n\n"
+                                  + "\n\n---\n\n".join(hits))
+                    used_rag = True
+        except Exception:
+            used_rag = False
+        if not used_rag:
+            proj_ctx = projects.context(project_id)
+            if proj_ctx:
+                blocks.append(proj_ctx)
 
     # 5) Attachments provided on this turn.
     att = _attachments_context(db.session_workspace(session_id), attachments)

@@ -444,6 +444,19 @@ _tsid = TG._session_for("tg-smoke-chat")
 check("telegram maps a chat to a persistent session (find-or-create)",
       bool(_tsid) and TG._session_for("tg-smoke-chat") == _tsid)
 
+# ---- document intelligence: doc-parser tool + RAG (Wave 4) ------------------
+print("\n[document intelligence]")
+check("parse_document tool registered", "parse_document" in toolbelt.names())
+check("parse_document granted to architect + research",
+      "parse_document" in _team4.agents.get("architect").tools
+      and "parse_document" in _team4.agents.get("research").tools)
+from server import rag as RAG
+RAG.index_text("The billing service uses Postgres and Stripe for card payments.", "spec.md", "project:ragtest")
+RAG.index_text("The frontend is built with React and Tailwind CSS.", "ui.md", "project:ragtest")
+_rh = RAG.retrieve("how does billing handle payments", "project:ragtest", k=1)
+check("RAG retrieves the relevant chunk by query", bool(_rh) and "billing" in _rh[0].lower())
+check("RAG tracks indexed sources", RAG.indexed_sources("project:ragtest") == {"spec.md", "ui.md"})
+
 # ---- global daily spend cap -------------------------------------------------
 from server import spend as SP
 SP.record(0.10)

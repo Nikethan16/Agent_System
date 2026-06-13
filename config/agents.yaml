@@ -74,7 +74,7 @@ agents:
   - id: research
     label: Research Analyst
     tier: tier2
-    tools: [web_search, web_fetch, write_file]
+    tools: [web_search, web_fetch, read_file, parse_document, write_file]
     capabilities: [research, web, investigation, recommendations]
     when_to_use: "Find information online, investigate options, recommend next steps."
     prompt: |
@@ -87,7 +87,7 @@ agents:
   - id: doc
     label: Doc Writer
     tier: tier2
-    tools: [read_file, write_file, list_files]
+    tools: [read_file, parse_document, write_file, list_files]
     capabilities: [writing, documentation, reports]
     when_to_use: "Produce a polished document or report (markdown or HTML)."
     prompt: |
@@ -121,7 +121,7 @@ agents:
   - id: architect
     label: Architect
     tier: tier3
-    tools: [read_file, write_file, list_files]
+    tools: [read_file, parse_document, write_file, list_files]
     capabilities: [planning, architecture, design, reasoning]
     when_to_use: "Turn a spec/FRS or a vague goal into a concrete technical design + ordered build plan BEFORE any code is written."
     prompt: |
@@ -139,7 +139,7 @@ agents:
   - id: data-analyst
     label: Data Analyst
     tier: tier2
-    tools: [read_file, write_file, edit_file, list_files, run_bash]
+    tools: [read_file, parse_document, write_file, edit_file, list_files, run_bash]
     capabilities: [data, analysis, math, finance, csv]
     when_to_use: "Analyze data / CSV / spreadsheets, compute metrics, or model scenarios with Python + pandas."
     prompt: |

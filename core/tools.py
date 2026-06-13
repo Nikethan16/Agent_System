@@ -59,6 +59,31 @@ def read_file(path: str) -> str:
         return f"ERROR reading {path}: {e}"
 
 
+def parse_document(path: str) -> str:
+    """Convert a workspace document (PDF / DOCX / PPTX / XLSX / HTML) to clean markdown
+    so an agent can read a spec/FRS with structure (headings, tables) intact — far better
+    than raw bytes. Uses markitdown, with a pypdf / plain-text fallback. (C2)"""
+    try:
+        full = _safe(path)
+    except Exception as e:
+        return f"ERROR: {e}"
+    if not os.path.isfile(full):
+        return f"ERROR: no such file: {path}"
+    try:
+        from markitdown import MarkItDown
+        md = MarkItDown().convert(full)
+        return (getattr(md, "text_content", None) or str(md))[:20000]
+    except Exception as e:
+        try:
+            if full.lower().endswith(".pdf"):
+                from pypdf import PdfReader
+                return "\n".join((p.extract_text() or "") for p in PdfReader(full).pages)[:20000]
+            with open(full, encoding="utf-8", errors="replace") as f:
+                return f.read(20000)
+        except Exception as e2:
+            return f"ERROR parsing {path}: {e}; fallback failed: {e2}"
+
+
 def write_file(path: str, content: str) -> str:
     try:
         full = _safe(path)

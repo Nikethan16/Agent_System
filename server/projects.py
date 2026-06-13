@@ -85,6 +85,28 @@ def remove_file(pid: str, name: str):
         os.remove(p)
 
 
+def file_texts(pid: str) -> dict:
+    """Per-file raw text of a project's knowledge files (for RAG indexing)."""
+    out = {}
+    if not pid:
+        return out
+    d = _dir(pid)
+    for n in sorted(os.listdir(d)):
+        full = os.path.join(d, n)
+        if not os.path.isfile(full):
+            continue
+        try:
+            if n.lower().endswith(".pdf"):
+                from pypdf import PdfReader
+                out[n] = "\n".join((pg.extract_text() or "") for pg in PdfReader(full).pages)
+            else:
+                with open(full, encoding="utf-8", errors="replace") as f:
+                    out[n] = f.read()
+        except Exception as e:
+            log.warning("skipping unreadable project file %s: %s", full, e)
+    return out
+
+
 def context(pid: str, limit_per_file: int = 4000) -> str:
     """The project's instructions + knowledge file texts, for injection into chats."""
     if not pid:
