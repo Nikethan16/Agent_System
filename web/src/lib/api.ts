@@ -51,6 +51,8 @@ const POST = (url: string, body: any) =>
   request(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const PATCH = (url: string, body: any) =>
   request(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const PUT = (url: string, body: any) =>
+  request(url, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const DELETE = (url: string) => request(url, { method: "DELETE" });
 const UPLOAD = (url: string, file: File) => {
   const fd = new FormData();
@@ -108,6 +110,29 @@ export const api = {
   benchmarkCases: () => GET("/api/benchmark/cases"),
   benchmarkRuns: () => GET("/api/benchmark/runs"),
   startBenchmark: (model: string, mode: string) => POST("/api/benchmark/run", { model, mode }),
+
+  // fleet management: API-key pool, fallback routing, per-key usage/health
+  keys: () => GET("/api/keys"),
+  addKey: (provider: string, key: string) => POST("/api/keys", { provider, key }),
+  removeKey: (provider: string, masked: string) =>
+    DELETE(`/api/keys/${encodeURIComponent(provider)}/${encodeURIComponent(masked)}`),
+  testKey: (provider: string) => POST("/api/keys/test", { provider }),
+  usage: () => GET("/api/usage"),
+  routing: () => GET("/api/routing"),
+  setRouting: (task_type: string, chain: string[]) => PUT("/api/routing", { task_type, chain }),
+
+  // scheduled tasks (once/interval/daily/weekly)
+  schedules: (session_id?: string) =>
+    GET("/api/schedules" + (session_id ? `?session_id=${encodeURIComponent(session_id)}` : "")),
+  createSchedule: (body: { session_id: string; text: string; kind: string; spec: string }) =>
+    POST("/api/schedules", body),
+  toggleSchedule: (sid: string) => POST(`/api/schedules/${sid}/toggle`, {}),
+  runSchedule: (sid: string) => POST(`/api/schedules/${sid}/run`, {}),
+  deleteSchedule: (sid: string) => DELETE(`/api/schedules/${sid}`),
+
+  // project roadmap (resumable state)
+  state: (sessionId: string) => GET(`/api/memory/state/${sessionId}`),
+  clearState: (sessionId: string) => DELETE(`/api/memory/state/${sessionId}`),
 
   files: (id: string) => GET(`/api/sessions/${id}/files`),
   readFile: (id: string, path: string) =>

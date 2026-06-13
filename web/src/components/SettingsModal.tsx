@@ -3,11 +3,15 @@ import { useStore } from "../lib/store";
 import { getAuthToken, setAuthToken } from "../lib/api";
 import ModelRail from "./ModelRail";
 import MemoryPanel from "./MemoryPanel";
+import FleetPanel from "./FleetPanel";
+import SchedulesPanel from "./SchedulesPanel";
 
 const TABS = [
   { id: "general", label: "General", icon: "tune" },
   { id: "limits", label: "Limits & cost", icon: "savings" },
   { id: "models", label: "Models", icon: "smart_toy" },
+  { id: "fleet", label: "Fleet & keys", icon: "key" },
+  { id: "schedules", label: "Schedules", icon: "schedule" },
   { id: "memory", label: "Memory", icon: "neurology" },
   { id: "security", label: "Security", icon: "shield" },
 ];
@@ -117,6 +121,8 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
                 <ModelRail />
               </div>
             )}
+            {tab === "fleet" && <FleetPanel />}
+            {tab === "schedules" && <SchedulesPanel />}
             {tab === "memory" && <MemoryPanel />}
             {tab === "security" && (
               <div>
