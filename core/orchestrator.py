@@ -168,9 +168,29 @@ def _review(task, result, budget, emit, approve):
     return passed, summary + ("\n- " + "\n- ".join(issues) if issues else "")
 
 
+# Markers an agent emits when it FAILED rather than produced real work (from agent.py's
+# graceful error/limit handling). Used to trigger an automatic retry (A2).
+_FAIL_MARKERS = ("(stopped:", "(the model provider returned an error", "(provider error",
+                 "(the model returned an empty")
+
+
+def _looks_failed(r) -> bool:
+    s = (r or "").strip().lower()
+    return (not s) or s.startswith(_FAIL_MARKERS)
+
+
 def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=False, task_type=None):
     r = team.run(agent_id, task, budget=budget, emit=emit, approve=approve,
                  context=context, stream=stream, task_type=task_type)
+    # A2: if the agent errored / gave up / returned nothing, retry once with a nudge
+    # (the model fallback chain has already handled provider-down within the run).
+    if _looks_failed(r):
+        if emit:
+            emit({"type": "retry", "agent": agent_id, "reason": "previous attempt failed"})
+        r = team.run(agent_id, task + "\n\n(Your previous attempt failed or was cut off — "
+                     "try again and give a focused, complete result.)",
+                     budget=budget, emit=emit, approve=approve, context=context,
+                     stream=stream, task_type=task_type)
     if review:
         passed, feedback = _review(task, r, budget, emit, approve)
         if not passed:
@@ -278,6 +298,10 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None):
                "skill": skill_arg or None})
         r = team.run(agent_id, instruction, budget=budget, emit=emit,
                      approve=approve, context=board.digest(), skills=skills)
+        if _looks_failed(r):     # A2: retry a failed delegated step once
+            _emit({"type": "retry", "agent": agent_id, "reason": "delegated step failed"})
+            r = team.run(agent_id, instruction + "\n\n(Previous attempt failed — retry carefully.)",
+                         budget=budget, emit=emit, approve=approve, context=board.digest(), skills=skills)
         board.post(agent_id, f"step-{step}", f"{instruction}\n{r}")
         return agent_id, r
 

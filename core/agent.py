@@ -75,10 +75,12 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
 
     rounds = 0
     nudged = False
+    seen_calls = {}        # tool-call signature -> count (stuck/loop detection, G4)
+    loop_break = False
     while True:
-        # Loop guard: after too many tool rounds, drop tools so the model MUST
-        # produce a final answer. Prevents weaker models from spinning on tools.
-        force_final = rounds >= MAX_TOOL_ROUNDS
+        # Loop guard: after too many tool rounds (or a detected stuck loop), drop tools
+        # so the model MUST produce a final answer. Prevents weaker models spinning.
+        force_final = rounds >= MAX_TOOL_ROUNDS or loop_break
         active_tools = None if force_final else (schemas or None)
         if force_final and not nudged:
             messages.append({"role": "user",
@@ -128,11 +130,23 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
 
         for tc in tool_calls:
             name = tc.function.name
+            raw_args = tc.function.arguments or "{}"
             try:
-                args = json.loads(tc.function.arguments or "{}")
+                args = json.loads(raw_args)
             except json.JSONDecodeError:
-                args = {}
+                # G3: malformed tool JSON — ask the model to repair it instead of
+                # running with empty args (which would just error).
+                messages.append({"role": "tool", "tool_call_id": tc.id,
+                                 "content": "ERROR: your tool-call arguments were not valid JSON. "
+                                            "Re-issue the call with a valid JSON object."})
+                continue
             _emit({"type": "tool", "agent": label, "name": name, "args": args})
+            # G4: stuck/loop detection — the same call repeated too many times forces a
+            # final answer next round (a weak model echoing one tool can't spin forever).
+            sig = f"{name}:{raw_args}"
+            seen_calls[sig] = seen_calls.get(sig, 0) + 1
+            if seen_calls[sig] >= 3:
+                loop_break = True
 
             result = _run_one_tool(name, args, label, approve, emit)
             messages.append({

@@ -120,8 +120,9 @@ plus the platform/security additions: `manager_review`, `approval_request`,
 `blocked`, `denied`, `stopping`, `run_complete`, `critic` (QA verdict), `token`
 (streamed final-answer deltas), `memory` (notes recalled from past chats),
 `agent_token` (per-agent streamed tokens when `stream=True`), `skill` (Agent
-Skills applied to a step), and `fallback` (model failover — primary unavailable/
-rate-limited → switched to the next model in the chain). (`done` is an internal
+Skills applied to a step), `fallback` (model failover — primary unavailable/
+rate-limited → switched to the next model in the chain), and `retry` (a failed/
+empty agent step is automatically retried). (`done` is an internal
 agent-finished marker.) Note `route` carries `task_type` — never a bare `type` key — so spreading the
 classifier dict into the event can't clobber the event's own `type`.
 

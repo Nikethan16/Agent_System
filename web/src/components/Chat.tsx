@@ -29,6 +29,7 @@ const PILL: Record<string, string> = {
   thought: "bg-surface-container-highest text-on-surface-variant",
   tool: "bg-accent-terracotta/10 text-accent-terracotta",
   fallback: "bg-amber-100 text-amber-700",
+  retry: "bg-amber-100 text-amber-700",
   manager_review: "bg-red-100 text-red-700",
   critic: "bg-blue-100 text-blue-700",
   memory: "bg-emerald-100 text-emerald-700",
@@ -46,6 +47,7 @@ function describe(ev: Ev): { label: string; text: any } | null {
     case "thought": return { label: ev.agent, text: (ev.text || "").slice(0, 280) };
     case "tool": return { label: "Tool", text: <code className="font-code text-[12px]">{ev.name}({Object.entries(ev.args || {}).map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 40)}`).join(", ")})</code> };
     case "fallback": return { label: "Fallback", text: <><b>{(ev.from || "").split("/").pop()}</b> unavailable → <b>{(ev.to || "").split("/").pop()}</b> <span className="text-light-muted">· {ev.reason}</span></> };
+    case "retry": return { label: "Retry", text: <>retrying <b>{ev.agent}</b> <span className="text-light-muted">· {ev.reason}</span></> };
     case "manager_review": return { label: "Security", text: <>{ev.approved ? "approved" : "denied"} — {ev.reason}</> };
     case "critic": return { label: "QA", text: <><b>{ev.passed ? "pass" : "fail"}</b> — {ev.summary}</> };
     case "memory": return { label: "Memory", text: `recalled ${ev.items?.length} note(s) from past chats` };
@@ -56,7 +58,7 @@ function describe(ev: Ev): { label: string; text: any } | null {
   }
 }
 
-const MEANINGFUL = ["plan", "tool", "critic", "manager_review", "memory", "skill", "blocked", "denied", "fallback"];
+const MEANINGFUL = ["plan", "tool", "critic", "manager_review", "memory", "skill", "blocked", "denied", "fallback", "retry"];
 
 const FIXABLE = ["error", "blocked", "denied", "limit"];
 

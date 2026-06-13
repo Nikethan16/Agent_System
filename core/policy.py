@@ -87,5 +87,8 @@ def audit(record: dict) -> None:
     record = {"ts": time.time(), **record}
     line = json.dumps(record, default=str)
     with _lock:
+        d = os.path.dirname(_AUDIT_PATH)
+        if d:
+            os.makedirs(d, exist_ok=True)   # never crash a tool call on a missing log dir
         with open(_AUDIT_PATH, "a", encoding="utf-8") as f:
             f.write(line + "\n")

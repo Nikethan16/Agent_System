@@ -156,6 +156,45 @@ _mnames = [t["function"]["name"] for t in orch._master_tool_schemas()]
 check("lead can delegate sequentially AND in parallel (delegate_parallel)",
       "delegate" in _mnames and "delegate_parallel" in _mnames)
 
+# ---- agent robustness: retry + tool-repair + loop-guard (Wave 1) ------------
+print("\n[robustness]")
+check("looks_failed flags failure markers, not real output",
+      orch._looks_failed("(stopped: x)") and orch._looks_failed("") and not orch._looks_failed("ok"))
+_rt = {"n": 0}
+_orig_run = orch.team.run
+def _flaky(agent_id, task, **kw):
+    _rt["n"] += 1
+    return "(stopped: simulated)" if _rt["n"] == 1 else "recovered"
+orch.team.run = _flaky
+_rev = []
+_rr = orch._do_subtask("coder", "do X", Budget(max_usd=1, max_iterations=5), _rev.append, None, "", False)
+orch.team.run = _orig_run
+check("retry: a failed subtask is retried and recovers",
+      _rr == "recovered" and any(e.get("type") == "retry" for e in _rev))
+from core.agent import run_agent as _ra
+import tempfile as _tf
+from core import tools as _T2
+_ln = {"n": 0}
+def _loopy(**kw):
+    _ln["n"] += 1
+    return _Resp("final") if not kw.get("tools") else _ToolResp("loop", [("list_files", "{}")])
+L.litellm.completion = _loopy
+with _T2.using_workspace(_tf.mkdtemp()):
+    _lr = _ra("x", "sys", "fake-model", budget=Budget(max_usd=1, max_iterations=30), allowed_tools=["list_files"])
+L.litellm.completion = fake
+check("loop-guard forces a final after repeated identical tool calls", _ln["n"] <= 5 and _lr == "final")
+_jn = {"n": 0}
+def _badjson(**kw):
+    _jn["n"] += 1
+    if not kw.get("tools") or _jn["n"] > 1:
+        return _Resp("done after repair")
+    return _ToolResp("call", [("list_files", "{not json")])
+L.litellm.completion = _badjson
+with _T2.using_workspace(_tf.mkdtemp()):
+    _jr = _ra("x", "sys", "fake-model", budget=Budget(max_usd=1, max_iterations=10), allowed_tools=["list_files"])
+L.litellm.completion = fake
+check("tool-repair: malformed tool JSON is repaired, run completes", _jr == "done after repair")
+
 # ---- auto-review decision (A5) ----
 check("auto-review on for complex (tier3)", orch._auto_review(3, "research") is True)
 check("auto-review on for tier2 coding", orch._auto_review(2, "coding") is True)
