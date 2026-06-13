@@ -24,7 +24,10 @@ npm-debug.log*
 # ---- runtime data / artifacts (do not version) -----------------------------
 data/
 workspace/
+evals/.workspace/
+evals/reports/
 audit.log
+audit.log.1
 config/models.discovered.yaml
 
 # ---- editor / OS / tooling -------------------------------------------------
