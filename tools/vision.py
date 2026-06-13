@@ -13,7 +13,7 @@ import mimetypes
 
 from core import toolbelt
 from core.tools import _safe
-from core.llm import complete, Budget
+from core.llm import complete, Budget, current_budget
 from core.registry import registry
 
 
@@ -33,12 +33,16 @@ def see_image(path: str, question: str = "Describe this image in detail.") -> st
         with open(full, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
         model = _vision_model()
+        # Charge the active run's budget (a child cap bounds this one call); fall back to a
+        # standalone capped budget only when called outside a run.
+        parent = current_budget()
+        b = parent.child(max_usd=0.25, max_iterations=2) if parent else Budget(max_usd=0.25, max_iterations=2)
         resp, _ = complete(
             model,
             [{"role": "user", "content": [
                 {"type": "text", "text": question},
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}]}],
-            max_tokens=700, budget=Budget(max_usd=0.25, max_iterations=2),
+            max_tokens=700, budget=b,
         )
         return resp.choices[0].message.content or "(no description returned)"
     except Exception as e:

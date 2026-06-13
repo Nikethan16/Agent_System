@@ -9,7 +9,7 @@ otherwise a quick heuristic. Registers into core.toolbelt on import.
 import os
 
 from core import toolbelt
-from core.llm import complete, Budget
+from core.llm import complete, Budget, current_budget
 
 # Cheap heuristic patterns (used when no SAFETY_MODEL is configured).
 _HEUR = ("ignore previous instructions", "ignore all previous", "disregard your instructions",
@@ -23,12 +23,14 @@ def screen(text: str) -> dict:
     model = os.environ.get("SAFETY_MODEL")
     if model:
         try:
+            parent = current_budget()
+            b = parent.child(max_usd=0.05, max_iterations=2) if parent else Budget(max_usd=0.05, max_iterations=2)
             resp, _ = complete(
                 model,
                 [{"role": "system", "content": "You are a content-safety classifier. Reply ONLY "
                                                 "'SAFE' or 'UNSAFE: <short reason>'."},
                  {"role": "user", "content": t}],
-                max_tokens=40, budget=Budget(max_usd=0.05, max_iterations=2),
+                max_tokens=40, budget=b,
             )
             out = (resp.choices[0].message.content or "").strip()
             if out.upper().startswith("UNSAFE"):

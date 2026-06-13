@@ -13,7 +13,7 @@ import urllib.request
 from core import toolbelt
 from core.tools import current_workspace
 from core.registry import registry
-from core.llm import generate_image as _gen
+from core.llm import generate_image as _gen, Budget, current_budget
 
 
 def _image_model():
@@ -30,7 +30,11 @@ def generate_image(prompt: str, filename: str = "image.png") -> str:
             "string) and the provider key in .env, then retry."
         )
     try:
-        resp, _cost = _gen(prompt, model)
+        # Image generation can be a PAID call — charge the run's budget (+ daily cap)
+        # instead of running uncapped. A child bounds this single generation.
+        parent = current_budget()
+        b = parent.child(max_usd=0.50) if parent else Budget(max_usd=0.50)
+        resp, _cost = _gen(prompt, model, budget=b)
         item = resp.data[0]
         out = os.path.join(current_workspace(), filename)
         if getattr(item, "b64_json", None):

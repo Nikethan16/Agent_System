@@ -10,7 +10,9 @@ Also enforces hard safety limits (the #1 fix from the blueprint review):
 no run can exceed its cost cap or iteration cap.
 """
 import os
+import time
 import threading
+import contextvars
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
@@ -122,6 +124,45 @@ class _SubBudget(Budget):
     def tick(self):
         Budget.tick(self)
         self.parent.tick()
+
+
+# The Budget bound to the ACTIVE run, exposed so a model call made from INSIDE a tool
+# (e.g. see_image / safety_check / generate_image in tools/) charges the SAME budget as
+# the run — preserving the "every model call counts against the run + daily cap"
+# invariant even for tool-internal calls. None when no run is active.
+_run_budget = contextvars.ContextVar("run_budget", default=None)
+
+
+def current_budget():
+    """The Budget bound to the active run (or None outside a run). Tools take a .child()
+    of this so their cost rolls up to the run + global daily cap instead of vanishing."""
+    return _run_budget.get()
+
+
+def set_run_budget(budget):
+    """Bind `budget` as the active run budget for this context (returns the reset token).
+    Called once at the top of a run; a new run rebinds before any model call."""
+    return _run_budget.set(budget)
+
+
+class use_budget:
+    """Context manager binding `budget` as the run budget for the block (resets on exit).
+    Used to re-establish the budget inside ThreadPoolExecutor worker threads — which do
+    NOT inherit the submitting thread's contextvars — so parallel delegations' tool calls
+    still charge the run budget."""
+
+    def __init__(self, budget):
+        self.budget = budget
+        self._token = None
+
+    def __enter__(self):
+        self._token = _run_budget.set(self.budget)
+        return self.budget
+
+    def __exit__(self, *exc):
+        if self._token is not None:
+            _run_budget.reset(self._token)
+        return False
 
 
 def _cost_of(resp) -> float:
