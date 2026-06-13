@@ -13,13 +13,14 @@ from fastapi import FastAPI, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import db, jobs
+from . import db, jobs, scheduler
 from .auth import require_auth
 from .api import sessions, workspace, models, ws
 from .api import jobs as jobs_api
 from .api import projects as projects_api
 from .api import memory as memory_api
 from .api import benchmark as benchmark_api
+from .api import schedules as schedules_api
 
 import tools  # noqa: F401  (registers web_search/web_fetch/generate_image/mcp_call)
 
@@ -36,6 +37,7 @@ app.include_router(jobs_api.router, dependencies=_auth)
 app.include_router(projects_api.router, dependencies=_auth)
 app.include_router(memory_api.router, dependencies=_auth)
 app.include_router(benchmark_api.router, dependencies=_auth)
+app.include_router(schedules_api.router, dependencies=_auth)
 app.include_router(ws.router)
 
 # Create tables at import so every entrypoint (uvicorn, TestClient, scripts) is ready.
@@ -44,7 +46,8 @@ db.init_db()
 
 @app.on_event("startup")
 def _resume_jobs():
-    jobs.start_worker()  # resume any queued jobs after a restart
+    jobs.start_worker()        # resume any queued jobs after a restart
+    scheduler.start_scheduler()  # start firing due scheduled tasks
 
 
 @app.on_event("shutdown")

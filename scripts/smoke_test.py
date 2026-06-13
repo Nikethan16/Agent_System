@@ -336,6 +336,35 @@ import server.chat as _CH
 check("history packing is token-budgeted (not a fixed 12)",
       _CH._approx_tokens("x" * 400) >= 90 and callable(_CH._recent_history_budgeted))
 
+# ---- scheduler (run saved tasks on a schedule) ------------------------------
+print("\n[scheduler]")
+from server import scheduler as SCH
+from datetime import datetime as _dt, timezone as _tz
+_anchor = _dt(2026, 6, 13, 8, 0, 0, tzinfo=_tz.utc)
+check("next: once in the future returns the time",
+      SCH.compute_next("once", "2999-01-01T00:00:00", after=_anchor) is not None)
+check("next: once in the past returns None (one-shot done)",
+      SCH.compute_next("once", "2000-01-01T00:00:00", after=_anchor) is None)
+check("next: interval advances by its seconds",
+      (SCH.compute_next("interval", "3600", after=_anchor) or "").startswith("2026-06-13T09:00"))
+check("next: daily rolls to tomorrow when the time already passed",
+      (SCH.compute_next("daily", "07:00", after=_anchor) or "").startswith("2026-06-14T07:00"))
+check("next: weekly returns a valid future time",
+      (SCH.compute_next("weekly", "0 09:00", after=_anchor) or "") > _anchor.isoformat())
+_schsess = _db.create_session("sched chat")
+_sc = SCH.create(_schsess.id, "summarize today's notes", kind="interval", spec="3600")
+check("schedule created, enabled, with a next run", _sc["enabled"] and bool(_sc["next_run_at"]))
+check("schedule appears in the list", any(x["id"] == _sc["id"] for x in SCH.list_all(_schsess.id)))
+with SCH.DBSession(SCH.engine) as _s:        # force it due, then fire
+    _row = _s.get(SCH.Schedule, _sc["id"])
+    _row.next_run_at = "2000-01-01T00:00:00+00:00"
+    _s.add(_row); _s.commit()
+check("run_due fires a due schedule (enqueues a job)", _sc["id"] in SCH.run_due())
+check("run_due advances next_run past now",
+      SCH._parse_iso(SCH.get(_sc["id"])["next_run_at"]) > _dt.now(_tz.utc))
+check("toggle disables a schedule", SCH.set_enabled(_sc["id"], False)["enabled"] is False)
+check("delete removes a schedule", SCH.delete(_sc["id"]) and SCH.get(_sc["id"]) is None)
+
 # ---- global daily spend cap -------------------------------------------------
 from server import spend as SP
 SP.record(0.10)
