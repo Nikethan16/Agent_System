@@ -42,6 +42,7 @@ type State = {
   review: boolean;
   parallel: boolean;
   stream: boolean;
+  acceptance: string;
   attachments: Attachment[];
 
   init: () => Promise<void>;
@@ -68,6 +69,7 @@ type State = {
   setReview: (v: boolean) => void;
   setParallel: (v: boolean) => void;
   setStream: (v: boolean) => void;
+  setAcceptance: (v: string) => void;
   stop: () => void;
   respond: (allowed: boolean) => void;
   loadFiles: () => Promise<void>;
@@ -147,6 +149,7 @@ export const useStore = create<State>((set, get) => ({
   review: false,
   parallel: false,
   stream: true,
+  acceptance: "",
   attachments: [],
 
   async init() {
@@ -182,6 +185,19 @@ export const useStore = create<State>((set, get) => ({
       });
       await get().loadFiles();
       await get().loadCheckpoints();
+      // Reattach: if a run for this session is still waiting on a human approval (e.g.
+      // the browser was reloaded mid-run), surface it so it can be answered now. The
+      // backend resolves it against the live waiting run regardless of which client answers.
+      try {
+        const ar = await api.activeRun(id);
+        const p = (ar?.pending || [])[0];
+        if (p && get().currentId === id) {
+          let args: any = {};
+          try { args = JSON.parse(p.args || "{}"); } catch { /* keep {} */ }
+          set({ pendingApproval: { id: p.id, tool: p.tool, risk: p.risk,
+                                   reason: p.reason, manager_reason: p.manager_reason, args } });
+        }
+      } catch { /* no active-run info — fine */ }
     } catch (e) {
       reportError(get, e);
     }
@@ -273,11 +289,13 @@ export const useStore = create<State>((set, get) => ({
 
   send(text) {
     const atts = get().attachments;
+    const acc = get().acceptance.trim();
     // review is omitted unless the user force-enables it -> backend "auto" mode runs
     // QA automatically on substantive tasks (coding/writing/data + all complex tasks).
     startRun(set, get, {
       text, plan_first: get().planFirst, ...(get().review ? { review: true } : {}),
       parallel: get().parallel, stream: get().stream,
+      ...(acc ? { acceptance: acc } : {}),
       attachments: atts.map((a) => a.path),
     }, atts.length ? `${text}\n\n📎 ${atts.map((a) => a.name).join(", ")}` : text);
     set({ attachments: [] });
@@ -342,13 +360,25 @@ export const useStore = create<State>((set, get) => ({
     set({ stream: v });
   },
 
+  setAcceptance(v) {
+    set({ acceptance: v });
+  },
+
   stop() {
     socket?.send(JSON.stringify({ type: "stop" }));
   },
 
   respond(allowed) {
     const a = get().pendingApproval;
-    if (a && socket) socket.send(JSON.stringify({ type: "approval_response", id: a.id, allowed }));
+    if (a) {
+      // Live socket if we have one; otherwise resolve over REST — the backend routes
+      // either to the same waiting run (works after a reload / from another tab).
+      if (socket && get().running) {
+        socket.send(JSON.stringify({ type: "approval_response", id: a.id, allowed }));
+      } else {
+        api.resolveApproval(a.id, allowed).catch(() => { /* best-effort */ });
+      }
+    }
     set({ pendingApproval: null });
   },
 

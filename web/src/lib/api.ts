@@ -123,6 +123,16 @@ export const api = {
   addCatalogModel: (model: any) => POST("/api/models/catalog", { models: [model] }),
   removeCatalogModel: (id: string) => DELETE("/api/models/catalog/" + id),
 
+  // model health: per-key usage + per-model call metrics + cache hit-rates
+  fleetHealth: () => GET("/api/fleet/health"),
+  resetHealth: () => POST("/api/fleet/health/reset", {}),
+
+  // unattended runs: reattach to an in-flight run + answer approvals later
+  activeRun: (id: string) => GET(`/api/sessions/${id}/active-run`),
+  approvals: (id: string) => GET(`/api/sessions/${id}/approvals`),
+  resolveApproval: (reqId: string, allowed: boolean, reason = "") =>
+    POST(`/api/approvals/${reqId}/resolve`, { allowed, reason }),
+
   // scheduled tasks (once/interval/daily/weekly)
   schedules: (session_id?: string) =>
     GET("/api/schedules" + (session_id ? `?session_id=${encodeURIComponent(session_id)}` : "")),

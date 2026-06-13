@@ -18,7 +18,7 @@ function Toggle({ on, set, label, title }: { on: boolean; set: (v: boolean) => v
 // All per-run controls live here (approval mode, behavior toggles, limits) so the
 // composer bar itself stays minimal. Defaults live in Settings; edits here are this-run-only.
 function RunOptions({ onClose, onQueue, canQueue }: { onClose: () => void; onQueue: () => void; canQueue: boolean }) {
-  const { maxUsd, maxIter, setLimit, mode, setMode, planFirst, setPlanFirst, review, setReview, parallel, setParallel, stream, setStream } = useStore();
+  const { maxUsd, maxIter, setLimit, mode, setMode, planFirst, setPlanFirst, review, setReview, parallel, setParallel, stream, setStream, acceptance, setAcceptance } = useStore();
   const num = (e: React.ChangeEvent<HTMLInputElement>, k: "maxUsd" | "maxIter") => {
     const n = parseFloat(e.target.value); if (!Number.isNaN(n)) setLimit(k, n);
   };
@@ -47,6 +47,11 @@ function RunOptions({ onClose, onQueue, canQueue }: { onClose: () => void; onQue
         <Toggle on={parallel} set={setParallel} label="Parallel subtasks" title="Run independent subtasks concurrently" />
         <Toggle on={stream} set={setStream} label="Stream tokens" title="Stream tokens live as the agent works (on by default)" />
       </div>
+
+      <p className="text-[9px] uppercase tracking-widest text-light-muted mb-1">Acceptance criteria <span className="lowercase tracking-normal">(optional)</span></p>
+      <textarea value={acceptance} onChange={(e) => setAcceptance(e.target.value)}
+        placeholder="Definition of done — the critic checks against these (e.g. 'prints 42; pytest passes')."
+        className={fieldCls + " resize-none h-14 mb-3 placeholder-light-muted text-[12px]"} />
 
       <p className="text-[9px] uppercase tracking-widest text-light-muted mb-1.5">Limits for this run</p>
       <div className="flex items-center gap-3 mb-2">

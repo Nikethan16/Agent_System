@@ -131,9 +131,12 @@ async def run_socket(websocket: WebSocket, session_id: str):
                 threading.Thread(target=worker, daemon=True).start()
 
             elif mtype == "approval_response":
-                if state["broker"]:
-                    state["broker"].resolve(msg.get("id"), msg.get("allowed", False),
-                                            msg.get("reason", ""))
+                # Resolve through the process-global registry (not just this socket's
+                # broker) so an answer works even on a RECONNECTED socket whose own run
+                # didn't raise the request.
+                from ..approvals import resolve as _resolve_approval
+                _resolve_approval(msg.get("id"), msg.get("allowed", False),
+                                  msg.get("reason", ""), decided_by="user")
 
             elif mtype == "stop":
                 b = state["budget"]

@@ -31,13 +31,18 @@ function DiffView({ text }: { text: string }) {
   );
 }
 
-function Body({ sel, view, diff }: { sel: any; view: string; diff: string }) {
+function Body({ sel, view, diff, id }: { sel: any; view: string; diff: string; id: string | null }) {
   const isHtml = sel.ext === ".html";
   const isMd = sel.ext === ".md";
   const isMermaid = [".mermaid", ".mmd"].includes(sel.ext || "");
   const isSvg = sel.ext === ".svg";
+  const isImage = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"].includes(sel.ext || "");
+  const isPdf = sel.ext === ".pdf";
   const lang = (sel.ext || "").replace(".", "") || undefined;
-  if (sel.binary) return <div className="text-light-muted text-xs">Binary file ({sel.ext}). Preview not available.</div>;
+  // Binary artifacts (images, PDFs) render straight from /file/raw.
+  if (isImage && id) return <img src={api.rawFileUrl(id, sel.path)} alt={sel.path} className="max-w-full rounded-lg border border-light-border dark:border-dark-border" />;
+  if (isPdf && id) return <iframe src={api.rawFileUrl(id, sel.path)} title="pdf" className="w-full h-full min-h-[420px] rounded-lg border border-light-border bg-white" />;
+  if (sel.binary) return <div className="text-light-muted text-xs">Binary file ({sel.ext}). {id && <a className="text-accent-terracotta underline" href={api.rawFileUrl(id, sel.path)} target="_blank" rel="noreferrer">Open raw</a>}</div>;
   if (view === "diff") return <DiffView text={diff} />;
   if (view === "preview" && isHtml) return <iframe sandbox="allow-scripts" srcDoc={sel.content} title="preview" className="w-full h-full min-h-[300px] bg-white rounded-lg border border-light-border" />;
   if (view === "preview" && isMd) return <div className="prose-msg text-sm"><ReactMarkdown remarkPlugins={[remarkGfm]}>{sel.content || ""}</ReactMarkdown></div>;
@@ -97,7 +102,9 @@ export default function FilesPanel() {
   const isMd = selected?.ext === ".md";
   const isMermaid = [".mermaid", ".mmd"].includes(selected?.ext || "");
   const isSvg = selected?.ext === ".svg";
-  const previewable = isHtml || isMd || isMermaid || isSvg;
+  const isImage = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"].includes(selected?.ext || "");
+  const isPdf = selected?.ext === ".pdf";
+  const previewable = isHtml || isMd || isMermaid || isSvg || isImage || isPdf;
 
   useEffect(() => { setView(previewable ? "preview" : "source"); }, [selected?.path]);
   useEffect(() => {
@@ -107,7 +114,16 @@ export default function FilesPanel() {
   const copy = () => selected && navigator.clipboard?.writeText(selected.content || "");
   const download = () => {
     if (!selected) return;
-    downloadBlob(selected.path.split("/").pop() || "file", selected.content || "");
+    const name = selected.path.split("/").pop() || "file";
+    if (selected.binary && currentId) {
+      // Images/PDFs have no text content — download the raw bytes via /file/raw.
+      const a = document.createElement("a");
+      a.href = api.rawFileUrl(currentId, selected.path);
+      a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+    } else {
+      downloadBlob(name, selected.content || "");
+    }
   };
 
   const Tab = ({ id, label }: { id: any; label: string }) => (
@@ -160,7 +176,7 @@ export default function FilesPanel() {
           <div className="flex-1 overflow-auto scrollbar p-4">
             {view === "history" && currentId
               ? <HistoryView id={currentId} path={selected.path} />
-              : <Body sel={selected} view={view} diff={diff} />}
+              : <Body sel={selected} view={view} diff={diff} id={currentId} />}
           </div>
         </div>
       )}
