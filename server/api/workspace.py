@@ -3,6 +3,7 @@ import os
 import difflib
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi.responses import FileResponse
 
 from .. import db
 
@@ -57,6 +58,20 @@ def read_file(session_id: str, path: str = Query(...)):
     with open(full, encoding="utf-8", errors="replace") as f:
         content = f.read(_MAX_READ)
     return {"path": path, "ext": ext, "binary": False, "content": content}
+
+
+@router.get("/{session_id}/file/raw")
+def file_raw(session_id: str, path: str = Query(...)):
+    """Serve a workspace file's RAW bytes with a guessed content-type. The text `/file`
+    endpoint feeds the code/markdown viewer; this is what the UI uses to preview binary
+    artifacts (generated images, PDFs) and to download any file. Same sandbox guard."""
+    root = db.session_workspace(session_id)
+    full = os.path.abspath(os.path.join(root, path))
+    if not (full == root or full.startswith(root + os.sep)):
+        raise HTTPException(400, "path escapes workspace")
+    if not os.path.isfile(full):
+        raise HTTPException(404, "file not found")
+    return FileResponse(full, filename=os.path.basename(full))
 
 
 def _read(path: str) -> str:
