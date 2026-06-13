@@ -365,6 +365,18 @@ check("run_due advances next_run past now",
 check("toggle disables a schedule", SCH.set_enabled(_sc["id"], False)["enabled"] is False)
 check("delete removes a schedule", SCH.delete(_sc["id"]) and SCH.get(_sc["id"]) is None)
 
+# ---- Telegram control (offline-testable parts; the bot itself needs a token) -
+print("\n[telegram]")
+from server import telegram as TG
+_os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+check("telegram is a no-op without a token (fail-safe)", TG.start_telegram() is False)
+_os.environ["TELEGRAM_ALLOWED_CHAT_IDS"] = "111, 222"
+check("telegram allowlist parses a comma list", TG._allowed() == {"111", "222"})
+_os.environ.pop("TELEGRAM_ALLOWED_CHAT_IDS", None)
+_tsid = TG._session_for("tg-smoke-chat")
+check("telegram maps a chat to a persistent session (find-or-create)",
+      bool(_tsid) and TG._session_for("tg-smoke-chat") == _tsid)
+
 # ---- global daily spend cap -------------------------------------------------
 from server import spend as SP
 SP.record(0.10)

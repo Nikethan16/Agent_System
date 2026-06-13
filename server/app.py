@@ -46,8 +46,10 @@ db.init_db()
 
 @app.on_event("startup")
 def _resume_jobs():
-    jobs.start_worker()        # resume any queued jobs after a restart
+    jobs.start_worker()          # resume any queued jobs after a restart
     scheduler.start_scheduler()  # start firing due scheduled tasks
+    from . import telegram
+    telegram.start_telegram()    # mobile control via Telegram (no-op unless a token is set)
 
 
 @app.on_event("shutdown")
