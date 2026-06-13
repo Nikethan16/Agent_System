@@ -29,11 +29,16 @@ for "how it works" read `docs/PROJECT_OVERVIEW.md`; the durable rules are in `CL
   budget + artifact-export UI + LEAD-final streaming (polish). **C6 browser control** intentionally skipped.
 - **Hosting rec:** an always-on box you control (old laptop / Oracle Always-Free VM) + Tailscale for the web UI;
   Telegram needs no public URL. Set `AGENT_AUTH_TOKEN` + `AGENT_BASH_DOCKER_IMAGE` for any networked host.
-- Run it: `.\run.ps1` → http://localhost:8800. Verify: `.venv\Scripts\python.exe scripts\smoke_test.py` (139/139).
+- Run it: `.\run.ps1` → http://localhost:8800. Verify: `.venv\Scripts\python.exe scripts\smoke_test.py` (158/158).
+  After backend changes rebuild the UI: `npm --prefix web run build`.
 - **Audit-fix pass (2026-06-13):** validated an external code review and fixed 6 real, high-impact bugs — a 429-backoff
   crash (missing `import time`), parallel delegations writing to the wrong workspace (contextvar not inherited by worker
   threads), tool model calls bypassing the budget, a missing `/file/raw` route, and classifier/dispatcher not using the
   fallback chains; routing now uses the raw user request. See STATUS changelog. **Use the venv** python, not system Python.
+- **Recommended-features pass (2026-06-13):** built 4 bundles — (1) tool-result **cache** + per-call **metrics** +
+  Settings → **Model health**; (2) **unattended runs** (persistent approvals answerable from a second tab or Telegram
+  `/yes <id>`, + reattach on reload); (3) **test-first coding** playbook + an **acceptance-criteria** rubric the critic
+  checks; (4) **image/PDF artifact preview + download**. Skipped: workspace branches, plan-graph, connectors, browser-use.
 
 ## What changed in the last working session (2026-06-07)
 All verified; smoke stays 60/60; the web build is clean.
