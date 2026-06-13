@@ -510,6 +510,83 @@ _sc = (_br or {}).get("result", {}).get("scores", {})
 check("benchmark scorecard has per-aspect raw + pipeline scores",
       "coding" in _sc.get("raw", {}) and "coding" in _sc.get("pipeline", {}))
 
+# ---- audit fixes (validated Codex findings) ---------------------------------
+print("\n[audit fixes]")
+# #1 — the 429 backoff path calls time.sleep(); a missing `import time` crashed it.
+check("#1 llm imports time (rate-limit backoff path won't NameError)",
+      hasattr(L, "time") and callable(L.time.sleep))
+
+# #4 — a model call made INSIDE a tool charges the active run budget, not a throwaway one.
+# (handle_task binds the run budget and, by design, leaves it set — each real run is on a
+# fresh thread / rebinds before any tool call — so we set a clean baseline here.)
+L._run_budget.set(None)
+check("#4 current_budget is None outside a run", L.current_budget() is None)
+_bud4 = Budget(max_usd=1.0, max_iterations=5)
+with L.use_budget(_bud4):
+    _bound = L.current_budget()
+check("#4 use_budget binds the run budget then restores the prior value",
+      _bound is _bud4 and L.current_budget() is None)
+_os.environ["SAFETY_MODEL"] = "fake-safety-model"
+L.litellm.completion = lambda **kw: _Resp("SAFE")
+_bud4b = Budget(max_usd=1.0, max_iterations=5)
+with L.use_budget(_bud4b):
+    SAFE.screen("hello world")
+L.litellm.completion = fake
+_os.environ.pop("SAFETY_MODEL", None)
+check("#4 a tool's model call is counted against the run budget", _bud4b.iterations >= 1)
+
+# #5 — delegate_parallel runs steps in ThreadPoolExecutor workers, which don't inherit
+# the workspace contextvar; without re-binding they'd write to the global ./workspace.
+_PWS = {"seen": []}
+_orig_run5 = orch.team.run
+def _ws_run(agent_id, instruction, **kw):
+    _PWS["seen"].append(os.path.abspath(_T.current_workspace()))
+    return "ok"
+_pm = {"n": 0}
+def _fake_parallel(**kw):
+    if kw.get("stream"):
+        return iter([_Chunk("x")])
+    msgs = kw.get("messages", [])
+    sysm = next((m.get("content", "") for m in msgs if m.get("role") == "system"), "").lower()
+    if "task router" in sysm:
+        return _Resp('{"tier":3,"task_type":"coding","requires_web":false,"reason":"x"}')
+    if "lead engineer coordinating" in sysm:
+        _pm["n"] += 1
+        if _pm["n"] == 1:
+            return _ToolResp("plan", [("write_todos", '{"todos":[{"text":"two files","status":"pending"}]}')])
+        if _pm["n"] == 2:
+            return _ToolResp("go", [("delegate_parallel",
+                '{"tasks":[{"agent":"coder","instruction":"file A"},'
+                '{"agent":"coder","instruction":"file B"}]}')])
+        return _Resp("done")
+    return _Resp("[done]")
+_tmp5 = _tf.mkdtemp()
+L.litellm.completion = _fake_parallel
+orch.team.run = _ws_run
+with _T.using_workspace(_tmp5):
+    orch.handle_task("build two independent files", review=False)
+orch.team.run = _orig_run5
+L.litellm.completion = fake
+check("#5 parallel delegations run in the bound workspace (not ./workspace)",
+      len(_PWS["seen"]) == 2 and all(w == os.path.abspath(_tmp5) for w in _PWS["seen"]))
+
+# #3 — the classifier routes through the fallback CHAIN: a down primary switches model
+# (instead of degrading straight to the tier-1 default).
+_os.environ["NVIDIA_NIM_API_KEY"] = "smoke-nvidia-key"
+_RT._CACHE.clear()
+_cchain = _reg.model_chain(_reg.classifier_tier(), task_type="classify")
+def _classify_fb(**kw):
+    if kw.get("model") == _cchain[0]:
+        raise RuntimeError("primary classify model down")
+    return _Resp('{"tier":2,"task_type":"coding","requires_web":false,"reason":"x"}')
+L.litellm.completion = _classify_fb
+_cv = _RT.classify("NEW REQUEST: build a parser module")
+L.litellm.completion = fake
+_RT._CACHE.clear()
+_os.environ.pop("NVIDIA_NIM_API_KEY", None)
+check("#3 classifier falls back to the next model when the primary is down",
+      len(_cchain) >= 2 and _cv.get("tier") == 2)
+
 # ---- server (REST + queue + diff + memory) ----------------------------------
 print("\n[server / app]")
 from fastapi.testclient import TestClient
@@ -528,6 +605,15 @@ with TestClient(app, headers=_AUTH_HEADERS) as c:
     open(os.path.join(ws, "a.py"), "w").write("x=1\ny=2\n")
     d = c.get(f"/api/sessions/{sid}/file/diff", params={"path": "a.py"}).json()
     check("diff detects change", d["changed"] and "+y=2" in d["diff"])
+
+    # #10: raw byte serving for binary artifacts (the UI's /file/raw, e.g. generated images)
+    open(os.path.join(ws, "pic.bin"), "wb").write(b"\x89PNG\r\n_smoke_raw_bytes")
+    _rr = c.get(f"/api/sessions/{sid}/file/raw", params={"path": "pic.bin"})
+    check("#10 /file/raw serves raw bytes", _rr.status_code == 200 and b"_smoke_raw_bytes" in _rr.content)
+    check("#10 /file/raw blocks path traversal",
+          c.get(f"/api/sessions/{sid}/file/raw", params={"path": "../../etc/x"}).status_code == 400)
+    check("#10 /file/raw 404s a missing file",
+          c.get(f"/api/sessions/{sid}/file/raw", params={"path": "nope.bin"}).status_code == 404)
 
     memory.remember("Request: build a calculator\nOutcome: calc.py", session_id="other")
     check("memory recall works", bool(memory.recall("calculator", exclude_session=sid)))
