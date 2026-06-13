@@ -11,3 +11,4 @@ from . import web        # noqa: F401
 from . import image      # noqa: F401
 from . import mcp        # noqa: F401
 from . import safety     # noqa: F401
+from . import vision     # noqa: F401

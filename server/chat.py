@@ -26,6 +26,9 @@ def _read_attachment(workspace: str, rel: str) -> str:
     full = os.path.join(workspace, rel)
     ext = os.path.splitext(full)[1].lower()
     try:
+        if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
+            # An image can't be read as text — point the agent at the vision tool.
+            return f"(image file — call the see_image tool with path '{rel}' to view it)"
         if ext == ".pdf":
             from pypdf import PdfReader
             reader = PdfReader(full)

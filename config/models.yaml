@@ -87,6 +87,7 @@ routing:
   data:      ["nvidia_nim/qwen/qwen3.5-122b-a10b",
               "nvidia_nim/z-ai/glm-5.1",
               "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
+  vision:    ["nvidia_nim/meta/llama-4-maverick-17b-128e-instruct"]
 
 # PLACEHOLDER — set to enable the Image agent's generate_image tool. For Gemini use
 # Imagen, e.g. "gemini/imagen-3.0-generate-002" (needs GEMINI_API_KEY). Left unset.
@@ -180,7 +181,7 @@ catalog:
     open_source: true
     cost: 1
     tier_hint: 2
-    good_for: [general, analysis, writing]
+    good_for: [general, analysis, writing, vision]
 
   # --- Fast router / classifier alternate (tier 1) ---
   - id: "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b"

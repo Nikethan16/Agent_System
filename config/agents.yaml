@@ -42,7 +42,7 @@ agents:
   - id: coder
     label: Coder
     tier: tier2
-    tools: [read_file, write_file, edit_file, list_files, run_bash]
+    tools: [read_file, write_file, edit_file, list_files, run_bash, see_image]
     capabilities: [coding, testing, debugging, scripts]
     when_to_use: "Write, run, or debug code; create project files; run tests/commands."
     prompt: |
@@ -61,7 +61,7 @@ agents:
   - id: frontend
     label: Frontend Engineer
     tier: tier2
-    tools: [read_file, write_file, edit_file, list_files, run_bash]
+    tools: [read_file, write_file, edit_file, list_files, run_bash, see_image]
     capabilities: [frontend, html, css, javascript, react, ui, design]
     when_to_use: "Build web UI — HTML/CSS/JS or React — that can be previewed."
     prompt: |
@@ -74,7 +74,7 @@ agents:
   - id: research
     label: Research Analyst
     tier: tier2
-    tools: [web_search, web_fetch, safety_check, read_file, parse_document, write_file]
+    tools: [web_search, web_fetch, safety_check, read_file, parse_document, see_image, write_file]
     capabilities: [research, web, investigation, recommendations]
     when_to_use: "Find information online, investigate options, recommend next steps."
     prompt: |
@@ -168,7 +168,7 @@ agents:
   - id: fast-coder
     label: Fast Coder
     tier: tier2
-    tools: [read_file, write_file, edit_file, list_files, run_bash]
+    tools: [read_file, write_file, edit_file, list_files, run_bash, see_image]
     capabilities: [coding, scripts, quickfix]
     when_to_use: "Small, well-scoped code changes or quick scripts/one-liners where speed matters more than depth."
     prompt: |
