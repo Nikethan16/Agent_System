@@ -587,6 +587,47 @@ _os.environ.pop("NVIDIA_NIM_API_KEY", None)
 check("#3 classifier falls back to the next model when the primary is down",
       len(_cchain) >= 2 and _cv.get("tier") == 2)
 
+# ---- caching + metrics + coding-quality (recommended features) --------------
+print("\n[caching + metrics + coding-quality]")
+from core import cache as CACHE, metrics as METRICS
+_tc = CACHE.TTLCache(ttl=100, max_entries=4)
+_tc.put("k", "v")
+check("cache: put/get round-trips + counts a hit", _tc.get("k") == "v" and _tc.stats()["hits"] == 1)
+check("cache: miss returns None + is counted", _tc.get("nope") is None and _tc.stats()["misses"] == 1)
+check("cache: get_cache returns the same named instance", CACHE.get_cache("smoke-x") is CACHE.get_cache("smoke-x"))
+# embeddings are cached: two identical embeds => one provider call
+_orig_embed = L.litellm.embedding
+_emb = {"n": 0}
+def _fake_embed(**kw):
+    _emb["n"] += 1
+    inp = kw.get("input") or []
+    return type("E", (), {"data": [{"embedding": [0.1, 0.2, 0.3]} for _ in inp],
+                          "_hidden_params": {"response_cost": 0.0}})()
+L.litellm.embedding = _fake_embed
+_v1, _ = L.embed("cache this embedding text", "fake-embed-model")
+_v2, _ = L.embed("cache this embedding text", "fake-embed-model")
+L.litellm.embedding = _orig_embed
+check("embed: identical text is served from cache (1 provider call for 2 embeds)",
+      _emb["n"] == 1 and _v1 == _v2)
+# per-call metrics were recorded during the suite's many fake completions
+check("metrics: per-model call stats are recorded", any(r["calls"] >= 1 for r in METRICS.summary()))
+# coding quality: test-first playbook (a 'tests' phase BEFORE implement)
+_cphases = [p["phase"] for p in PB.select("coding")]
+check("playbook: coding is now TEST-FIRST ('tests' phase before implement)",
+      "tests" in _cphases and _cphases.index("tests") < _cphases.index("implement"))
+# acceptance criteria reach the critic's rubric
+_capr = {}
+_orig_run_cr = orch.team.run
+def _cap_critic(agent_id, prompt, **kw):
+    _capr["p"] = prompt
+    return '{"pass": true, "issues": [], "summary": "ok"}'
+orch.team.run = _cap_critic
+orch._review("do X", "did X", Budget(max_usd=1, max_iterations=3), None, None,
+             acceptance="must output exactly 42")
+orch.team.run = _orig_run_cr
+check("coding quality: acceptance criteria reach the critic's rubric",
+      "must output exactly 42" in _capr.get("p", ""))
+
 # ---- server (REST + queue + diff + memory) ----------------------------------
 print("\n[server / app]")
 from fastapi.testclient import TestClient
@@ -650,6 +691,10 @@ with TestClient(app, headers=_AUTH_HEADERS) as c:
 
     bc = c.get("/api/benchmark/cases").json()
     check("benchmark cases API lists aspects + models", "coding" in bc.get("aspects", {}) and "models" in bc)
+
+    h = c.get("/api/fleet/health").json()
+    check("fleet health API returns keys/models/recent/caches",
+          all(k in h for k in ("keys", "models", "recent", "caches")))
 
     c.delete(f"/api/sessions/{sid}")
 
