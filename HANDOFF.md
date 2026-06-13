@@ -1,19 +1,26 @@
 # HANDOFF — read this first
 
-_Last updated: 2026-06-07. The single entry point for the next person/chat picking this up
+_Last updated: 2026-06-13. The single entry point for the next person/chat picking this up
 (the prior chat may have been deleted). For "what it can do" read `docs/CAPABILITIES.md`;
 for "how it works" read `docs/PROJECT_OVERVIEW.md`; the durable rules are in `CLAUDE.md`._
 
 ## TL;DR
-- **The app is feature-complete for local single-user use, verified, and running.** Offline
-  smoke test passes **60/60**; real-model runs work (it has planned, searched, coded, and
-  made documents end-to-end).
-- **Two free provider keys are configured** in `.env` (Google **Gemini** + **NVIDIA NIM**),
-  so it runs at **$0**. Web search (Tavily) and semantic memory (Gemini embeddings) are also
-  enabled.
-- **The project is paused** (2026-06-07) for a few days. Everything below is current; the UI
-  redesign just landed and is merged to `main`.
-- Run it: `.\run.ps1` → http://localhost:8800.
+- **Big optimization pass landed on branch `feat/platform-optimization`** (8 commits, NOT yet
+  merged to `main`). Offline smoke **60→107**; web build clean; fleet endpoints verified live.
+- **What's new this session:** multi-key **resilience engine** (key pool + per-call timeout +
+  NVIDIA-first **fallback chains**, so a rate-limited/dead model self-heals); the full **NVIDIA
+  NIM fleet** (DeepSeek V4 Pro orchestrates, GLM-5.1 codes, Qwen researches, Nemotron reasons)
+  + 4 new roles (architect/data-analyst/code-reviewer/fast-coder); **memory continuity**
+  (resumable Project State + adaptive context window — the hardcoded 12-message window is gone);
+  a **scheduler** (`/api/schedules`); **Telegram** mobile control; **parallel sub-agents**
+  (`delegate_parallel`); a **management UI** (Settings → Fleet & keys, Schedules); and **CI**.
+- **Two free keys** in `.env` (Gemini + NVIDIA NIM) → runs at **$0**. Add more NVIDIA accounts
+  as `NVIDIA_NIM_API_KEY_1..N` (or via Settings → Fleet) to multiply throughput.
+- **Owner inputs still pending (placeholders left):** `TELEGRAM_BOT_TOKEN` (+ allowlist) for
+  the phone bot; optional extra NVIDIA keys for the pool. See `.env.example`.
+- **Not yet built (needs decisions/inputs):** multimodal/vision input, doc-parser & content-
+  safety NIM microservices (the 🔴 items) — they need a sample use-case + small plumbing.
+- Run it: `.\run.ps1` → http://localhost:8800. Verify: `.venv\Scripts\python.exe scripts\smoke_test.py` (107/107).
 
 ## What changed in the last working session (2026-06-07)
 All verified; smoke stays 60/60; the web build is clean.

@@ -154,6 +154,15 @@ mitigated today by `requires_human` + `AGENT_DISABLE_BASH=1` (Docker default); b
 ---
 
 ## Changelog
+- **2026-06-13** — **Platform optimization: resilience, NVIDIA fleet, memory continuity, scheduler, Telegram, parallel agents, mgmt UI, CI.** Branch `feat/platform-optimization`; offline smoke **60→107**; web build clean; key endpoints verified live on NVIDIA. Per-commit detail in `git log`.
+  - **NVIDIA NIM fleet (Phase 1+4)** — integrated DeepSeek V4 Pro (LEAD), GLM-5.1 (coder), Qwen 3.5 (research), Nemotron Super/Ultra/Nano, Llama-4 Maverick, DeepSeek V4 Flash, MiniMax M3, Mistral Large 3 — all **verified live** (ids + tool-calling). Dead names dropped (kimi-k2.6 garbled tool-calls; codestral 404s). 4 new roles: **architect, data-analyst, code-reviewer, fast-coder**. Routing chains per task_type in `config/models.yaml`.
+  - **Resilience engine (Phase 2, `core/keypool.py` + `core/llm.py`)** — **multi-key pool** (least-loaded, per-key ~40 rpm accounting, cooldown; `NAME_1..N` → 4 keys ≈ 160 rpm), **per-call timeout** (`AGENT_LLM_TIMEOUT`, kills cold-start hangs; `litellm.num_retries=0`), **fallback chains** (`complete_chain`, NVIDIA-first, emits `fallback`; budget = hard stop; **stale/dead model name now self-heals** instead of crashing).
+  - **Memory continuity (Phase 3)** — **structured Project State** (`{goal, plan, next, artifacts}` re-injected each turn → resume "finish phase 2 → do phase 3", incl. a new chat in the same project), **project-shared workspaces**, **adaptive token-budgeted context** (killed the hardcoded 12-message window; `registry.context_budget()`/`context_window`).
+  - **Scheduler** (`server/scheduler.py`, `/api/schedules`) — once/interval/daily/weekly tasks on the job queue; survives restarts; no cron daemon.
+  - **Telegram control** (`server/telegram.py`) — mobile access via a long-polling bot; fail-closed allowlist; no-op until `TELEGRAM_BOT_TOKEN` set.
+  - **Parallel sub-agents** — `delegate_parallel` runs independent steps concurrently (the pool makes it genuinely faster). Sharper, self-contained delegation prompts.
+  - **Management UI (Phase 5)** — Settings → **Fleet & keys** (add/remove/test pooled keys, masked, live rpm; view/edit fallback chains) + **Schedules**; `fallback` activity card.
+  - **CI** (`.github/workflows/ci.yml`) — smoke + offline evals + web build on every push. **New env vars** in `.env.example` (key pool, timeout, scheduler, Telegram).
 - **2026-06-07** — **Web search live + dep/model fixes + semantic memory + UI redesign. Project paused.**
   Full per-item detail in `HANDOFF.md`; capabilities catalogued in `docs/CAPABILITIES.md`.
   - **Web search now works** — `tools/web.py:web_search` was a broken stub; rewrote it for
