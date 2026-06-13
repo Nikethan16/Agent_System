@@ -2,20 +2,21 @@
 #  MODEL REGISTRY  —  THE ONLY PLACE YOU CHANGE MODELS.
 # ============================================================================
 #  Every model string here is passed straight to LiteLLM, which resolves the
-#  provider from the prefix. To swap a model, edit the "model:" line for a tier.
-#  Nothing else in the codebase needs to change.
+#  provider from the prefix. To swap a model, edit the catalog below (cost-first
+#  mode) or the tier "model:" line (fixed mode). Nothing else in the code changes.
 #
 #  Provider prefix examples (LiteLLM syntax):
 #    anthropic ......  claude-opus-4-7            (no prefix needed)
 #    openai .........  gpt-5.5  /  gpt-4o-mini
-#    google .........  gemini/gemini-3.1-pro
-#    deepseek .......  deepseek/deepseek-chat
+#    google .........  gemini/gemini-2.5-flash
+#    nvidia nim .....  nvidia_nim/<vendor>/<model>   (free dev tier, 40 RPM/key)
 #    openrouter .....  openrouter/<vendor>/<model>   (one key, any model)
 #    local (ollama) .  ollama/qwen2.5-coder:32b
 #
-#  NOTE: model names move fast (new releases ~weekly). Treat the strings below
-#  as a starting snapshot and verify current availability with your provider /
-#  https://llm-stats.com before relying on a specific one.
+#  NOTE: model names move fast (new releases ~weekly). The NVIDIA NIM ids below
+#  were verified live against https://integrate.api.nvidia.com/v1/models and
+#  probed for tool-calling through litellm on 2026-06-13. If one 404s, re-list
+#  the provider's current models and update here.
 # ============================================================================
 
 defaults:
@@ -27,10 +28,12 @@ defaults:
   # automatically. Set to "fixed" to always use each tier's `model:` below.
   model_strategy: cheapest
 
-# ---- TIERS: the difficulty levels and which model serves each. SWAP HERE. ----
-# Configured for GOOGLE GEMINI (needs GEMINI_API_KEY in .env). If any name 404s,
-# check your model list at https://aistudio.google.com and edit the line (or use the
-# UI dropdown). The `-latest` aliases are the most future-proof.
+# ---- TIERS: the difficulty levels and which model serves each. ----
+# model_strategy is "cheapest" (above), so the ACTIVE model per tier is chosen
+# from the CATALOG below by the cost-first selector. These `model:` lines are the
+# fallback used only in "fixed" mode (or if no catalog candidate is available) —
+# keep them sane, but the catalog is the real swap point.
+# Primary fleet is now NVIDIA NIM (free, poolable RPM); Gemini is the fallback.
 tiers:
   tier1:
     label: "Fast & cheap"
@@ -38,16 +41,41 @@ tiers:
     max_tokens: 1024
   tier2:
     label: "Balanced"
-    model: "gemini/gemini-2.5-flash"
+    model: "nvidia_nim/deepseek-ai/deepseek-v4-flash"
     max_tokens: 4096
   tier3:
     label: "Frontier"
-    model: "gemini/gemini-2.5-pro"
+    model: "nvidia_nim/deepseek-ai/deepseek-v4-pro"
     max_tokens: 8192
 
 # Which tier the orchestrator hands subtasks to (workers can be cheaper than
 # the planner that created them).
 worker_tier: tier2
+
+# ---- ROUTING: explicit fallback CHAINS per task_type (primary first) --------
+# Used by registry.model_chain() + core/llm.complete_chain(): if the primary model
+# is rate-limited across all its keys / times out / 5xx / is dead, the run advances
+# to the next model here. NVIDIA-first by design (Gemini is only a last-resort
+# cross-provider backstop, off unless you add it). model_chain auto-appends deeper
+# fallbacks after these, and skips any model whose key isn't set — so listing a few
+# is enough. (This is what the Settings "Routing & fallback" editor will edit.)
+routing:
+  reasoning: ["nvidia_nim/deepseek-ai/deepseek-v4-pro",
+              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+              "nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b"]
+  coding:    ["nvidia_nim/z-ai/glm-5.1",
+              "nvidia_nim/deepseek-ai/deepseek-v4-pro",
+              "nvidia_nim/deepseek-ai/deepseek-v4-flash"]
+  research:  ["nvidia_nim/qwen/qwen3.5-122b-a10b",
+              "nvidia_nim/deepseek-ai/deepseek-v4-pro",
+              "nvidia_nim/z-ai/glm-5.1"]
+  general:   ["nvidia_nim/deepseek-ai/deepseek-v4-flash",
+              "nvidia_nim/meta/llama-4-maverick-17b-128e-instruct",
+              "nvidia_nim/z-ai/glm-5.1"]
+  writing:   ["nvidia_nim/deepseek-ai/deepseek-v4-flash",
+              "nvidia_nim/meta/llama-4-maverick-17b-128e-instruct"]
+  classify:  ["gemini/gemini-2.5-flash-lite",
+              "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b"]
 
 # PLACEHOLDER — set to enable the Image agent's generate_image tool. For Gemini use
 # Imagen, e.g. "gemini/imagen-3.0-generate-002" (needs GEMINI_API_KEY). Left unset.
@@ -61,12 +89,126 @@ worker_tier: tier2
 #   requires_env : the provider key that must be set for this model to be usable
 #                  (selector skips models whose key is missing) — null = no key needed
 #   free         : true if free / free-tier (selector prefers these)
-#   cost         : RELATIVE cost hint, lower = cheaper (used to rank non-free models)
+#   cost         : among FREE models this is a PREFERENCE RANK (lower = preferred);
+#                  for paid models it's a relative price. Selector sorts free-first,
+#                  then by this number — so it doubles as "which free model wins".
 #   tier_hint    : 1=simple, 2=balanced, 3=frontier (must be >= the task's tier)
 #   good_for     : task tags the selector prefers when they match
 # The model-scout agent appends/updates discovered models in config/models.discovered.yaml.
 catalog:
-  # --- Google Gemini (free tier; needs GEMINI_API_KEY) ---
+  # =========================================================================
+  #  NVIDIA NIM FLEET — the primary fleet (free, 40 RPM per key; needs
+  #  NVIDIA_NIM_API_KEY). All ids verified live + tool-calling probed 2026-06-13.
+  #  This cast mirrors the "budget frontier stack" Blueprint 1: DeepSeek V4 Pro
+  #  orchestrates, GLM-5.1 codes, Qwen researches, Nemotron reasons.
+  # =========================================================================
+
+  # --- Orchestrator / LEAD (reasoning, planning, agent loops) ---
+  - id: "nvidia_nim/deepseek-ai/deepseek-v4-pro"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: false          # open-weight status disputed — verify before self-host
+    cost: 0
+    tier_hint: 3
+    good_for: [reasoning, planning, agents, hard, math]
+
+  # --- Coder (the build sub-agent; verified JSON/tool-calling) ---
+  - id: "nvidia_nim/z-ai/glm-5.1"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: true
+    cost: 0
+    tier_hint: 3
+    good_for: [coding, frontend, debugging, agentic]
+
+  # --- Fast general / writing workhorse (tier-2 default) ---
+  - id: "nvidia_nim/deepseek-ai/deepseek-v4-flash"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: false
+    cost: 0
+    tier_hint: 2
+    good_for: [general, writing, chat, summarize, analysis]
+
+  # --- Long-context research (tool-calling verified) ---
+  - id: "nvidia_nim/qwen/qwen3.5-122b-a10b"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: true
+    cost: 0
+    tier_hint: 3
+    good_for: [research, analysis, web]
+
+  # --- Reasoning alternates / fallbacks ---
+  - id: "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: true
+    cost: 1
+    tier_hint: 3
+    good_for: [reasoning, hard, math]
+  - id: "nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: true
+    cost: 2
+    tier_hint: 3
+    good_for: [reasoning, hard]
+
+  # --- General / multimodal-doc alternate ---
+  - id: "nvidia_nim/meta/llama-4-maverick-17b-128e-instruct"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: true
+    cost: 1
+    tier_hint: 2
+    good_for: [general, analysis, writing]
+
+  # --- Fast router / classifier alternate (tier 1) ---
+  - id: "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: true
+    cost: 1
+    tier_hint: 1
+    good_for: [routing, classify, chat, simple, summarize]
+
+  # NOTE: moonshotai/kimi-k2.6 IS available on NIM and is multimodal, but its
+  # tool-calling came back BROKEN through litellm on 2026-06-13 (garbled output).
+  # Intentionally NOT listed for tool-using roles until that path is fixed.
+
+  # --- Prior NVIDIA entries (kept as deeper fallbacks; demoted by cost) ---
+  - id: "nvidia_nim/meta/llama-3.3-70b-instruct"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: true
+    cost: 3
+    tier_hint: 2
+    good_for: [coding, writing, general]
+  - id: "nvidia_nim/nvidia/llama-3.3-nemotron-super-49b-v1.5"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: true
+    cost: 3
+    tier_hint: 3
+    good_for: [reasoning, coding, hard, math]
+
+  # =========================================================================
+  #  GOOGLE GEMINI — kept as the cross-provider fallback (needs GEMINI_API_KEY).
+  #  Demoted by cost so the NIM fleet is preferred, but still selectable and a
+  #  valuable DIFFERENT-provider fallback if NIM is rate-limited or down.
+  #  (Flash-Lite stays cost 0 at tier 1 = the reliable JSON classifier for now.)
+  # =========================================================================
   - id: "gemini/gemini-2.5-flash-lite"
     provider: "google"
     requires_env: "GEMINI_API_KEY"
@@ -78,7 +220,7 @@ catalog:
     provider: "google"
     requires_env: "GEMINI_API_KEY"
     free: true
-    cost: 1
+    cost: 4
     tier_hint: 2
     good_for: [writing, analysis, coding, general, research]
   - id: "gemini/gemini-2.5-pro"
@@ -89,31 +231,13 @@ catalog:
     tier_hint: 3
     good_for: [reasoning, architecture, hard, planning]
 
-  # --- NVIDIA NIM (FREE for dev; needs NVIDIA_NIM_API_KEY from build.nvidia.com) ---
-  - id: "nvidia_nim/meta/llama-3.3-70b-instruct"
-    provider: "nvidia_nim"
-    requires_env: "NVIDIA_NIM_API_KEY"
-    free: true
-    open_source: true
-    cost: 0
-    tier_hint: 2
-    good_for: [coding, writing, general]
-  - id: "nvidia_nim/nvidia/llama-3.3-nemotron-super-49b-v1.5"
-    provider: "nvidia_nim"
-    requires_env: "NVIDIA_NIM_API_KEY"
-    free: true
-    open_source: true
-    cost: 0
-    tier_hint: 3
-    good_for: [reasoning, coding, hard, math]
-
-  # --- OpenRouter free variants (needs OPENROUTER_API_KEY) ---
+  # --- OpenRouter free variants (inert unless OPENROUTER_API_KEY is set) ---
   - id: "openrouter/deepseek/deepseek-r1:free"
     provider: "openrouter"
     requires_env: "OPENROUTER_API_KEY"
     free: true
     open_source: true
-    cost: 0
+    cost: 5
     tier_hint: 3
     good_for: [reasoning, coding, hard]
   - id: "openrouter/meta-llama/llama-3.3-70b-instruct:free"
@@ -121,16 +245,16 @@ catalog:
     requires_env: "OPENROUTER_API_KEY"
     free: true
     open_source: true
-    cost: 0
+    cost: 5
     tier_hint: 2
     good_for: [writing, general, coding]
 
-  # --- Local Ollama (free; set USE_OLLAMA=1 and run Ollama to enable) ---
+  # --- Local Ollama (inert unless USE_OLLAMA=1) ---
   - id: "ollama/llama3.1:8b"
     provider: "local"
     requires_env: "USE_OLLAMA"
     free: true
     open_source: true
-    cost: 0
+    cost: 5
     tier_hint: 1
     good_for: [simple, chat, summarize]
