@@ -22,7 +22,8 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 
-from .llm import complete, complete_chain, Budget, BudgetExceeded
+from .llm import (complete, complete_chain, Budget, BudgetExceeded,
+                  set_run_budget, use_budget)
 from .registry import registry
 from .router import classify
 from . import agents as team
@@ -31,6 +32,7 @@ from . import skills as skill_lib
 from . import playbooks as playbook_lib
 from .agent import _run_one_tool
 from .blackboard import Blackboard
+from .tools import current_workspace, using_workspace
 
 MAX_MASTER_ROUNDS = 16     # hard cap on lead loop iterations
 MAX_DELEGATIONS = 10       # hard cap on subagent spawns per run (depth-limited too)
@@ -290,29 +292,38 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     schemas = _master_tool_schemas()
     rounds, delegations = 0, 0
 
+    # delegate_parallel runs each step in a ThreadPoolExecutor worker, and worker threads
+    # do NOT inherit this thread's contextvars. Capture the run's workspace here so each
+    # parallel delegation re-binds it (and the run budget) — otherwise parallel agents
+    # would silently read/write the DEFAULT ./workspace instead of the session workspace.
+    ws_root = current_workspace()
+
     def _run_delegation(item, step):
         """Run ONE delegated step (used by both delegate and delegate_parallel).
         Returns (agent_id, result). Safe to call from worker threads — Budget and the
-        Blackboard are thread-safe, and team.run gives each agent its own sub-budget."""
-        agent_id = (item.get("agent") or "general").strip()
-        if agent_id not in team.agents.agents:
-            agent_id = team._fallback_select(item.get("instruction", ""))
-        agent = team.agents.get(agent_id)
-        instruction = item.get("instruction") or item.get("task") or ""
-        skill_arg = item.get("skill")
-        skills = [skill_arg] if isinstance(skill_arg, str) and skill_arg.strip() else None
-        _emit({"type": "assign", "agent": agent_id, "label": getattr(agent, "label", agent_id),
-               "model": registry.model_for_tier(getattr(agent, "tier", "tier2")),
-               "subtask": instruction, "reason": "delegated by lead", "step": step,
-               "skill": skill_arg or None})
-        r = team.run(agent_id, instruction, budget=budget, emit=emit,
-                     approve=approve, context=board.digest(), skills=skills)
-        if _looks_failed(r):     # A2: retry a failed delegated step once
-            _emit({"type": "retry", "agent": agent_id, "reason": "delegated step failed"})
-            r = team.run(agent_id, instruction + "\n\n(Previous attempt failed — retry carefully.)",
-                         budget=budget, emit=emit, approve=approve, context=board.digest(), skills=skills)
-        board.post(agent_id, f"step-{step}", f"{instruction}\n{r}")
-        return agent_id, r
+        Blackboard are thread-safe, team.run gives each agent its own sub-budget, and the
+        workspace + run budget are re-bound here so worker threads land in the right
+        sandbox and charge the right budget."""
+        with using_workspace(ws_root), use_budget(budget):
+            agent_id = (item.get("agent") or "general").strip()
+            if agent_id not in team.agents.agents:
+                agent_id = team._fallback_select(item.get("instruction", ""))
+            agent = team.agents.get(agent_id)
+            instruction = item.get("instruction") or item.get("task") or ""
+            skill_arg = item.get("skill")
+            skills = [skill_arg] if isinstance(skill_arg, str) and skill_arg.strip() else None
+            _emit({"type": "assign", "agent": agent_id, "label": getattr(agent, "label", agent_id),
+                   "model": registry.model_for_tier(getattr(agent, "tier", "tier2")),
+                   "subtask": instruction, "reason": "delegated by lead", "step": step,
+                   "skill": skill_arg or None})
+            r = team.run(agent_id, instruction, budget=budget, emit=emit,
+                         approve=approve, context=board.digest(), skills=skills)
+            if _looks_failed(r):     # A2: retry a failed delegated step once
+                _emit({"type": "retry", "agent": agent_id, "reason": "delegated step failed"})
+                r = team.run(agent_id, instruction + "\n\n(Previous attempt failed — retry carefully.)",
+                             budget=budget, emit=emit, approve=approve, context=board.digest(), skills=skills)
+            board.post(agent_id, f"step-{step}", f"{instruction}\n{r}")
+            return agent_id, r
 
     while True:
         force_final = rounds >= MAX_MASTER_ROUNDS
@@ -410,6 +421,11 @@ def _finalize_from_board(board, task, budget, emit):
 def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
                 plan_only=False, subtasks=None, review="auto", parallel=False, stream=False) -> str:
     budget = budget or Budget()
+    # Bind the run budget so tool-internal model calls (see_image / safety_check /
+    # generate_image) charge THIS run's budget + the daily cap, not a throwaway one.
+    # Each run executes on a fresh thread (WS spawns one per turn) or rebinds here before
+    # any model call, so we don't need to reset it on this thread.
+    set_run_budget(budget)
 
     def _emit(ev):
         if emit:
@@ -442,7 +458,11 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
         return result
 
-    cls = classify(task, budget=budget)
+    # Route on the RAW user request, not the assembled history/memory/project context
+    # (which bloats the classifier prompt and can distort the tier — a trivial follow-up
+    # buried under pages of context can look "hard"). The agents still receive the full
+    # `task`; only the cheap classifier sees the trimmed message.
+    cls = classify(_user_request(task), budget=budget)
     _emit({**cls, "type": "route"})
     tier = cls.get("tier", 2)
     task_type = cls.get("task_type")
