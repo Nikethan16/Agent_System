@@ -20,7 +20,7 @@ the lead uses a reasoning-tier model; each agent uses the cheapest model good at
 import json
 import re
 
-from .llm import complete, Budget, BudgetExceeded
+from .llm import complete, complete_chain, Budget, BudgetExceeded
 from .registry import registry
 from .router import classify
 from . import agents as team
@@ -126,10 +126,10 @@ PLANNER_SYS = (
 
 # ---- planning (used by plan-first preview) ---------------------------------
 def _make_plan(task, budget):
-    model = registry.model_for_tier("tier3")
-    resp, _ = complete(model, [{"role": "system", "content": PLANNER_SYS},
-                               {"role": "user", "content": task}],
-                       max_tokens=600, budget=budget, temperature=0.2)
+    chain = registry.model_chain("tier3", task_type="reasoning")
+    resp, _ = complete_chain(chain, [{"role": "system", "content": PLANNER_SYS},
+                                     {"role": "user", "content": task}],
+                             max_tokens=600, budget=budget, temperature=0.2)
     try:
         txt = resp.choices[0].message.content
         subs = json.loads(txt[txt.find("{"): txt.rfind("}") + 1])["subtasks"]
@@ -201,7 +201,11 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None):
         if emit:
             emit(ev)
 
-    model = registry.model_for_tier("tier3", task_type="reasoning")
+    def _fb(frm, to, why):
+        _emit({"type": "fallback", "agent": "lead", "from": frm, "to": to, "reason": why})
+
+    # The LEAD's fallback chain (DeepSeek V4 Pro -> Nemotron Super -> ... per routing).
+    chain = registry.model_chain("tier3", task_type="reasoning")
     menu = "\n".join(f"- {a.id}: {a.when_to_use}" for a in team.agents.catalog())
     skill_menu = "\n".join(f"- {s['name']}: {s['description'][:140]}" for s in skill_lib.catalog()) or "(none)"
     system = MASTER_SYS.replace("{menu}", menu).replace("{skills}", skill_menu)
@@ -230,8 +234,9 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None):
     while True:
         force_final = rounds >= MAX_MASTER_ROUNDS
         try:
-            resp, _ = complete(model, messages, tools=None if force_final else schemas,
-                               max_tokens=registry.max_tokens_for_tier("tier3"), budget=budget)
+            resp, _ = complete_chain(chain, messages, tools=None if force_final else schemas,
+                                     max_tokens=registry.max_tokens_for_tier("tier3"),
+                                     budget=budget, on_fallback=_fb)
         except BudgetExceeded as e:
             _emit({"type": "limit", "agent": "lead", "text": str(e)})
             return _finalize_from_board(board, task, budget, emit) or f"(stopped: {e})"

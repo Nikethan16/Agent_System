@@ -58,10 +58,7 @@ class ModelRegistry:
 
     def model_for_tier(self, name: str, task_type: str = None) -> str:
         if self.model_strategy() == "cheapest":
-            needed = self._level(name)
-            picked = self.cheapest_for(needed, task_type)
-            if picked:
-                return picked
+            return self.model_chain(name, task_type, max_len=1)[0]
         return self.cfg["tiers"][name]["model"]
 
     def max_tokens_for_tier(self, name: str) -> int:
@@ -103,17 +100,61 @@ class ModelRegistry:
         # free first, then lowest relative cost
         return (0 if m.get("free") else 1, m.get("cost", 999))
 
-    def cheapest_for(self, needed_level: int, task_type: str = None):
+    def ranked_for(self, needed_level: int, task_type: str = None) -> list:
+        """All AVAILABLE models capable of this level, ranked cheapest/preferred first.
+        If a task_type is given and any candidate is tagged good_for it, restrict to
+        those (a specialist wins); otherwise keep every capable model."""
         cands = [m for m in self.catalog()
                  if self._available(m) and m.get("tier_hint", 2) >= needed_level]
         if task_type:
             pref = [m for m in cands if task_type in (m.get("good_for") or [])]
             if pref:
                 cands = pref
-        if not cands:
-            return None
         cands.sort(key=self._cost_key)
-        return cands[0]["id"]
+        return [m["id"] for m in cands]
+
+    def cheapest_for(self, needed_level: int, task_type: str = None):
+        ranked = self.ranked_for(needed_level, task_type)
+        return ranked[0] if ranked else None
+
+    def routing(self) -> dict:
+        """Optional explicit per-task fallback chains from models.yaml (editable in
+        the UI later). Maps a task_type -> ordered list of model ids."""
+        return self.cfg.get("routing") or {}
+
+    def _by_id(self, mid: str):
+        for m in self.catalog():
+            if m.get("id") == mid:
+                return m
+        return None
+
+    def model_chain(self, tier: str, task_type: str = None, max_len: int = 4) -> list:
+        """The ordered fallback chain for a (tier, task_type): primary first, then
+        progressively-broader fallbacks. Used by complete_chain(). Composition:
+          1) explicit routing[task_type] override (available + capable), then
+          2) auto cost-ranked specialists for this task, then
+          3) any other capable model (cross-task safety net),
+          4) and finally the fixed-mode tier model so the chain is never empty
+             (e.g. offline tests with no provider key set)."""
+        level = self._level(tier)
+        chain = []
+
+        def _add(mid):
+            if mid and mid not in chain:
+                chain.append(mid)
+
+        if task_type:
+            for mid in self.routing().get(task_type, []) or []:
+                m = self._by_id(mid)
+                if m and self._available(m) and m.get("tier_hint", 2) >= level:
+                    _add(mid)
+        for mid in self.ranked_for(level, task_type):
+            _add(mid)
+        for mid in self.ranked_for(level, None):        # deeper, cross-task fallbacks
+            _add(mid)
+        if not chain:
+            _add(self.cfg["tiers"][tier]["model"])
+        return chain[:max_len]
 
     # ---- live swap (used by the UI) -------------------------------------
     def set_tier_model(self, tier: str, model: str):

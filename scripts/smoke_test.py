@@ -160,6 +160,65 @@ check("auto-review off for trivial (tier1)", orch._auto_review(1, "coding") is F
 check("auto-review off for tier2 lookup", orch._auto_review(2, "research") is False)
 check("resolve-review honours explicit False", orch._resolve_review(False, 3, "coding") is False)
 
+# ---- resilience: key pool + fallback chains (Phase 2) -----------------------
+print("\n[core / resilience]")
+from core import keypool as KP
+check("provider_of detects nvidia_nim",
+      KP.provider_of("nvidia_nim/deepseek-ai/deepseek-v4-pro") == "nvidia_nim")
+check("provider_of detects bare openai/anthropic",
+      KP.provider_of("gpt-5.5") == "openai" and KP.provider_of("claude-x") == "anthropic")
+_pool = KP.KeyPool("test", ["key1aaaaaaaa", "key2bbbbbbbb"], rpm=3)
+_k1, _k2 = _pool.acquire(max_wait=0), _pool.acquire(max_wait=0)
+check("keypool spreads load across keys (least-loaded)", _k1.value != _k2.value)
+for _ in range(8):
+    _pool.acquire(max_wait=0)            # max_wait=0 never sleeps (uses least-loaded)
+check("keypool rate accounting tracks usage", sum(r["used"] for r in _pool.report()) >= 5)
+check("keypool masks keys (no secret leak)", all("…" in r["key"] for r in _pool.report()))
+_pool.penalize(_k1)
+check("keypool penalize benches a key (cooldown)", any(r["cooldown_s"] > 0 for r in _pool.report()))
+_pool.disable(_k2)
+check("keypool disable removes a bad key", any(not r["enabled"] for r in _pool.report()))
+
+# model_chain: with a provider key present, routing picks the configured primary.
+import os as _os
+from core.registry import registry as _reg
+_os.environ["NVIDIA_NIM_API_KEY"] = "smoke-nvidia-key"   # make NVIDIA models "available"
+try:
+    _chain = _reg.model_chain("tier3", task_type="reasoning")
+    check("model_chain returns an ordered fallback list", isinstance(_chain, list) and len(_chain) >= 2)
+    check("model_chain routing: reasoning primary = deepseek-v4-pro",
+          _chain[0] == "nvidia_nim/deepseek-ai/deepseek-v4-pro")
+    check("model_chain routing: coding primary = glm-5.1",
+          _reg.model_chain("tier2", task_type="coding")[0] == "nvidia_nim/z-ai/glm-5.1")
+    check("model_chain has no duplicates", len(_chain) == len(set(_chain)))
+finally:
+    _os.environ.pop("NVIDIA_NIM_API_KEY", None)
+
+# complete_chain: falls back to the next model when one fails (+ emits a fallback event).
+_seen, _fbev = [], []
+def _chain_fake(**kw):
+    _seen.append(kw.get("model"))
+    if kw.get("model") == "m-bad":
+        raise RuntimeError("simulated provider outage")
+    return _Resp("ok from " + kw.get("model"))
+L.litellm.completion = _chain_fake
+_r, _ = L.complete_chain(["m-bad", "m-good"], [{"role": "user", "content": "hi"}],
+                         budget=Budget(max_usd=1, max_iterations=5),
+                         on_fallback=lambda f, t, w: _fbev.append((f, t)))
+check("complete_chain falls back to the next model on failure",
+      _r.choices[0].message.content == "ok from m-good")
+check("complete_chain emitted a fallback event", _fbev == [("m-bad", "m-good")])
+# ...but a BudgetExceeded is a hard stop — never a fallback trigger.
+_overb = Budget(max_usd=0.01, max_iterations=5)
+_overb.add_cost(0.02)
+_stopped = False
+try:
+    L.complete_chain(["m-good", "m-good2"], [{"role": "user", "content": "hi"}], budget=_overb)
+except BudgetExceeded:
+    _stopped = True
+check("complete_chain does NOT fall back past the budget cap", _stopped)
+L.litellm.completion = fake   # restore for the rest of the suite
+
 # ---- skills ----
 from core import skills as sk
 from core import agents as team_mod

@@ -71,7 +71,9 @@ def run(agent_id, task, budget=None, emit=None, approve=None, context="",
     a = agents.get(agent_id) or agents.get(agents.fallback_id())
     # Cost-first selection prefers a cheap model good at this task / the agent's specialty.
     tt = task_type or (a.capabilities[0] if a.capabilities else None)
-    model = model_registry.model_for_tier(a.tier, task_type=tt)
+    # The fallback CHAIN for this agent (primary first); run_agent falls back down it
+    # if a model is rate-limited/down. model_chain[0] is the same primary as before.
+    models = model_registry.model_chain(a.tier, task_type=tt)
     mt = max_tokens or model_registry.max_tokens_for_tier(a.tier)
 
     # SKILLS (Claude-style): pick relevant skills for this task, stage their bundled
@@ -96,7 +98,7 @@ def run(agent_id, task, budget=None, emit=None, approve=None, context="",
     # against the shared run budget so the global cap can't be bypassed).
     b = budget.child(max_usd=a.max_usd, max_iterations=a.max_iterations) if budget is not None else None
     return run_agent(
-        full, a.prompt, model, max_tokens=mt, budget=b,
+        full, a.prompt, models[0], max_tokens=mt, budget=b, models=models,
         label=a.id, emit=emit, allowed_tools=a.tools, approve=approve, stream=stream,
     )
 

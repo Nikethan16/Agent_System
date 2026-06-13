@@ -14,7 +14,7 @@ no UI or provider code enters core.
 import os
 import json
 
-from .llm import complete, stream_complete_tools, Budget, BudgetExceeded
+from .llm import complete, complete_chain, stream_complete_tools, Budget, BudgetExceeded
 from . import toolbelt
 from . import policy
 
@@ -44,18 +44,26 @@ class _StreamMsg:
 
 
 def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
-              label="agent", emit=None, allowed_tools=None, approve=None, stream=False):
+              label="agent", emit=None, allowed_tools=None, approve=None, stream=False,
+              models=None):
     """
     allowed_tools: list of tool names this agent may use (None = all registered).
     approve(tool, args, decision) -> (allowed: bool, reason: str): called only for
         escalated (critical / requires-human) actions. None = auto-approve them.
     stream=True: stream this agent's tokens as `agent_token` events (opt-in).
+    models: the ordered fallback chain (primary first). Defaults to [model]. If a
+        model is rate-limited across its keys / down, the loop falls back down the
+        chain and emits a `fallback` event.
     """
     budget = budget or Budget()
+    chain = [m for m in (models or [model]) if m] or [model]
 
     def _emit(ev):
         if emit:
             emit(ev)
+
+    def _on_fb(frm, to, why):
+        _emit({"type": "fallback", "agent": label, "from": frm, "to": to, "reason": why})
 
     names = allowed_tools if allowed_tools is not None else toolbelt.names()
     schemas = toolbelt.schemas_for(names)
@@ -78,16 +86,24 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
             nudged = True
         try:
             if stream:
-                md, _ = stream_complete_tools(
-                    model, messages, tools=active_tools,
-                    max_tokens=max_tokens, budget=budget,
-                    on_token=lambda t: _emit({"type": "agent_token", "agent": label, "text": t}),
-                )
-                msg = _StreamMsg(md)
+                try:
+                    md, _ = stream_complete_tools(
+                        chain[0], messages, tools=active_tools,
+                        max_tokens=max_tokens, budget=budget,
+                        on_token=lambda t: _emit({"type": "agent_token", "agent": label, "text": t}),
+                    )
+                    msg = _StreamMsg(md)
+                except BudgetExceeded:
+                    raise
+                except Exception:
+                    # Streaming the primary failed — fall back down the chain (non-stream).
+                    resp, _ = complete_chain(chain, messages, tools=active_tools,
+                                             max_tokens=max_tokens, budget=budget, on_fallback=_on_fb)
+                    msg = resp.choices[0].message
             else:
-                resp, _ = complete(
-                    model, messages, tools=active_tools,
-                    max_tokens=max_tokens, budget=budget,
+                resp, _ = complete_chain(
+                    chain, messages, tools=active_tools,
+                    max_tokens=max_tokens, budget=budget, on_fallback=_on_fb,
                 )
                 msg = resp.choices[0].message
         except BudgetExceeded as e:
