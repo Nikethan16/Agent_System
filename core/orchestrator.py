@@ -17,8 +17,10 @@ Routing by difficulty (router):
 Model choice is cost-first AND task-aware (registry.model_for_tier(tier, task_type)):
 the lead uses a reasoning-tier model; each agent uses the cheapest model good at its job.
 """
+import os
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from .llm import complete, complete_chain, Budget, BudgetExceeded
 from .registry import registry
@@ -31,6 +33,7 @@ from .blackboard import Blackboard
 
 MAX_MASTER_ROUNDS = 16     # hard cap on lead loop iterations
 MAX_DELEGATIONS = 10       # hard cap on subagent spawns per run (depth-limited too)
+MAX_PARALLEL_FANOUT = int(os.environ.get("AGENT_MAX_PARALLEL", "4"))  # concurrent subagents
 
 # Task types that warrant an automatic QA pass when review is left on "auto":
 # substantive *build/analysis* work where a concrete pass/fail check adds value.
@@ -103,9 +106,12 @@ MASTER_SYS = (
     "You are the LEAD engineer coordinating a complex task. You work in a loop:\n"
     "1) Call write_todos to lay out a short plan (3-6 concrete steps).\n"
     "2) Work the steps: DELEGATE well-scoped steps to a specialist with the `delegate` "
-    "tool, or do small steps yourself with read_file/list_files/write_file/edit_file/run_bash "
-    "(read a file before you edit it; use edit_file for precise changes, write_file only "
-    "for new files).\n"
+    "tool. For steps that are INDEPENDENT of each other (e.g. research two topics, or "
+    "build two unrelated files), use `delegate_parallel` to run them AT THE SAME TIME — "
+    "it's much faster. Only run things in parallel when they truly don't depend on each "
+    "other (you can't test code before it's written). Or do small steps yourself with "
+    "read_file/list_files/write_file/edit_file/run_bash (read a file before you edit it; "
+    "use edit_file for precise changes, write_file only for new files).\n"
     "3) After each step, update the todo statuses with write_todos.\n"
     "4) When ALL steps are done, reply with a concise final answer for the user "
     "(mention any files produced) and DO NOT call any tool in that final message.\n\n"
@@ -203,6 +209,19 @@ def _master_tool_schemas():
                                          "description": "Optional skill name to load for this step "
                                                         "(e.g. docx, xlsx, pptx, pdf)."}},
                               ["agent", "instruction"])}},
+        {"type": "function", "function": {
+            "name": "delegate_parallel",
+            "description": "Run several INDEPENDENT steps AT THE SAME TIME (e.g. research two "
+                           "topics, or build two unrelated files). Use this instead of repeated "
+                           "delegate calls whenever the steps don't depend on each other — it's "
+                           "much faster. Do NOT use it for dependent steps (can't test before code "
+                           "exists). Returns all results together.",
+            "parameters": obj({"tasks": {"type": "array", "items": {"type": "object", "properties": {
+                "agent": {"type": "string"},
+                "instruction": {"type": "string",
+                                "description": "A COMPLETE, self-contained task (deliverable, inputs, "
+                                               "constraints, acceptance check)."},
+                "skill": {"type": "string"}}, "required": ["agent", "instruction"]}}}, ["tasks"])}},
     ]
     return meta + toolbelt.schemas_for(["read_file", "list_files", "write_file", "edit_file", "run_bash"])
 
@@ -241,6 +260,26 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None):
     board = Blackboard()
     schemas = _master_tool_schemas()
     rounds, delegations = 0, 0
+
+    def _run_delegation(item, step):
+        """Run ONE delegated step (used by both delegate and delegate_parallel).
+        Returns (agent_id, result). Safe to call from worker threads — Budget and the
+        Blackboard are thread-safe, and team.run gives each agent its own sub-budget."""
+        agent_id = (item.get("agent") or "general").strip()
+        if agent_id not in team.agents.agents:
+            agent_id = team._fallback_select(item.get("instruction", ""))
+        agent = team.agents.get(agent_id)
+        instruction = item.get("instruction") or item.get("task") or ""
+        skill_arg = item.get("skill")
+        skills = [skill_arg] if isinstance(skill_arg, str) and skill_arg.strip() else None
+        _emit({"type": "assign", "agent": agent_id, "label": getattr(agent, "label", agent_id),
+               "model": registry.model_for_tier(getattr(agent, "tier", "tier2")),
+               "subtask": instruction, "reason": "delegated by lead", "step": step,
+               "skill": skill_arg or None})
+        r = team.run(agent_id, instruction, budget=budget, emit=emit,
+                     approve=approve, context=board.digest(), skills=skills)
+        board.post(agent_id, f"step-{step}", f"{instruction}\n{r}")
+        return agent_id, r
 
     while True:
         force_final = rounds >= MAX_MASTER_ROUNDS
@@ -289,20 +328,24 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None):
                     result = "Delegation limit reached — do the remaining steps yourself or finish."
                 else:
                     delegations += 1
-                    agent_id = (args.get("agent") or "general").strip()
-                    if agent_id not in team.agents.agents:
-                        agent_id = team._fallback_select(args.get("instruction", ""))
-                    agent = team.agents.get(agent_id)
-                    instruction = args.get("instruction") or args.get("task") or ""
-                    skill_arg = args.get("skill")
-                    skills = [skill_arg] if isinstance(skill_arg, str) and skill_arg.strip() else None
-                    _emit({"type": "assign", "agent": agent_id, "label": getattr(agent, "label", agent_id),
-                           "model": registry.model_for_tier(getattr(agent, "tier", "tier2")),
-                           "subtask": instruction, "reason": "delegated by lead", "step": delegations,
-                           "skill": skill_arg or None})
-                    result = team.run(agent_id, instruction, budget=budget, emit=emit,
-                                      approve=approve, context=board.digest(), skills=skills)
-                    board.post(agent_id, f"step-{delegations}", f"{instruction}\n{result}")
+                    _aid, result = _run_delegation(args, delegations)
+            elif name == "delegate_parallel":
+                items = [it for it in (args.get("tasks") or []) if isinstance(it, dict)]
+                remaining = MAX_DELEGATIONS - delegations
+                if remaining <= 0:
+                    result = "Delegation limit reached — do the remaining steps yourself or finish."
+                elif not items:
+                    result = "delegate_parallel needs a non-empty 'tasks' list."
+                else:
+                    items = items[:min(remaining, MAX_PARALLEL_FANOUT)]
+                    base = delegations
+                    delegations += len(items)
+                    # Run the independent steps CONCURRENTLY (the key pool spreads them
+                    # across keys so this is genuinely faster, not just interleaved).
+                    with ThreadPoolExecutor(max_workers=len(items)) as ex:
+                        pairs = list(ex.map(lambda iv: _run_delegation(iv[1], base + 1 + iv[0]),
+                                            list(enumerate(items))))
+                    result = "\n\n".join(f"[{aid}] {r}" for aid, r in pairs)
             else:
                 result = _run_one_tool(name, args, "lead", approve, emit)
 

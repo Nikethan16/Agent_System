@@ -152,6 +152,9 @@ todos_emitted = any(e.get("type") == "plan" and e.get("todos") for e in ev)
 check("lead master loop wrote a todo list", todos_emitted)
 check("lead delegated to a specialist (coder)", "coder" in assigns)
 check("lead produced a final answer", bool(final))
+_mnames = [t["function"]["name"] for t in orch._master_tool_schemas()]
+check("lead can delegate sequentially AND in parallel (delegate_parallel)",
+      "delegate" in _mnames and "delegate_parallel" in _mnames)
 
 # ---- auto-review decision (A5) ----
 check("auto-review on for complex (tier3)", orch._auto_review(3, "research") is True)
@@ -232,6 +235,17 @@ try:
           _reg.model_chain("tier2", "data")[0] == "nvidia_nim/qwen/qwen3.5-122b-a10b")
 finally:
     _os.environ.pop("NVIDIA_NIM_API_KEY", None)
+
+# fleet management: UI-managed key store + editable routing overrides (Phase 5 backend)
+_testkey = "smoke-openrouter-key-abcdef123456"
+KP.add_key("openrouter", _testkey)
+check("keypool add_key: pool picks up a UI-added key",
+      any(r["key"] == KP.mask(_testkey) for r in KP.get_pool("openrouter").report()))
+check("keypool remove_key: removes it again",
+      KP.remove_key("openrouter", KP.mask(_testkey)) and not KP.get_pool("openrouter").keys)
+_reg.set_routing("smoke_tt", ["m-alpha", "m-beta"])
+check("routing override persists + merges into routing()",
+      _reg.routing().get("smoke_tt") == ["m-alpha", "m-beta"])
 
 # ---- skills ----
 from core import skills as sk

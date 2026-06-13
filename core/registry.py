@@ -17,6 +17,7 @@ via the registry (update_catalog / remove_from_catalog), so the curated, comment
 models.yaml stays pristine.
 """
 import os
+import json
 import logging
 import threading
 import yaml
@@ -28,6 +29,10 @@ _DEFAULT_PATH = os.path.join(_DIR, "..", "config", "models.yaml")
 CONFIG_PATH = os.environ.get("MODELS_CONFIG", _DEFAULT_PATH)
 DISCOVERED_PATH = os.environ.get(
     "MODELS_DISCOVERED", os.path.join(_DIR, "..", "config", "models.discovered.yaml"))
+# UI-editable routing overrides (gitignored); merged over models.yaml `routing:`.
+ROUTING_PATH = os.environ.get(
+    "ROUTING_OVERRIDE",
+    os.path.join(os.environ.get("DATA_DIR", os.path.join(_DIR, "..", "data")), "routing.json"))
 
 
 class ModelRegistry:
@@ -40,6 +45,17 @@ class ModelRegistry:
         with open(self.path) as f:
             self.cfg = yaml.safe_load(f)
         self._discovered = self._load_discovered()
+        self._routing_override = self._load_routing_override()
+
+    def _load_routing_override(self) -> dict:
+        try:
+            with open(ROUTING_PATH) as f:
+                return json.load(f) or {}
+        except FileNotFoundError:
+            return {}
+        except Exception as e:
+            log.warning("could not load routing override from %s: %s", ROUTING_PATH, e)
+            return {}
 
     def _load_discovered(self):
         try:
@@ -140,9 +156,22 @@ class ModelRegistry:
         return ranked[0] if ranked else None
 
     def routing(self) -> dict:
-        """Optional explicit per-task fallback chains from models.yaml (editable in
-        the UI later). Maps a task_type -> ordered list of model ids."""
-        return self.cfg.get("routing") or {}
+        """Explicit per-task fallback chains: models.yaml `routing:` with any UI-saved
+        overrides (data/routing.json) merged on top. Maps task_type -> ordered model ids."""
+        base = dict(self.cfg.get("routing") or {})
+        base.update(self._routing_override or {})
+        return base
+
+    def set_routing(self, task_type: str, chain: list):
+        """Persist a UI-edited fallback chain for a task_type (override file)."""
+        if not isinstance(chain, list):
+            raise ValueError("chain must be a list of model ids")
+        with self._lock:
+            self._routing_override[task_type] = [str(m) for m in chain if m]
+            os.makedirs(os.path.dirname(ROUTING_PATH), exist_ok=True)
+            with open(ROUTING_PATH, "w", encoding="utf-8") as f:
+                json.dump(self._routing_override, f)
+        return self.routing()
 
     def _by_id(self, mid: str):
         for m in self.catalog():

@@ -21,6 +21,7 @@ from .api import projects as projects_api
 from .api import memory as memory_api
 from .api import benchmark as benchmark_api
 from .api import schedules as schedules_api
+from .api import fleet as fleet_api
 
 import tools  # noqa: F401  (registers web_search/web_fetch/generate_image/mcp_call)
 
@@ -38,6 +39,7 @@ app.include_router(projects_api.router, dependencies=_auth)
 app.include_router(memory_api.router, dependencies=_auth)
 app.include_router(benchmark_api.router, dependencies=_auth)
 app.include_router(schedules_api.router, dependencies=_auth)
+app.include_router(fleet_api.router, dependencies=_auth)
 app.include_router(ws.router)
 
 # Create tables at import so every entrypoint (uvicorn, TestClient, scripts) is ready.

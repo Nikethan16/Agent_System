@@ -15,6 +15,7 @@ NVIDIA_NIM_API_KEY, we also pick up NVIDIA_NIM_API_KEY_1, _2, … _20. Add anoth
 free account's key as NVIDIA_NIM_API_KEY_2 and throughput scales automatically.
 """
 import os
+import json
 import time
 import threading
 from collections import deque
@@ -58,16 +59,74 @@ def mask(key: str) -> str:
     return f"{key[:4]}…{key[-4:]}" if len(key) > 9 else "****"
 
 
-def _discover_keys(base_env: str) -> list:
-    """Collect BASE, BASE_1 … BASE_20 from the env (deduped). Values <=5 chars are
-    treated as unset placeholders (the repo uses 1-char placeholders for unused keys)."""
+# UI-managed keys live in a gitignored JSON store (provider -> [keys]); they're
+# pooled ALONGSIDE the env keys, so you can add another free account's key from the
+# Settings UI without editing .env. core stays server-agnostic — the path is derived
+# from DATA_DIR (same default as server/db.py) via the env, with no server import.
+_STORE = os.path.join(
+    os.environ.get("DATA_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")),
+    "keys.json",
+)
+
+
+def _load_store() -> dict:
+    try:
+        with open(_STORE, encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def _save_store(d: dict) -> None:
+    os.makedirs(os.path.dirname(_STORE), exist_ok=True)
+    with open(_STORE, "w", encoding="utf-8") as f:
+        json.dump(d, f)
+
+
+def _discover_keys(base_env: str, provider: str = "") -> list:
+    """Collect keys for a provider: env BASE, BASE_1 … BASE_20, PLUS any UI-added keys
+    in the store (deduped). Values <=5 chars are treated as unset placeholders (the repo
+    uses 1-char placeholders for unused providers)."""
     out, seen = [], set()
     for name in [base_env] + [f"{base_env}_{i}" for i in range(1, 21)]:
         v = (os.environ.get(name) or "").strip().strip('"').strip("'")
         if len(v) > 5 and v not in seen:
             seen.add(v)
             out.append(v)
+    for v in (_load_store().get(provider) or []):
+        v = (v or "").strip()
+        if len(v) > 5 and v not in seen:
+            seen.add(v)
+            out.append(v)
     return out
+
+
+def add_key(provider: str, key: str) -> None:
+    """Add a UI-managed key for a provider and rebuild the pool to pick it up."""
+    if provider not in _PROVIDER_ENV:
+        raise ValueError(f"unknown provider: {provider}")
+    key = (key or "").strip()
+    if len(key) <= 5:
+        raise ValueError("key too short")
+    d = _load_store()
+    lst = d.get(provider) or []
+    if key not in lst:
+        lst.append(key)
+    d[provider] = lst
+    _save_store(d)
+    rebuild_pools()
+
+
+def remove_key(provider: str, masked: str) -> bool:
+    """Remove a UI-managed key by its masked label (env keys are not removable here)."""
+    d = _load_store()
+    lst = d.get(provider) or []
+    kept = [k for k in lst if mask(k) != masked]
+    removed = len(kept) != len(lst)
+    d[provider] = kept
+    _save_store(d)
+    rebuild_pools()
+    return removed
 
 
 class _Key:
@@ -164,7 +223,7 @@ def get_pool(provider: str):
     with _LOCK:
         pool = _POOLS.get(provider)
         if pool is None:
-            pool = KeyPool(provider, _discover_keys(base))
+            pool = KeyPool(provider, _discover_keys(base, provider))
             _POOLS[provider] = pool
         return pool
 
