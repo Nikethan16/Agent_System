@@ -13,7 +13,7 @@ import yaml
 
 from .registry import registry as model_registry
 from .agent import run_agent
-from .llm import complete, Budget
+from .llm import complete_chain, Budget
 from . import skills as skill_lib
 
 _PATH = os.environ.get(
@@ -146,13 +146,15 @@ def select_agent(task: str, budget: Budget = None):
     """Returns (agent_id, reason). LLM pick from the registry menu, with a fallback."""
     cat = agents.catalog()
     menu = "\n".join(f"- {a.id}: {a.when_to_use}" for a in cat)
-    model = model_registry.model_for_tier(agents.dispatcher_tier())
+    # Dispatch through the classify fallback chain too, so a down primary switches model
+    # rather than dropping straight to the keyword fallback.
+    chain = model_registry.model_chain(agents.dispatcher_tier(), task_type="classify")
     # NOTE: _DISPATCH_SYS contains a literal JSON example with braces, so we must NOT
     # use str.format() (it would treat {"agent"} as a field). Use replace().
     system = _DISPATCH_SYS.replace("{menu}", menu)
     try:
-        resp, _ = complete(
-            model,
+        resp, _ = complete_chain(
+            chain,
             [{"role": "system", "content": system},
              {"role": "user", "content": task}],
             max_tokens=120, budget=budget, temperature=0,

@@ -11,7 +11,7 @@ Routing cost is near-zero because it uses the tier1 (cheapest) model. Robustness
 import json
 import time
 
-from .llm import complete, Budget, BudgetExceeded
+from .llm import complete_chain, Budget, BudgetExceeded
 from .registry import registry
 
 CLASSIFIER_SYS = (
@@ -54,12 +54,15 @@ def classify(task: str, budget: Budget = None) -> dict:
         cached["routed_model"] = registry.model_for_tier(f"tier{cached['tier']}")
         return cached
     tier_name = registry.classifier_tier()
-    model = registry.model_for_tier(tier_name)
+    # Route through the classify fallback CHAIN (NVIDIA-first), so a down/rate-limited
+    # primary switches model instead of failing the route. complete_chain already rotates
+    # keys within each model; the outer retry below covers a transient that exhausts it.
+    chain = registry.model_chain(tier_name, task_type="classify")
     last_err = None
     for attempt in range(_RETRIES + 1):
         try:
-            resp, _ = complete(
-                model,
+            resp, _ = complete_chain(
+                chain,
                 [{"role": "system", "content": CLASSIFIER_SYS},
                  {"role": "user", "content": task}],
                 max_tokens=200, budget=budget, temperature=0,
