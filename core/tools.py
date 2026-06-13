@@ -160,14 +160,22 @@ def run_bash(command: str) -> str:
     if os.environ.get("AGENT_DISABLE_BASH", "").strip() in ("1", "true", "yes"):
         return ("ERROR: shell execution is disabled (AGENT_DISABLE_BASH is set). "
                 "Run this app's bash tool only inside a container/VM sandbox.")
+    ws = current_workspace()
+    image = os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip()
     try:
-        out = subprocess.run(
-            command, shell=True, cwd=current_workspace(),
-            capture_output=True, text=True, timeout=30,
-        )
+        if image:
+            # Real sandbox (recommended for any networked host): run the command inside
+            # an ephemeral, network-less container with ONLY the workspace mounted, so it
+            # can't touch the host. Enable by setting AGENT_BASH_DOCKER_IMAGE (e.g. python:3.11-slim).
+            argv = ["docker", "run", "--rm", "--network", "none",
+                    "-v", f"{ws}:/ws", "-w", "/ws", image, "bash", "-lc", command]
+            out = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+        else:
+            out = subprocess.run(command, shell=True, cwd=ws,
+                                 capture_output=True, text=True, timeout=30)
         return f"exit={out.returncode}\nSTDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}"
     except subprocess.TimeoutExpired:
-        return "ERROR running command: timed out after 30s"
+        return "ERROR running command: timed out"
     except Exception as e:
         return f"ERROR running command: {e}"
 

@@ -9,12 +9,20 @@ and traces. This zips all of it so a daily backup is one command.
     python scripts/backup.py --out /path/dir # choose where the zip lands
     python scripts/backup.py --keep 10       # prune to the newest N backups
 
+OFF-SITE (recommended once hosted): set BACKUP_UPLOAD_CMD to a command that pushes the
+zip somewhere durable; "{zip}" is replaced with the archive path. Examples:
+    BACKUP_UPLOAD_CMD="rclone copy {zip} gdrive:agentcore-backups"
+    BACKUP_UPLOAD_CMD="aws s3 cp {zip} s3://my-bucket/agentcore/"
+Then schedule it with OS cron / Windows Task Scheduler, e.g. daily:
+    python scripts/backup.py --keep 14
+
 Restore = stop the app, unzip the archive over the project root, restart.
 """
 import os
 import sys
 import zipfile
 import argparse
+import subprocess
 from datetime import datetime, timezone
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -62,12 +70,29 @@ def prune(out_dir: str, keep: int):
         print(f"pruned old backup {os.path.basename(old)}")
 
 
+def upload(dest: str):
+    """Push the archive off-site via $BACKUP_UPLOAD_CMD ({zip} -> the archive path).
+    No-op unless the env var is set, so local-only backups need nothing."""
+    cmd = os.environ.get("BACKUP_UPLOAD_CMD", "").strip()
+    if not cmd or not dest:
+        return
+    full = cmd.replace("{zip}", dest)
+    print(f"uploading off-site: {full}")
+    try:
+        r = subprocess.run(full, shell=True, capture_output=True, text=True, timeout=600)
+        print(f"  upload exit={r.returncode}" + (f" — {r.stderr[:200]}" if r.returncode else ""))
+    except Exception as e:
+        print(f"  upload failed: {e}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=os.path.join(_ROOT, "backups"))
     ap.add_argument("--keep", type=int, default=0, help="keep only the newest N backups (0 = keep all)")
     args = ap.parse_args()
     dest = make_backup(args.out)
+    if dest:
+        upload(dest)   # off-site copy if BACKUP_UPLOAD_CMD is configured
     if args.keep > 0:
         prune(args.out, args.keep)
     return 0 if dest else 1

@@ -109,6 +109,24 @@ def _handle(update: dict):
         _send(chat_id, f"⚠️ error: {type(e).__name__}: {e}")
 
 
+def maybe_notify(session_id: str, text: str) -> bool:
+    """If `session_id` is a Telegram-linked chat, push `text` to it (best-effort).
+    This is what makes a SCHEDULED task ('every morning, research X') deliver its result
+    to your phone: the job runs in a 'Telegram <chat_id>' session, then this pushes it."""
+    if not _token() or not text:
+        return False
+    from . import db
+    title = (db.get_session(session_id) or {}).get("title") or ""
+    if not title.startswith("Telegram "):
+        return False
+    chat_id = title.split(" ", 1)[1].strip()
+    allowed = _allowed()
+    if chat_id and (not allowed or chat_id in allowed):
+        _send(chat_id, text)
+        return True
+    return False
+
+
 def _loop():
     log.info("Telegram bot started (long-polling).")
     offset = 0

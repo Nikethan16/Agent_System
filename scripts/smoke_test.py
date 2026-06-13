@@ -443,6 +443,8 @@ _os.environ.pop("TELEGRAM_ALLOWED_CHAT_IDS", None)
 _tsid = TG._session_for("tg-smoke-chat")
 check("telegram maps a chat to a persistent session (find-or-create)",
       bool(_tsid) and TG._session_for("tg-smoke-chat") == _tsid)
+check("telegram maybe_notify is a no-op without a token (proactive-digest hook)",
+      TG.maybe_notify(_tsid, "digest") is False)
 
 # ---- document intelligence: doc-parser tool + RAG (Wave 4) ------------------
 print("\n[document intelligence]")
