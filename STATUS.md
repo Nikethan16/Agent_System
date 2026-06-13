@@ -155,6 +155,7 @@ mitigated today by `requires_human` + `AGENT_DISABLE_BASH=1` (Docker default); b
 
 ## Changelog
 - **2026-06-13 (session 2 cont.)** — **Robustness, doc-intelligence, safety, ops, multimodal, more UI.** Same branch; offline smoke **107→123**; web build clean; `evals --dry-run` exits 0 (CI-safe). Per-commit detail in `git log`.
+  - **Task playbooks** — `config/playbooks.yaml` + `core/playbooks.py`: each task type follows a proven path (understand→plan→build one-at-a-time→validate→review) with a preferred specialist + gate per phase; the LEAD is **seeded** from it, tier-2 agents get a compact checklist, and any **uncovered** task type uses the `default` backup path. Config-driven.
   - **Agent robustness** — auto-**retry** of a failed/empty step (single-agent + delegation; `retry` event), **tool-call JSON repair**, **stuck-loop guard** (repeated identical call → forced final). `policy.audit` makes its dir + **rotates** at `AUDIT_LOG_MAX_BYTES`.
   - **Memory + pace** — recall prefers same-**project** notes (`scope_hint`), episodic **pruning** (`MEMORY_MAX_TURNS`), **classifier-cache** on the user's request, fact-extraction skipped on trivial turns.
   - **Document intelligence** — **`parse_document`** tool (markitdown→md) for FRS/specs; **RAG** over project knowledge (`server/rag.py`: chunk+embed+retrieve only relevant excerpts, lexical fallback).

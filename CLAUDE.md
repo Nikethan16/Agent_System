@@ -37,6 +37,7 @@ code changes.** The architecture is the stable part; the models are not.
 config/models.yaml   THE model swap point: tiers -> models, plus the UI catalog
 config/agents.yaml   THE agent registry: declarative specialists (add one = YAML)
 config/policy.yaml   security gate rules (hard-block + require-human patterns)
+config/playbooks.yaml task PLAYBOOKS: the proven path per task type (+ default backup)
 core/registry.py     loads models config, resolves tier -> model, live swap
 core/llm.py          the one unified model call + generate_image + Budget caps
 core/tools.py        sandboxed file/shell tools (read/write/EDIT/list/run_bash) + per-session workspace
@@ -48,7 +49,8 @@ core/blackboard.py   shared per-run scratchpad agents collaborate through
 core/skills.py       Agent Skills registry (SKILL.md) — selects + injects task expertise
 skills/              Agent Skills (Claude-format SKILL.md); drop in from anthropics/skills
 core/router.py       cheap classifier: task -> {tier, task_type, ...}
-core/orchestrator.py the SUPERVISOR: Claude-Code-style master loop (todos + delegate)
+core/playbooks.py    loads config/playbooks.yaml; seeds the master loop with a task type's path
+core/orchestrator.py the SUPERVISOR: Claude-Code-style master loop (todos + delegate), playbook-seeded
 tools/               OPTIONAL network capabilities (web/image/MCP), registered into
                      the toolbelt on import; kept OUTSIDE core so core stays offline
 server/app.py        FastAPI: mounts API routers (auth-gated) + serves the built React app
