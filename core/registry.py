@@ -64,6 +64,28 @@ class ModelRegistry:
     def max_tokens_for_tier(self, name: str) -> int:
         return self.cfg["tiers"][name].get("max_tokens", 4096)
 
+    # ---- context-window awareness (replaces the old hardcoded 12-message window) ----
+    def context_window_for(self, model_id: str) -> int:
+        """The input context window (tokens) for a model — from its catalog entry's
+        `context_window`, else defaults.context_window, else a safe floor."""
+        m = self._by_id(model_id) if model_id else None
+        if m and m.get("context_window"):
+            try:
+                return int(m["context_window"])
+            except (TypeError, ValueError):
+                pass
+        return int(self.cfg.get("defaults", {}).get("context_window", 32000))
+
+    def context_budget(self) -> int:
+        """A safe INPUT-token budget for assembling a turn's context. Uses the SMALLEST
+        context window among AVAILABLE models (so we never overflow whatever the router
+        picks), at ~60%, minus headroom for the answer + tool schemas. This is what makes
+        history adaptive: a 128K+ fleet gets tens of thousands of tokens of context, not
+        an arbitrary 12 messages — and a tiny local model automatically gets less."""
+        wins = [self.context_window_for(m["id"]) for m in self.catalog() if self._available(m)]
+        floor = min(wins) if wins else self.context_window_for("")
+        return max(4000, int(floor * 0.6) - 8192)
+
     def classifier_tier(self) -> str:
         return self.cfg["defaults"]["classifier_tier"]
 

@@ -291,6 +291,37 @@ check("procedural: approve promotes to active", MEM.approve_rule(_rid)
 check("procedural: delete removes the rule", MEM.delete_rule(_rid)
       and not any(x["id"] == _rid for x in MEM.list_rules()))
 
+# ---- memory & context continuity (Phase 3) ----------------------------------
+print("\n[memory / continuity]")
+from core.registry import registry as _reg3
+check("context_budget is a sane positive token budget", _reg3.context_budget() >= 4000)
+check("context_window_for falls back to the default", _reg3.context_window_for("unknown/x") >= 8000)
+# structured, resumable project state
+MEM.set_state("project:smoke", {"goal": "build the app",
+              "plan": [{"text": "phase 1", "status": "done"},
+                       {"text": "phase 2", "status": "done"},
+                       {"text": "phase 3", "status": "pending"}],
+              "next": "phase 3", "artifacts": ["app.py"]})
+_st = MEM.get_state("project:smoke")
+check("project state round-trips", _st.get("goal") == "build the app" and len(_st["plan"]) == 3)
+_sc = MEM.state_context("project:smoke")
+check("state_context renders a RESUME roadmap", "RESUME" in _sc and "[x] phase 1" in _sc and "phase 3" in _sc)
+check("state_context empty for an unknown scope", MEM.state_context("project:none") == "")
+check("clear_state removes it", MEM.clear_state("project:smoke") and MEM.get_state("project:smoke") == {})
+# project-shared vs per-session workspace (continuity)
+from server import projects as _proj
+_pp = _proj.create("smoke project")
+_pchat = _db.create_session("proj chat", project_id=_pp["id"])
+check("workspace is PROJECT-shared for a project chat",
+      ("project_" + _pp["id"]) in _db.session_workspace(_pchat.id).replace("\\", "/"))
+_solo = _db.create_session("solo chat")
+check("workspace is per-session for a standalone chat",
+      _solo.id in _db.session_workspace(_solo.id) and "project_" not in _db.session_workspace(_solo.id))
+# token-budgeted history packing (replaces the hardcoded 12)
+import server.chat as _CH
+check("history packing is token-budgeted (not a fixed 12)",
+      _CH._approx_tokens("x" * 400) >= 90 and callable(_CH._recent_history_budgeted))
+
 # ---- global daily spend cap -------------------------------------------------
 from server import spend as SP
 SP.record(0.10)

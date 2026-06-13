@@ -131,9 +131,23 @@ def init_db():
     _migrate()
 
 
+def _project_id_of(session_id: str) -> str:
+    with DBSession(engine) as s:
+        obj = s.get(Session, session_id)
+        return (obj.project_id or "") if obj else ""
+
+
 def session_workspace(session_id: str) -> str:
-    """Isolated on-disk folder for a chat's files/artifacts."""
-    path = os.path.join(WORKSPACES_DIR, safe_id(session_id))
+    """On-disk folder for a chat's files/artifacts.
+
+    Sessions that belong to a PROJECT share ONE workspace (project_<id>) so files
+    produced in one chat persist into the project's other chats — that's what makes
+    "finish phase 2 here, continue phase 3 in a new chat" actually have the phase-2
+    code present. Standalone chats keep their own isolated per-session workspace."""
+    sid = safe_id(session_id)
+    pid = _project_id_of(sid)
+    name = ("project_" + safe_id(pid)) if pid else sid
+    path = os.path.join(WORKSPACES_DIR, name)
     os.makedirs(path, exist_ok=True)
     return path
 

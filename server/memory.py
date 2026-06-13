@@ -87,13 +87,13 @@ def _lex(query_tokens: set, doc_tokens: set) -> float:
 
 
 # ---- public API -------------------------------------------------------------
-def remember(text: str, session_id: str = "", kind: str = "turn") -> None:
+def remember(text: str, session_id: str = "", kind: str = "turn", scope: str = "") -> None:
     if not text or not text.strip():
         return
     vec = _vec(text)
     with DBSession(engine) as s:
         s.add(Memory(session_id=session_id, kind=kind, text=text[:2000],
-                     embedding=json.dumps(vec) if vec else ""))
+                     scope=scope, embedding=json.dumps(vec) if vec else ""))
         s.commit()
 
 
@@ -133,6 +133,78 @@ def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str
               for s in [_lex(q, set(_tokens(m.text)))] if s >= min_score]
     scored.sort(key=lambda x: -x[0])
     return [t for _, t in scored[:k]]
+
+
+# ===========================================================================
+#  PROJECT / THREAD STATE — a structured, resumable roadmap (Phase 3).
+#  Unlike the lossy free-text summary, this is an explicit { goal, plan[], next,
+#  artifacts[] } record, re-injected at the TOP of every turn so work CONTINUES
+#  exactly where it stopped — even in a NEW chat within the same project
+#  ("we finished phase 2 → now do phase 3"). One row per scope (kind="state").
+# ===========================================================================
+def get_state(scope: str) -> dict:
+    if not scope:
+        return {}
+    with DBSession(engine) as s:
+        row = s.exec(
+            select(Memory).where(Memory.kind == "state", Memory.scope == scope)
+        ).first()
+    if not row or not row.text:
+        return {}
+    try:
+        return json.loads(row.text)
+    except Exception:
+        return {}
+
+
+def set_state(scope: str, state: dict) -> None:
+    if not scope or not isinstance(state, dict):
+        return
+    blob = json.dumps(state)[:8000]
+    with DBSession(engine) as s:
+        row = s.exec(
+            select(Memory).where(Memory.kind == "state", Memory.scope == scope)
+        ).first()
+        if row:
+            row.text, row.updated_at = blob, _now()
+        else:
+            row = Memory(kind="state", scope=scope, text=blob, updated_at=_now())
+        s.add(row)
+        s.commit()
+
+
+def clear_state(scope: str) -> bool:
+    with DBSession(engine) as s:
+        row = s.exec(
+            select(Memory).where(Memory.kind == "state", Memory.scope == scope)
+        ).first()
+        if not row:
+            return False
+        s.delete(row)
+        s.commit()
+        return True
+
+
+def state_context(scope: str) -> str:
+    """Render the saved roadmap as a RESUME block for the top of the context."""
+    st = get_state(scope)
+    if not st:
+        return ""
+    lines = []
+    if st.get("goal"):
+        lines.append(f"Goal: {st['goal']}")
+    plan = st.get("plan") or []
+    if plan:
+        mark = {"done": "[x]", "in_progress": "[~]"}
+        lines.append("Roadmap progress:")
+        lines += [f"  {mark.get(t.get('status'), '[ ]')} {t.get('text', '')}" for t in plan[:25]]
+    if st.get("next"):
+        lines.append("Next up: " + st["next"])
+    if st.get("artifacts"):
+        lines.append("Files produced so far: " + ", ".join(st["artifacts"][:25]))
+    body = "\n".join(lines)
+    return ("RESUME — you are continuing ongoing work. Pick up from the roadmap below; "
+            "do NOT restart from scratch:\n" + body) if body else ""
 
 
 # ===========================================================================

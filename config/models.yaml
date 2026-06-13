@@ -27,6 +27,11 @@ defaults:
   # provider's key (NVIDIA NIM, OpenRouter :free, …) makes free models get used
   # automatically. Set to "fixed" to always use each tier's `model:` below.
   model_strategy: cheapest
+  # Default input context window (tokens) for catalog models without an explicit
+  # `context_window:`. Drives adaptive context packing (server/chat.py) instead of a
+  # hardcoded message count. The NVIDIA fleet is >=128K; per-model overrides can be
+  # added in the catalog (e.g. deepseek-v4-pro / llama-4-maverick are ~1M).
+  context_window: 131072
 
 # ---- TIERS: the difficulty levels and which model serves each. ----
 # model_strategy is "cheapest" (above), so the ACTIVE model per tier is chosen

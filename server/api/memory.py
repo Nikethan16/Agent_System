@@ -10,8 +10,15 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import memory
+from .. import db
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
+
+
+def _scope_for_session(session_id: str) -> str:
+    sess = db.get_session(session_id) or {}
+    pid = sess.get("project_id") or ""
+    return f"project:{pid}" if pid else f"session:{session_id}"
 
 
 @router.get("")
@@ -68,3 +75,17 @@ def delete_rule(rule_id: str):
     if not memory.delete_rule(rule_id):
         raise HTTPException(404, "rule not found")
     return {"ok": True, "rules": memory.list_rules()}
+
+
+# ---- project/thread state (the resumable roadmap) ---------------------------
+@router.get("/state/{session_id}")
+def get_state(session_id: str):
+    """The structured roadmap for this chat's scope (project-wide if it's in a
+    project), so the UI can show Done / Next and the agent can resume."""
+    return memory.get_state(_scope_for_session(session_id))
+
+
+@router.delete("/state/{session_id}")
+def clear_state(session_id: str):
+    memory.clear_state(_scope_for_session(session_id))
+    return {"ok": True}

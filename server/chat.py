@@ -43,14 +43,43 @@ def _attachments_context(workspace: str, attachments) -> str:
     return "Attachments provided by the user (reference these):\n\n" + "\n\n".join(parts)
 
 
-def _recent_history(session_id: str) -> str:
-    """The last N messages verbatim (working memory), excluding the just-added current
-    user message (which is sent separately as the NEW REQUEST)."""
-    prior = db.get_messages(session_id)[:-1][-_HISTORY_TURNS:]
-    if not prior:
+def _approx_tokens(s: str) -> int:
+    """Cheap, offline token estimate (~4 chars/token) — good enough for budgeting."""
+    return max(1, len(s or "") // 4)
+
+
+def _recent_history_budgeted(session_id: str, max_tokens: int) -> str:
+    """Recent messages, newest-first, packed up to a TOKEN budget instead of a fixed
+    count — so a 128K/1M-context model gets far more history than a small one, and we
+    never overflow. (This replaces the old arbitrary 12-message window.) Always keeps
+    at least the most recent message."""
+    prior = db.get_messages(session_id)[:-1]   # exclude the just-added current message
+    if not prior or max_tokens <= 0:
         return ""
-    lines = [f"{m['role'].upper()}: {m['content']}" for m in prior]
-    return "Recent conversation:\n" + "\n".join(lines)
+    picked, used = [], 0
+    for m in reversed(prior):
+        line = f"{m['role'].upper()}: {m['content']}"
+        t = _approx_tokens(line)
+        if picked and used + t > max_tokens:
+            break
+        picked.append(line)
+        used += t
+    picked.reverse()
+    return "Recent conversation:\n" + "\n".join(picked)
+
+
+def _workspace_files(workspace: str, limit: int = 40) -> list:
+    """Top files produced in the workspace (for the resumable roadmap's artifact list)."""
+    out = []
+    for root, _dirs, files in os.walk(workspace):
+        for f in files:
+            rel = os.path.relpath(os.path.join(root, f), workspace).replace("\\", "/")
+            if rel.startswith(".skills"):
+                continue
+            out.append(rel)
+            if len(out) >= limit:
+                return out
+    return out
 
 
 def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
@@ -78,6 +107,9 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
         if isinstance(ev, dict) and ev.get("type") == "route":
             route_info["tier"] = ev.get("tier")
             route_info["task_type"] = ev.get("task_type")
+        # Capture the latest plan/todos so we can persist a resumable roadmap (Phase 3).
+        if isinstance(ev, dict) and ev.get("type") == "plan" and ev.get("todos"):
+            route_info["todos"] = ev.get("todos")
         db.add_event(session_id, ev)
         trace.trace(session_id, ev)
         if emit:
@@ -96,10 +128,20 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
 
     sess = db.get_session(session_id) or {}
     project_id = sess.get("project_id") or ""
+    # Continuity scope: a project shares state across ALL its chats; a standalone chat
+    # keeps its own. This is what lets a NEW chat resume an ongoing project's roadmap.
+    scope = f"project:{project_id}" if project_id else f"session:{session_id}"
 
     # ---- assemble layered context (the memory READ path) --------------------
     # Order = highest-value first; each block is bounded so the prompt can't bloat.
     blocks = []
+
+    # 0) PROJECT STATE: the structured, resumable roadmap (Phase 3) — highest priority
+    # so the agent CONTINUES ongoing work instead of restarting.
+    if not subtasks:
+        state_blk = memory.state_context(scope)
+        if state_blk:
+            blocks.append(state_blk)
 
     # 1) SEMANTIC memory: durable facts about the user / project ("profile").
     fact_scopes = ["global"] + ([f"project:{project_id}"] if project_id else [])
@@ -137,8 +179,12 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
     if att:
         blocks.append(att)
 
-    # 6) WORKING memory: the most recent messages, verbatim.
-    hist = _recent_history(session_id)
+    # 6) WORKING memory: recent messages, packed to the model's CONTEXT BUDGET (not a
+    # fixed count) — large-window fleets get far more history; small models, less.
+    from core.registry import registry as _reg
+    _used = sum(_approx_tokens(b) for b in blocks)
+    _hist_budget = max(0, _reg.context_budget() - _used - 2000)   # reserve for request + answer
+    hist = _recent_history_budgeted(session_id, _hist_budget)
     if hist:
         blocks.append(hist)
 
@@ -157,9 +203,10 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
 
     # ---- update memory (the WRITE path) — skip pure plan previews -----------
     if not plan_first:
-        # EPISODIC: remember this turn's outcome for future cross-chat recall.
+        # EPISODIC: remember this turn's outcome for future cross-chat recall (scoped
+        # to the project/session so it's attributable and project-aware).
         memory.remember(f"Request: {text}\nOutcome: {(final or '')[:600]}",
-                        session_id=session_id, kind="turn")
+                        session_id=session_id, kind="turn", scope=scope)
         # SEMANTIC: extract durable facts from the user's message (cheap tier1, gated,
         # best-effort — never breaks the turn; respects the run budget).
         memory.extract_facts(text, scope="global", budget=budget)
@@ -173,4 +220,20 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
         tier = route_info.get("tier") or 0
         if tier >= 3 or route_info.get("task_type") == "coding":
             memory.propose_rule(text, final, scope="global", budget=budget)
+        # PROJECT STATE: persist a structured, resumable roadmap (Phase 3) so the next
+        # turn — even in a new chat in this project — continues where this left off.
+        try:
+            todos = route_info.get("todos") or []
+            prev = memory.get_state(scope)
+            if todos or prev:
+                nxt = next((t.get("text", "") for t in todos if t.get("status") != "done"), "")
+                memory.set_state(scope, {
+                    "goal": (prev.get("goal") or text)[:300],
+                    "plan": todos or prev.get("plan", []),
+                    "next": nxt,
+                    "artifacts": _workspace_files(workspace),
+                    "last_answer": (final or "")[:400],
+                })
+        except Exception:
+            pass
     return final
