@@ -28,6 +28,7 @@ from .router import classify
 from . import agents as team
 from . import toolbelt
 from . import skills as skill_lib
+from . import playbooks as playbook_lib
 from .agent import _run_one_tool
 from .blackboard import Blackboard
 
@@ -246,7 +247,7 @@ def _master_tool_schemas():
     return meta + toolbelt.schemas_for(["read_file", "list_files", "write_file", "edit_file", "run_bash"])
 
 
-def _master_loop(task, budget, emit, approve, review, initial_todos=None):
+def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_type=None):
     def _emit(ev):
         if emit:
             emit(ev)
@@ -262,15 +263,23 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None):
     if review:
         system += "\n- Before finishing, delegate a QA check to 'critic' and fix anything it flags."
 
+    # PLAYBOOK: the proven path for this task type (default backup path if uncovered).
+    # We seed the todo list from it + inject it as guidance, so the LEAD follows a
+    # predictable understand->plan->build->validate->review flow with the right specialist
+    # per phase. (Skipped when resuming an already-approved plan via initial_todos.)
+    phases = [] if initial_todos else playbook_lib.select(task_type)
+    if phases:
+        system += "\n\n" + playbook_lib.guidance(phases)
+
     messages = [{"role": "system", "content": system},
                 {"role": "user", "content": task}]
 
-    # Always start from an explicit plan so the breakdown is grounded and visible —
-    # the lead then executes/adapts it (this is what makes "break down the task" reliable
-    # even when a model wouldn't spontaneously call write_todos).
+    # Start from an explicit plan so the breakdown is grounded + visible: the playbook's
+    # phases when available, else a model-invented plan (the deep fallback).
     todos = list(initial_todos or [])
     if not todos:
-        todos = [{"text": s, "status": "pending"} for s in _make_plan(task, budget)]
+        todos = playbook_lib.as_todos(phases) or \
+            [{"text": s, "status": "pending"} for s in _make_plan(task, budget)]
     _emit({"type": "plan", "subtasks": [t["text"] for t in todos], "todos": todos})
     messages.append({"role": "user",
                      "content": ("Here is the plan. Work through it step by step — delegate each "
@@ -456,11 +465,18 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         _emit({"type": "assign", "agent": agent_id, "label": getattr(agent, "label", agent_id),
                "model": registry.model_for_tier(getattr(agent, "tier", "tier2"), task_type=task_type),
                "reason": reason})
-        result = _do_subtask(agent_id, task, budget, emit, approve, "", review, stream, task_type=task_type)
+        # Tier-2 single-agent runs follow a compact version of the same playbook path
+        # (injected into the prompt — no extra calls). Tier-1 trivial work stays lean.
+        agent_task = task
+        if tier >= 2:
+            cl = playbook_lib.checklist(task_type)
+            if cl:
+                agent_task = f"{task}\n\n{cl}"
+        result = _do_subtask(agent_id, agent_task, budget, emit, approve, "", review, stream, task_type=task_type)
         _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
         return result
 
-    # Complex -> the LEAD master loop with todos + delegation.
-    final = _master_loop(task, budget, emit, approve, review)
+    # Complex -> the LEAD master loop, seeded with the task's playbook + delegation.
+    final = _master_loop(task, budget, emit, approve, review, task_type=task_type)
     _emit({"type": "final", "text": final, "cost": round(budget.spent_usd, 4)})
     return final

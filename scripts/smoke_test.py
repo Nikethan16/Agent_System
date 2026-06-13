@@ -150,6 +150,10 @@ final = orch.handle_task("build a multi part thing", emit=ev.append)
 assigns = [e.get("agent") for e in ev if e["type"] == "assign"]
 todos_emitted = any(e.get("type") == "plan" and e.get("todos") for e in ev)
 check("lead master loop wrote a todo list", todos_emitted)
+check("lead loop seeds the task PLAYBOOK (coding path) as its plan",
+      any(e.get("type") == "plan"
+          and any("understand" in (t.get("text") or "").lower() for t in (e.get("todos") or []))
+          for e in ev))
 check("lead delegated to a specialist (coder)", "coder" in assigns)
 check("lead produced a final answer", bool(final))
 _mnames = [t["function"]["name"] for t in orch._master_tool_schemas()]
@@ -194,6 +198,20 @@ with _T2.using_workspace(_tf.mkdtemp()):
     _jr = _ra("x", "sys", "fake-model", budget=Budget(max_usd=1, max_iterations=10), allowed_tools=["list_files"])
 L.litellm.completion = fake
 check("tool-repair: malformed tool JSON is repaired, run completes", _jr == "done after repair")
+
+# ---- task playbooks: a proven path per task type + a default backup --------
+print("\n[playbooks]")
+from core import playbooks as PB
+check("playbook: coding path = understand/plan/implement/validate/review",
+      {p["phase"] for p in PB.select("coding")} >= {"understand", "plan", "implement", "validate", "review"})
+check("playbook: an UNKNOWN task type uses the default BACKUP path",
+      any(p["phase"] == "execute" for p in PB.select("totally-unknown-xyz")))
+check("playbook: math/analysis alias to the data path",
+      {p["phase"] for p in PB.select("math")} == {p["phase"] for p in PB.select("data")})
+check("playbook: phases convert to seedable todos", len(PB.as_todos(PB.select("coding"))) >= 5)
+check("playbook: guidance names preferred agents + gates",
+      "architect" in PB.guidance(PB.select("coding")) and "gate:" in PB.guidance(PB.select("coding")))
+check("playbook: tier-2 checklist is a compact one-line path", "→" in PB.checklist("coding"))
 
 # ---- auto-review decision (A5) ----
 check("auto-review on for complex (tier3)", orch._auto_review(3, "research") is True)
