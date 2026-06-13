@@ -9,17 +9,40 @@ const inp =
 export default function FleetPanel() {
   const [keys, setKeys] = useState<Record<string, any[]>>({});
   const [routing, setRouting] = useState<{ routing: Record<string, string[]> }>({ routing: {} });
+  const [catalog, setCatalog] = useState<any[]>([]);
   const [provider, setProvider] = useState("nvidia_nim");
   const [keyVal, setKeyVal] = useState("");
   const [edit, setEdit] = useState<Record<string, string>>({});
+  const [nm, setNm] = useState({ id: "", tier_hint: "2", good_for: "", cost: "1", context_window: "" });
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
 
   const load = async () => {
     try { setKeys(await api.keys()); } catch { /* empty */ }
     try { setRouting(await api.routing()); } catch { /* empty */ }
+    try { setCatalog((await api.models()).catalog || []); } catch { /* empty */ }
   };
   useEffect(() => { load(); }, []);
+
+  const addModel = async () => {
+    if (!nm.id.trim().includes("/")) { setMsg("model id should be a full LiteLLM string, e.g. nvidia_nim/vendor/model"); return; }
+    setBusy("model"); setMsg("");
+    try {
+      await api.addCatalogModel({
+        id: nm.id.trim(),
+        provider: nm.id.split("/")[0],
+        requires_env: { nvidia_nim: "NVIDIA_NIM_API_KEY", gemini: "GEMINI_API_KEY", openrouter: "OPENROUTER_API_KEY", openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", deepseek: "DEEPSEEK_API_KEY" }[nm.id.split("/")[0]] || null,
+        free: true,
+        cost: parseInt(nm.cost) || 1,
+        tier_hint: parseInt(nm.tier_hint) || 2,
+        good_for: nm.good_for.split(",").map((s) => s.trim()).filter(Boolean),
+        ...(nm.context_window ? { context_window: parseInt(nm.context_window) } : {}),
+      });
+      setNm({ id: "", tier_hint: "2", good_for: "", cost: "1", context_window: "" });
+      load();
+    } catch (e: any) { setMsg(e.message); } finally { setBusy(""); }
+  };
+  const removeModel = async (id: string) => { try { await api.removeCatalogModel(id); load(); } catch (e: any) { setMsg(e.message); } };
 
   const add = async () => {
     if (keyVal.trim().length < 6) { setMsg("key looks too short"); return; }
@@ -84,6 +107,36 @@ export default function FleetPanel() {
           <input value={keyVal} onChange={(e) => setKeyVal(e.target.value)} placeholder="paste API key" type="password" className={inp + " flex-1"} />
           <button onClick={add} disabled={!!busy} className="text-sm px-3 py-1 rounded-lg bg-accent-terracotta text-white disabled:opacity-50">
             {busy === "add" ? "…" : "Add"}
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <div className="text-sm font-medium mb-1">Catalog models (add + when-to-use)</div>
+        <div className="text-[11px] text-light-muted mb-3">
+          Add any model a provider offers. <b>good_for</b> tags + <b>tier</b> are the "when to use" signals
+          the cost-first picker reads; new models slot into the fallback chains automatically.
+        </div>
+        <div className="max-h-40 overflow-y-auto scrollbar mb-2">
+          {catalog.map((m) => (
+            <div key={m.id} className="flex items-center justify-between gap-2 text-[11px] py-0.5">
+              <span className="font-code truncate">{m.id}</span>
+              <span className="text-light-muted shrink-0">t{m.tier_hint} · {(m.good_for || []).slice(0, 3).join(",")}</span>
+              <button onClick={() => removeModel(m.id)} aria-label="remove model"
+                className="material-symbols-outlined text-[14px] text-light-muted hover:text-red-500">delete</button>
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-2 mb-6">
+          <input value={nm.id} onChange={(e) => setNm({ ...nm, id: e.target.value })} placeholder="provider/vendor/model" className={inp + " col-span-2"} />
+          <input value={nm.good_for} onChange={(e) => setNm({ ...nm, good_for: e.target.value })} placeholder="good_for (comma: coding,research)" className={inp + " col-span-2"} />
+          <select value={nm.tier_hint} onChange={(e) => setNm({ ...nm, tier_hint: e.target.value })} className={inp}>
+            <option value="1">tier 1 (simple)</option><option value="2">tier 2 (balanced)</option><option value="3">tier 3 (frontier)</option>
+          </select>
+          <input value={nm.cost} onChange={(e) => setNm({ ...nm, cost: e.target.value })} placeholder="cost rank (0=preferred)" className={inp} />
+          <input value={nm.context_window} onChange={(e) => setNm({ ...nm, context_window: e.target.value })} placeholder="context window (optional)" className={inp} />
+          <button onClick={addModel} disabled={!!busy} className="text-sm px-3 py-1 rounded-lg bg-accent-terracotta text-white disabled:opacity-50">
+            {busy === "model" ? "…" : "Add model"}
           </button>
         </div>
       </div>

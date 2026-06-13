@@ -120,6 +120,8 @@ export const api = {
   usage: () => GET("/api/usage"),
   routing: () => GET("/api/routing"),
   setRouting: (task_type: string, chain: string[]) => PUT("/api/routing", { task_type, chain }),
+  addCatalogModel: (model: any) => POST("/api/models/catalog", { models: [model] }),
+  removeCatalogModel: (id: string) => DELETE("/api/models/catalog/" + id),
 
   // scheduled tasks (once/interval/daily/weekly)
   schedules: (session_id?: string) =>

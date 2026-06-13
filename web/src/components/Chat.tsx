@@ -62,6 +62,39 @@ const MEANINGFUL = ["plan", "tool", "critic", "manager_review", "memory", "skill
 
 const FIXABLE = ["error", "blocked", "denied", "limit"];
 
+// At-a-glance: a compact chip per sub-agent showing what it's doing right now
+// (running / retrying / done) — like Claude's agent strip, without the full timeline.
+function AgentStatus({ events, running }: { events: Ev[]; running?: boolean }) {
+  const order: string[] = [];
+  const status: Record<string, string> = {};
+  for (const e of events) {
+    const a = (e as any).agent;
+    if (e.type === "assign" && a) { if (!order.includes(a)) order.push(a); status[a] = "running"; }
+    else if (e.type === "retry" && a) status[a] = "retrying";
+    else if (e.type === "done" && a) status[a] = "done";
+  }
+  const finalized = !running && events.some((e) => e.type === "final");
+  const chips = order.filter((a) => a !== "lead");
+  if (!chips.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5 px-3 py-2 border-b border-light-border/40 dark:border-dark-border">
+      {chips.map((a) => {
+        const s = finalized && status[a] !== "retrying" ? "done" : status[a];
+        const cls = s === "done" ? "bg-emerald-100 text-emerald-700"
+          : s === "retrying" ? "bg-amber-100 text-amber-700"
+          : "bg-accent-terracotta/10 text-accent-terracotta";
+        const dot = s === "done" ? "✓" : s === "retrying" ? "↻" : "●";
+        return (
+          <span key={a} className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full ${cls}`}>
+            <span className={s === "running" ? "animate-pulse" : ""}>{dot}</span>{a}
+            {s === "running" ? " · working" : s === "retrying" ? " · retrying" : ""}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function Activity({ events, running }: { events: Ev[]; running?: boolean }) {
   const { submit } = useStore();
   const [open, setOpen] = useState(false);   // collapsed by default — keep the chat clean
@@ -80,6 +113,7 @@ function Activity({ events, running }: { events: Ev[]; running?: boolean }) {
         </div>
         <span className="material-symbols-outlined text-light-muted text-[16px]">{open ? "expand_less" : "expand_more"}</span>
       </button>
+      <AgentStatus events={events} running={running} />
       {open && (
         <div className="px-5 pb-5 pt-3 border-t border-light-border/40 dark:border-dark-border">
           <div className="space-y-4 relative before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-light-border dark:before:bg-dark-border">

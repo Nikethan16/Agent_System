@@ -5,6 +5,7 @@ import ModelRail from "./ModelRail";
 import MemoryPanel from "./MemoryPanel";
 import FleetPanel from "./FleetPanel";
 import SchedulesPanel from "./SchedulesPanel";
+import RoadmapPanel from "./RoadmapPanel";
 
 const TABS = [
   { id: "general", label: "General", icon: "tune" },
@@ -12,6 +13,7 @@ const TABS = [
   { id: "models", label: "Models", icon: "smart_toy" },
   { id: "fleet", label: "Fleet & keys", icon: "key" },
   { id: "schedules", label: "Schedules", icon: "schedule" },
+  { id: "roadmap", label: "Roadmap", icon: "checklist" },
   { id: "memory", label: "Memory", icon: "neurology" },
   { id: "security", label: "Security", icon: "shield" },
 ];
@@ -123,6 +125,7 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
             )}
             {tab === "fleet" && <FleetPanel />}
             {tab === "schedules" && <SchedulesPanel />}
+            {tab === "roadmap" && <RoadmapPanel />}
             {tab === "memory" && <MemoryPanel />}
             {tab === "security" && (
               <div>
