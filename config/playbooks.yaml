@@ -21,26 +21,30 @@ playbooks:
   coding:
     - phase: understand
       agent: architect
-      goal: "Restate the requirement as explicit, testable acceptance criteria; list assumptions and open questions. If a spec/FRS is attached, parse_document it first. Do NOT write code yet."
+      goal: "Restate the requirement as explicit, testable acceptance criteria; list assumptions and open questions. If a spec/FRS is attached, parse_document it first. If the user gave acceptance criteria, adopt them verbatim. Do NOT write code yet."
       gate: "criteria are concrete and testable"
     - phase: plan
       agent: architect
       goal: "Break the work into small, independently-verifiable steps, each with an acceptance check."
       gate: "an ordered step list exists"
+    - phase: tests
+      agent: coder
+      goal: "Write the tests / acceptance checks FIRST, derived from the acceptance criteria, BEFORE the implementation exists. Run them and confirm they FAIL for the right reason (red) — proving they actually exercise the requirement. Skip only for throwaway one-liners."
+      gate: "tests exist and fail for the right reason"
     - phase: implement
       agent: coder
-      goal: "Build ONE step at a time: read before editing, make a precise edit, then run it. Use the frontend specialist instead for UI/HTML work."
-      gate: "each step's code runs"
+      goal: "Implement ONE step at a time until the tests written above PASS (green): read before editing, make a precise edit, then run the tests. Use the frontend specialist instead for UI/HTML work."
+      gate: "the tests written in the previous phase pass"
     - phase: validate
       agent: coder
-      goal: "Run the tests or the program and read the output; fix any failure and re-run; confirm the acceptance criteria are met."
-      gate: "tests pass and the criteria are met"
+      goal: "Run the FULL test suite and the program; read the output; fix any failure and re-run; confirm EVERY acceptance criterion is met."
+      gate: "all tests pass and the criteria are met"
     - phase: review
       agent: code-reviewer
       goal: "Review for correctness, security, and obvious simplifications; fix any critical issue."
       gate: "no critical issues remain"
     - phase: finalize
-      goal: "Give a concise final answer: what was built, the files produced, and exactly how it was verified (command + result)."
+      goal: "Give a concise final answer: what was built, the files produced, and exactly how it was verified (the test command + its passing result)."
 
   research:
     - phase: scope

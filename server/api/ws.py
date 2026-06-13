@@ -88,15 +88,18 @@ async def run_socket(websocket: WebSocket, session_id: str):
                 parallel = bool(msg.get("parallel", False))
                 stream = bool(msg.get("stream", True))
                 attachments = msg.get("attachments") or None
+                acceptance = (msg.get("acceptance") or "").strip()
 
                 def worker(text=text, budget=budget, broker=broker,
                            plan_first=plan_first, subtasks=subtasks, review=review,
-                           parallel=parallel, stream=stream, attachments=attachments):
+                           parallel=parallel, stream=stream, attachments=attachments,
+                           acceptance=acceptance):
                     try:
                         run_turn(session_id, text, budget=budget, emit=emit,
                                  approve=broker.approve, plan_first=plan_first,
                                  subtasks=subtasks, review=review,
-                                 parallel=parallel, stream=stream, attachments=attachments)
+                                 parallel=parallel, stream=stream, attachments=attachments,
+                                 acceptance=acceptance)
                     except Exception as e:
                         emit({"type": "error", "text": f"{type(e).__name__}: {e}"})
                     finally:

@@ -155,11 +155,13 @@ def _make_plan(task, budget):
 
 
 # ---- a single specialist step (with optional QA retry) ---------------------
-def _review(task, result, budget, emit, approve):
+def _review(task, result, budget, emit, approve, acceptance=""):
     def _emit(ev):
         if emit:
             emit(ev)
-    prompt = (f"TASK:\n{task}\n\nPRODUCED RESULT:\n{result}\n\n"
+    rubric = (f"\n\nACCEPTANCE CRITERIA (the user's definition of done — judge PASS/FAIL "
+              f"against THESE specifically):\n{acceptance}") if acceptance else ""
+    prompt = (f"TASK:\n{task}\n\nPRODUCED RESULT:\n{result}{rubric}\n\n"
               "Inspect the workspace files and run tests if useful, then judge it.")
     raw = team.run("critic", prompt, budget=budget, emit=emit, approve=approve)
     try:
@@ -182,7 +184,8 @@ def _looks_failed(r) -> bool:
     return (not s) or s.startswith(_FAIL_MARKERS)
 
 
-def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=False, task_type=None):
+def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=False,
+                task_type=None, acceptance=""):
     r = team.run(agent_id, task, budget=budget, emit=emit, approve=approve,
                  context=context, stream=stream, task_type=task_type)
     # A2: if the agent errored / gave up / returned nothing, retry once with a nudge
@@ -195,7 +198,7 @@ def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=F
                      budget=budget, emit=emit, approve=approve, context=context,
                      stream=stream, task_type=task_type)
     if review:
-        passed, feedback = _review(task, r, budget, emit, approve)
+        passed, feedback = _review(task, r, budget, emit, approve, acceptance=acceptance)
         if not passed:
             fix = f"{task}\n\nA QA reviewer found issues — fix them:\n{feedback}"
             r = team.run(agent_id, fix, budget=budget, emit=emit, approve=approve,
@@ -249,7 +252,8 @@ def _master_tool_schemas():
     return meta + toolbelt.schemas_for(["read_file", "list_files", "write_file", "edit_file", "run_bash"])
 
 
-def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_type=None):
+def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_type=None,
+                 acceptance=""):
     def _emit(ev):
         if emit:
             emit(ev)
@@ -262,6 +266,9 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     menu = "\n".join(f"- {a.id}: {a.when_to_use}" for a in team.agents.catalog())
     skill_menu = "\n".join(f"- {s['name']}: {s['description'][:140]}" for s in skill_lib.catalog()) or "(none)"
     system = MASTER_SYS.replace("{menu}", menu).replace("{skills}", skill_menu)
+    if acceptance:
+        system += ("\n\nACCEPTANCE CRITERIA (the user's definition of done — the result MUST "
+                   "satisfy ALL of these; have the critic verify them):\n" + acceptance)
     if review:
         system += "\n- Before finishing, delegate a QA check to 'critic' and fix anything it flags."
 
@@ -419,7 +426,8 @@ def _finalize_from_board(board, task, budget, emit):
 
 # ---- entry point ------------------------------------------------------------
 def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
-                plan_only=False, subtasks=None, review="auto", parallel=False, stream=False) -> str:
+                plan_only=False, subtasks=None, review="auto", parallel=False, stream=False,
+                acceptance="") -> str:
     budget = budget or Budget()
     # Bind the run budget so tool-internal model calls (see_image / safety_check /
     # generate_image) charge THIS run's budget + the daily cap, not a throwaway one.
@@ -436,7 +444,8 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         todos = [{"text": s, "status": "pending"} for s in subtasks]
         # Approved multi-step plans are substantive -> QA on unless explicitly disabled.
         rv = review if isinstance(review, bool) else True
-        final = _master_loop(task or "Execute the approved plan.", budget, emit, approve, rv, todos)
+        final = _master_loop(task or "Execute the approved plan.", budget, emit, approve, rv,
+                             todos, acceptance=acceptance)
         _emit({"type": "final", "text": final, "cost": round(budget.spent_usd, 4)})
         return final
 
@@ -492,11 +501,16 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
             cl = playbook_lib.checklist(task_type)
             if cl:
                 agent_task = f"{task}\n\n{cl}"
-        result = _do_subtask(agent_id, agent_task, budget, emit, approve, "", review, stream, task_type=task_type)
+        if acceptance:
+            agent_task += ("\n\nACCEPTANCE CRITERIA (the definition of done — make sure your "
+                           "result satisfies ALL of these):\n" + acceptance)
+        result = _do_subtask(agent_id, agent_task, budget, emit, approve, "", review, stream,
+                             task_type=task_type, acceptance=acceptance)
         _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
         return result
 
     # Complex -> the LEAD master loop, seeded with the task's playbook + delegation.
-    final = _master_loop(task, budget, emit, approve, review, task_type=task_type)
+    final = _master_loop(task, budget, emit, approve, review, task_type=task_type,
+                         acceptance=acceptance)
     _emit({"type": "final", "text": final, "cost": round(budget.spent_usd, 4)})
     return final

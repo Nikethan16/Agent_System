@@ -87,7 +87,7 @@ def _workspace_files(workspace: str, limit: int = 40) -> list:
 
 def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
              plan_first=False, subtasks=None, review="auto", parallel=False, stream=True,
-             attachments=None):
+             attachments=None, acceptance=""):
     """Blocking: runs one full turn. Returns the assistant's final text.
 
     plan_first=True -> produce a plan and stop (for approval).
@@ -214,7 +214,7 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
     with using_workspace(workspace):
         final = handle_task(task, budget=budget, emit=_emit, approve=approve,
                             plan_only=plan_first, subtasks=subtasks, review=review,
-                            parallel=parallel, stream=stream)
+                            parallel=parallel, stream=stream, acceptance=acceptance)
 
     db.add_message(session_id, "assistant", final or "", cost=round(budget.spent_usd, 6))
     db.touch_session(session_id)
