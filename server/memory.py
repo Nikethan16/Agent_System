@@ -97,29 +97,36 @@ def remember(text: str, session_id: str = "", kind: str = "turn", scope: str = "
         s.commit()
 
 
-def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str = None) -> list:
-    """Top-k relevant past notes. Uses embeddings if configured, else lexical."""
+def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str = None,
+           scope_hint: str = None) -> list:
+    """Top-k relevant past notes (episodic). Uses embeddings if configured, else lexical.
+    `scope_hint` (e.g. 'project:<id>') gently boosts notes from the SAME project so a
+    project's own history is preferred over unrelated global notes."""
     with DBSession(engine) as s:
         rows = s.exec(
             select(Memory).order_by(Memory.created_at.desc()).limit(_MAX_SCAN)
         ).all()
-    rows = [m for m in rows if not (exclude_session and m.session_id == exclude_session)]
+    rows = [m for m in rows
+            if m.kind == "turn" and not (exclude_session and m.session_id == exclude_session)]
     if not rows:
         return []
+
+    def _boost(m, sc):   # prefer same-project notes
+        return sc + (0.08 if scope_hint and m.scope == scope_hint else 0.0)
 
     if _embed_model():
         qv = _vec(query)
         if qv:
             scored = []
             for m in rows:
-                if m.kind != "turn" or not m.embedding:   # episodic recall only
+                if not m.embedding:
                     continue
                 try:
                     sc = _cos(qv, json.loads(m.embedding))
                 except Exception:
                     continue
                 if sc >= _SEMANTIC_THRESHOLD:        # semantic similarity threshold
-                    scored.append((sc, m.text))
+                    scored.append((_boost(m, sc), m.text))
             if scored:
                 scored.sort(key=lambda x: -x[0])
                 return [t for _, t in scored[:k]]
@@ -128,11 +135,28 @@ def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str
     q = set(_tokens(query))
     if not q:
         return []
-    scored = [(s, m.text) for m in rows
-              if m.kind == "turn"                       # episodic recall only
+    scored = [(_boost(m, s), m.text) for m in rows
               for s in [_lex(q, set(_tokens(m.text)))] if s >= min_score]
     scored.sort(key=lambda x: -x[0])
     return [t for _, t in scored[:k]]
+
+
+def prune(max_turns: int = None) -> int:
+    """Delete the oldest episodic 'turn' notes beyond a cap so memory doesn't grow
+    without bound (facts/rules/state/summary are durable and never pruned here).
+    Best-effort; returns how many were removed."""
+    cap = max_turns or int(os.environ.get("MEMORY_MAX_TURNS", "5000"))
+    deleted = 0
+    with DBSession(engine) as s:
+        turns = s.exec(
+            select(Memory).where(Memory.kind == "turn").order_by(Memory.created_at.desc())
+        ).all()
+        for m in turns[cap:]:
+            s.delete(m)
+            deleted += 1
+        if deleted:
+            s.commit()
+    return deleted
 
 
 # ===========================================================================

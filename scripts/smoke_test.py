@@ -389,6 +389,20 @@ import server.chat as _CH
 check("history packing is token-budgeted (not a fixed 12)",
       _CH._approx_tokens("x" * 400) >= 90 and callable(_CH._recent_history_budgeted))
 
+# memory Wave 2: project-first recall + pruning; classifier caching
+MEM.remember("Request: deploy the billing service\nOutcome: shipped",
+             session_id="w2a", kind="turn", scope="project:projX")
+_h = MEM.recall("billing service deploy", k=2, exclude_session="zzz", scope_hint="project:projX")
+check("recall (scope-hinted) finds the relevant note", any("billing" in x for x in _h))
+for _i in range(6):
+    MEM.remember(f"Request: note {_i}\nOutcome: ok", session_id="prune", kind="turn")
+check("prune trims old episodic notes beyond the cap", MEM.prune(max_turns=2) >= 1)
+from core import router as _RT
+_RT._CACHE.clear()
+_c1 = _RT.classify("NEW REQUEST: write a function")
+check("classifier caches its verdict", _RT._cache_key("NEW REQUEST: write a function") in _RT._CACHE)
+check("classifier cache hit returns the same tier", _c1["tier"] == _RT.classify("NEW REQUEST: write a function")["tier"])
+
 # ---- scheduler (run saved tasks on a schedule) ------------------------------
 print("\n[scheduler]")
 from server import scheduler as SCH

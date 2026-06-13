@@ -26,6 +26,19 @@ CLASSIFIER_SYS = (
 _RETRIES = 1          # extra attempts after the first, on transient/rate-limit errors
 _BACKOFF_SECONDS = 2.0
 
+# B1: cache routing verdicts keyed on the USER'S request (not the assembled context,
+# which changes every turn). Saves the classifier call on repeated/identical asks +
+# retries. Bounded (simple FIFO eviction); `routed_model` is recomputed on a hit so a
+# model swap is still reflected.
+_CACHE = {}
+_CACHE_MAX = 256
+
+
+def _cache_key(task: str) -> str:
+    marker = "NEW REQUEST:"
+    i = (task or "").rfind(marker)
+    return (task[i + len(marker):] if i != -1 else task).strip()[:500]
+
 
 def _is_transient(err: Exception) -> bool:
     name = type(err).__name__.lower()
@@ -35,6 +48,11 @@ def _is_transient(err: Exception) -> bool:
 
 
 def classify(task: str, budget: Budget = None) -> dict:
+    key = _cache_key(task)
+    if key and key in _CACHE:
+        cached = dict(_CACHE[key])
+        cached["routed_model"] = registry.model_for_tier(f"tier{cached['tier']}")
+        return cached
     tier_name = registry.classifier_tier()
     model = registry.model_for_tier(tier_name)
     last_err = None
@@ -59,6 +77,10 @@ def classify(task: str, budget: Budget = None) -> dict:
             data.setdefault("requires_web", False)
             data.setdefault("reason", "")
             data["routed_model"] = registry.model_for_tier(f"tier{data['tier']}")
+            if key:                                  # cache only successful classifications
+                if len(_CACHE) >= _CACHE_MAX:
+                    _CACHE.pop(next(iter(_CACHE)))   # FIFO eviction
+                _CACHE[key] = dict(data)
             return data
         except BudgetExceeded:
             raise   # a real budget stop must propagate, never be masked as a fallback
