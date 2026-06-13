@@ -5,22 +5,31 @@ _Last updated: 2026-06-13. The single entry point for the next person/chat picki
 for "how it works" read `docs/PROJECT_OVERVIEW.md`; the durable rules are in `CLAUDE.md`._
 
 ## TL;DR
-- **Big optimization pass landed on branch `feat/platform-optimization`** (8 commits, NOT yet
-  merged to `main`). Offline smoke **60→107**; web build clean; fleet endpoints verified live.
-- **What's new this session:** multi-key **resilience engine** (key pool + per-call timeout +
-  NVIDIA-first **fallback chains**, so a rate-limited/dead model self-heals); the full **NVIDIA
-  NIM fleet** (DeepSeek V4 Pro orchestrates, GLM-5.1 codes, Qwen researches, Nemotron reasons)
-  + 4 new roles (architect/data-analyst/code-reviewer/fast-coder); **memory continuity**
-  (resumable Project State + adaptive context window — the hardcoded 12-message window is gone);
-  a **scheduler** (`/api/schedules`); **Telegram** mobile control; **parallel sub-agents**
-  (`delegate_parallel`); a **management UI** (Settings → Fleet & keys, Schedules); and **CI**.
-- **Two free keys** in `.env` (Gemini + NVIDIA NIM) → runs at **$0**. Add more NVIDIA accounts
-  as `NVIDIA_NIM_API_KEY_1..N` (or via Settings → Fleet) to multiply throughput.
-- **Owner inputs still pending (placeholders left):** `TELEGRAM_BOT_TOKEN` (+ allowlist) for
-  the phone bot; optional extra NVIDIA keys for the pool. See `.env.example`.
-- **Not yet built (needs decisions/inputs):** multimodal/vision input, doc-parser & content-
-  safety NIM microservices (the 🔴 items) — they need a sample use-case + small plumbing.
-- Run it: `.\run.ps1` → http://localhost:8800. Verify: `.venv\Scripts\python.exe scripts\smoke_test.py` (107/107).
+- **Large optimization pass landed on branch `feat/platform-optimization`** (~18 commits, **NOT
+  yet merged to `main`** — test, then merge). Offline smoke **60→123**; web build clean; fleet
+  endpoints verified live on NVIDIA; CI added.
+- **What's new this session (by theme):**
+  - **Resilience:** multi-key **pool** (`NAME_1..N` → ~40 rpm each), **per-call timeout**, NVIDIA-first
+    **fallback chains** (a rate-limited/**stale model self-heals**), **auto-retry** + **tool-JSON repair** + **loop-guard**.
+  - **Fleet:** full **NVIDIA NIM** cast (DeepSeek V4 Pro lead · GLM-5.1 coder · Qwen 3.5 research · Nemotron
+    reason · Llama-4 Maverick vision · MiniMax M3 · Mistral Large 3) + roles architect/data-analyst/code-reviewer/fast-coder.
+  - **Memory:** resumable **Project State**, project-shared workspaces, **adaptive context** (no more fixed 12),
+    project-first recall, pruning, classifier cache.
+  - **Capabilities:** **scheduler** (`/api/schedules`), **Telegram** control + **proactive digests**, **parallel**
+    sub-agents, **doc-parser** + **RAG** (FRS ingestion), **see_image** vision, **safety_check**.
+  - **UI:** Settings → **Fleet & keys** (add keys/models + edit fallback chains), **Schedules**, **Roadmap**;
+    at-a-glance **agent-status chips**; `fallback`/`retry` cards.
+  - **Ops:** opt-in **Docker-sandboxed bash**, **off-site backup hook**, **audit-log rotation**, **CI**.
+- **Two free keys** in `.env` (Gemini + NVIDIA NIM) → runs at **$0**. Add more NVIDIA accounts as
+  `NVIDIA_NIM_API_KEY_1..N` (or Settings → Fleet) to multiply throughput.
+- **Owner inputs still pending (placeholders left in `.env.example`):** `TELEGRAM_BOT_TOKEN` (+ allowlist)
+  for the phone bot; optional extra NVIDIA keys; `VISION_MODEL`/`SAFETY_MODEL`; `BACKUP_UPLOAD_CMD` + a host.
+- **Deferred (with rationale, see STATUS changelog):** prompt-caching (low ROI on NIM), true ANN vector index,
+  Telegram inline-approvals (needs the token to build), API rate-limiting + key-encryption (hosting), per-project
+  budget + artifact-export UI + LEAD-final streaming (polish). **C6 browser control** intentionally skipped.
+- **Hosting rec:** an always-on box you control (old laptop / Oracle Always-Free VM) + Tailscale for the web UI;
+  Telegram needs no public URL. Set `AGENT_AUTH_TOKEN` + `AGENT_BASH_DOCKER_IMAGE` for any networked host.
+- Run it: `.\run.ps1` → http://localhost:8800. Verify: `.venv\Scripts\python.exe scripts\smoke_test.py` (123/123).
 
 ## What changed in the last working session (2026-06-07)
 All verified; smoke stays 60/60; the web build is clean.
