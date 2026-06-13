@@ -81,6 +81,12 @@ routing:
               "nvidia_nim/meta/llama-4-maverick-17b-128e-instruct"]
   classify:  ["gemini/gemini-2.5-flash-lite",
               "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b"]
+  planning:  ["nvidia_nim/deepseek-ai/deepseek-v4-pro",
+              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+              "nvidia_nim/minimaxai/minimax-m3"]
+  data:      ["nvidia_nim/qwen/qwen3.5-122b-a10b",
+              "nvidia_nim/z-ai/glm-5.1",
+              "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
 
 # PLACEHOLDER — set to enable the Image agent's generate_image tool. For Gemini use
 # Imagen, e.g. "gemini/imagen-3.0-generate-002" (needs GEMINI_API_KEY). Left unset.
@@ -185,6 +191,35 @@ catalog:
     cost: 1
     tier_hint: 1
     good_for: [routing, classify, chat, simple, summarize]
+
+  # --- Deeper bench (tool-calling verified live 2026-06-13; kept as fallbacks
+  #     behind the cost-0 primaries above). (codestral-22b was listed by NIM but
+  #     404s on the completion endpoint, so it is intentionally NOT included.) ---
+  - id: "nvidia_nim/minimaxai/minimax-m3"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: true
+    cost: 2
+    tier_hint: 3
+    context_window: 1000000
+    good_for: [planning, reasoning, longcontext, architecture]
+  - id: "nvidia_nim/qwen/qwen3.5-397b-a17b"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: true
+    cost: 2
+    tier_hint: 3
+    good_for: [reasoning, research, analysis, hard]
+  - id: "nvidia_nim/mistralai/mistral-large-3-675b-instruct-2512"
+    provider: "nvidia_nim"
+    requires_env: "NVIDIA_NIM_API_KEY"
+    free: true
+    open_source: true
+    cost: 3
+    tier_hint: 3
+    good_for: [general, reasoning, writing]
 
   # NOTE: moonshotai/kimi-k2.6 IS available on NIM and is multimodal, but its
   # tool-calling came back BROKEN through litellm on 2026-06-13 (garbled output).

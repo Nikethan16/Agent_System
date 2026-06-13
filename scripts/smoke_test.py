@@ -219,6 +219,20 @@ except BudgetExceeded:
 check("complete_chain does NOT fall back past the budget cap", _stopped)
 L.litellm.completion = fake   # restore for the rest of the suite
 
+# new specialist roles + their fallback routing (Phase 4)
+from core import agents as _team4
+for _role in ("architect", "data-analyst", "code-reviewer", "fast-coder"):
+    check(f"role registered + dispatcher-selectable: {_role}",
+          _role in _team4.agents.agents and _role in [a.id for a in _team4.agents.catalog()])
+_os.environ["NVIDIA_NIM_API_KEY"] = "smoke-nvidia-key"
+try:
+    check("routing: planning primary = deepseek-v4-pro",
+          _reg.model_chain("tier3", "planning")[0] == "nvidia_nim/deepseek-ai/deepseek-v4-pro")
+    check("routing: data primary = qwen3.5-122b",
+          _reg.model_chain("tier2", "data")[0] == "nvidia_nim/qwen/qwen3.5-122b-a10b")
+finally:
+    _os.environ.pop("NVIDIA_NIM_API_KEY", None)
+
 # ---- skills ----
 from core import skills as sk
 from core import agents as team_mod

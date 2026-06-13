@@ -109,9 +109,15 @@ MASTER_SYS = (
     "3) After each step, update the todo statuses with write_todos.\n"
     "4) When ALL steps are done, reply with a concise final answer for the user "
     "(mention any files produced) and DO NOT call any tool in that final message.\n\n"
-    "Delegate by capability — coding→coder, web research→research, documents→doc, "
-    "UI/HTML→frontend, images→image, QA→critic. Specialists have their own tools; you "
-    "coordinate. Keep the plan tight and finish.\n\n"
+    "Delegate by capability — design/architecture→architect, coding→coder (small quick "
+    "edits→fast-coder), web research→research, data/CSV/finance→data-analyst, documents→"
+    "doc, UI/HTML→frontend, images→image, code review→code-reviewer, QA→critic. "
+    "Specialists have their own tools; you coordinate.\n"
+    "Write SELF-CONTAINED delegations: a specialist sees ONLY your instruction plus shared "
+    "results — never this conversation. Every instruction MUST state (a) the exact "
+    "deliverable, (b) the inputs/files to use, (c) key constraints/requirements, and (d) the "
+    "acceptance check. A vague one-line delegation produces vague work. Keep the plan tight "
+    "and finish.\n\n"
     "When a step matches a SKILL below, pass its name in delegate's `skill` field so the "
     "specialist loads that expertise (e.g. a Word doc → 'docx', a spreadsheet → 'xlsx', "
     "slides → 'pptx', a PDF → 'pdf').\n\n"
@@ -186,8 +192,13 @@ def _master_tool_schemas():
                 "status": {"type": "string", "enum": ["pending", "in_progress", "done"]}}}}}, ["todos"])}},
         {"type": "function", "function": {
             "name": "delegate",
-            "description": "Hand a well-scoped step to a specialist agent; it returns the result.",
-            "parameters": obj({"agent": {"type": "string"}, "instruction": {"type": "string"},
+            "description": "Hand a well-scoped step to a specialist agent; it returns the result. "
+                           "The specialist sees ONLY your instruction + shared results, not this chat.",
+            "parameters": obj({"agent": {"type": "string"},
+                               "instruction": {"type": "string",
+                                               "description": "A COMPLETE, self-contained task: the exact "
+                                                              "deliverable, the inputs/files to use, key "
+                                                              "constraints, and the acceptance check."},
                                "skill": {"type": "string",
                                          "description": "Optional skill name to load for this step "
                                                         "(e.g. docx, xlsx, pptx, pdf)."}},
