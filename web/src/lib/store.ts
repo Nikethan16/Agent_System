@@ -3,13 +3,15 @@ import { api, wsUrl } from "./api";
 import { downloadBlob } from "./util";
 
 export type Ev = any;
-export type Msg = { id: string; role: "user" | "assistant"; content: string; events: Ev[]; pending?: boolean; live?: string; local?: boolean };
+export type RunMeta = { durationMs?: number; tokens?: number; cost?: number; iterations?: number };
+export type Msg = { id: string; role: "user" | "assistant"; content: string; events: Ev[]; pending?: boolean; live?: string; local?: boolean; meta?: RunMeta };
 
 // Stable client id for a message (used as the React key so edit/branch can't
 // attach stale component state to the wrong message).
 let _mid = 0;
 const newMid = () => `m${Date.now()}_${_mid++}`;
 let _tid = 0;
+let _runStart = 0;   // wall-clock start of the current run (for the response summary)
 export type Attachment = { path: string; name: string };
 export type Toast = { id: number; text: string; kind: "info" | "error" | "success" };
 
@@ -581,6 +583,7 @@ function startRun(set: any, get: any, payload: any, userText: string) {
     messages: [...get().messages, userMsg, asst],
     running: true, cost: 0, pendingApproval: null, pendingPlan: null,
   });
+  _runStart = Date.now();
   let completed = false;
   const runSession = id;
   socketSession = id;
@@ -687,15 +690,20 @@ function handleEvent(set: any, get: any, ev: Ev) {
     case "approval_request":
       set({ pendingApproval: ev });
       break;
-    case "run_complete":
+    case "run_complete": {
+      const durationMs = _runStart ? Date.now() - _runStart : undefined;
       if (ev.cost != null) set({ cost: ev.cost });
       set({ running: false });
-      patchLastAssistant(set, get, (m) => ({ ...m, live: "" }));
+      patchLastAssistant(set, get, (m) => ({
+        ...m, live: "",
+        meta: { durationMs, tokens: ev.tokens, cost: ev.cost, iterations: ev.iterations },
+      }));
       closeSocket();
       get().loadFiles().catch((e: any) => reportError(get, e));
       get().loadCheckpoints().catch((e: any) => reportError(get, e));
       get().loadSpend().catch((e: any) => reportError(get, e));
       break;
+    }
     case "plan":
       appendToAssistant(set, get, ev);
       if (ev.plan_only) set({ pendingPlan: ev.subtasks || [] });

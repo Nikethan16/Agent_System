@@ -76,6 +76,7 @@ class Budget:
     max_iterations: int = 24
     spent_usd: float = 0.0
     iterations: int = 0
+    tokens: int = 0          # cumulative LLM tokens used this run (prompt + completion)
 
     def __post_init__(self):
         # Thread-safe: parallel subtasks share one run budget.
@@ -93,6 +94,10 @@ class Budget:
     def add_cost(self, usd: float):
         with self._lock:
             self.spent_usd += usd or 0.0
+
+    def add_tokens(self, n: int):
+        with self._lock:
+            self.tokens += int(n or 0)
 
     def tick(self):
         with self._lock:
@@ -113,6 +118,7 @@ class _SubBudget(Budget):
         self.max_iterations = parent.max_iterations if max_iterations is None else max_iterations
         self.spent_usd = 0.0
         self.iterations = 0
+        self.tokens = 0
         self._lock = threading.Lock()
 
     def check(self):
@@ -122,6 +128,10 @@ class _SubBudget(Budget):
     def add_cost(self, usd):
         Budget.add_cost(self, usd)
         self.parent.add_cost(usd)
+
+    def add_tokens(self, n):
+        Budget.add_tokens(self, n)
+        self.parent.add_tokens(n)
 
     def tick(self):
         Budget.tick(self)
@@ -172,6 +182,21 @@ def _cost_of(resp) -> float:
         return resp._hidden_params.get("response_cost") or 0.0
     except Exception:
         return 0.0
+
+
+def _tokens_of(resp) -> int:
+    """Total tokens (prompt + completion) from a model response, 0 if unavailable.
+    Populated by virtually every provider — and unlike cost it's meaningful on the
+    free tier (where cost is $0), so it's the useful 'how much work' signal."""
+    try:
+        u = getattr(resp, "usage", None)
+        if u is None:
+            return 0
+        if isinstance(u, dict):
+            return int(u.get("total_tokens") or 0)
+        return int(getattr(u, "total_tokens", 0) or 0)
+    except Exception:
+        return 0
 
 
 def _key_for(model):
@@ -232,6 +257,7 @@ def complete(model, messages, tools=None, max_tokens=4096,
         metrics.record(model, time.time() - _t0, ok=True, cost=cost)
         if budget:
             budget.add_cost(cost)
+            budget.add_tokens(_tokens_of(resp))
             budget.tick()
         return resp, cost
 
@@ -312,7 +338,7 @@ def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
         temperature=temperature, stream=True, timeout=_TIMEOUT,
         stream_options={"include_usage": True}, api_key=_key_for(model),
     )
-    pieces, cost = [], 0.0
+    pieces, cost, tokens = [], 0.0, 0
     for chunk in resp:
         try:
             piece = chunk.choices[0].delta.content
@@ -327,8 +353,10 @@ def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
                 cost = litellm.completion_cost(completion_response=chunk) or cost
             except Exception:
                 pass
+            tokens = _tokens_of(chunk) or tokens
     if budget:
         budget.add_cost(cost)
+        budget.add_tokens(tokens)
         budget.tick()
     return "".join(pieces), cost
 
@@ -384,7 +412,7 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
         kwargs["tool_choice"] = "auto"
     resp = litellm.completion(**kwargs)
 
-    content, tcs, cost = [], {}, 0.0
+    content, tcs, cost, tokens = [], {}, 0.0, 0
     for chunk in resp:
         ch = chunk.choices[0] if getattr(chunk, "choices", None) else None
         delta = getattr(ch, "delta", None) if ch else None
@@ -410,6 +438,7 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
                 cost = litellm.completion_cost(completion_response=chunk) or cost
             except Exception:
                 pass
+            tokens = _tokens_of(chunk) or tokens
 
     tool_calls = [
         {"id": s["id"] or f"call_{i}", "type": "function",
@@ -421,5 +450,6 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
         msg["tool_calls"] = tool_calls
     if budget:
         budget.add_cost(cost)
+        budget.add_tokens(tokens)
         budget.tick()
     return msg, cost

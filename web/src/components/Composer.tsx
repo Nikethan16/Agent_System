@@ -3,15 +3,26 @@ import { useStore } from "../lib/store";
 
 const MODES = ["auto", "careful", "trusted"] as const;
 
-function Toggle({ on, set, label, title }: { on: boolean; set: (v: boolean) => void; label: string; title?: string }) {
+function Toggle({ on, set, label, hint }: { on: boolean; set: (v: boolean) => void; label: string; hint?: string }) {
   return (
-    <label title={title} className="flex items-center justify-between gap-3 cursor-pointer group select-none py-1">
-      <span className="text-xs text-on-surface-variant dark:text-light-muted group-hover:text-on-surface dark:group-hover:text-dark-text">{label}</span>
-      <input type="checkbox" className="hidden peer" checked={on} onChange={(e) => set(e.target.checked)} />
-      <span className="w-4 h-4 rounded border border-light-muted peer-checked:bg-accent-terracotta peer-checked:border-accent-terracotta flex items-center justify-center transition shrink-0">
-        {on && <span className="material-symbols-outlined text-white text-[12px] leading-none">check</span>}
+    <button type="button" onClick={() => set(!on)} className="w-full flex items-center justify-between gap-3 py-1.5 text-left select-none">
+      <span className="min-w-0">
+        <span className="block text-[13px] text-on-surface dark:text-dark-text">{label}</span>
+        {hint && <span className="block text-[10.5px] text-light-muted leading-tight">{hint}</span>}
       </span>
-    </label>
+      <span className={`relative w-9 h-5 rounded-full transition shrink-0 ${on ? "bg-accent-terracotta" : "bg-surface-container-highest dark:bg-dark-border"}`}>
+        <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${on ? "translate-x-4" : ""}`} />
+      </span>
+    </button>
+  );
+}
+
+function Section({ label, children }: { label: string; children: any }) {
+  return (
+    <div className="py-3 border-t border-light-border/60 dark:border-dark-border first:border-t-0 first:pt-1">
+      <p className="text-[10px] uppercase tracking-widest text-light-muted mb-2">{label}</p>
+      {children}
+    </div>
   );
 }
 
@@ -23,48 +34,50 @@ function RunOptions({ onClose, onQueue, canQueue }: { onClose: () => void; onQue
     const n = parseFloat(e.target.value); if (!Number.isNaN(n)) setLimit(k, n);
   };
   const help = mode === "auto" ? "Asks only for irreversible actions." : mode === "careful" ? "Asks before every risky action." : "Auto-approves all but hard-blocks.";
-  const fieldCls = "w-full mt-0.5 bg-surface-container-low dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-2 py-1 text-sm text-on-surface dark:text-dark-text outline-none";
+  const field = "w-full mt-1 bg-surface-container-low dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-2.5 py-1.5 text-sm text-on-surface dark:text-dark-text outline-none focus:border-accent-terracotta/40 transition";
   return (
-    <div className="absolute bottom-14 left-0 w-72 bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-xl p-3.5 z-20 fadeup">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-[11px] uppercase tracking-widest font-bold text-on-surface-variant dark:text-light-muted">Run options</span>
-        <button onClick={onClose} aria-label="Close run options" className="material-symbols-outlined text-[16px] text-light-muted hover:text-on-surface dark:hover:text-dark-text">close</button>
+    <div className="absolute bottom-14 left-0 w-80 bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-xl p-4 z-20 fadeup">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-sm font-medium">Run options</span>
+        <button onClick={onClose} aria-label="Close run options" className="material-symbols-outlined text-[18px] text-light-muted hover:text-on-surface dark:hover:text-dark-text">close</button>
       </div>
 
-      <p className="text-[9px] uppercase tracking-widest text-light-muted mb-1.5">Approval for this run</p>
-      <div className="flex items-center bg-surface-container-low dark:bg-dark-bg p-1 rounded-xl mb-1">
-        {MODES.map((m) => (
-          <button key={m} onClick={() => setMode(m)}
-            className={`flex-1 px-2 py-1 text-[10px] uppercase tracking-wide rounded-lg transition ${mode === m ? "bg-white dark:bg-dark-surface shadow-sm border border-light-border dark:border-dark-border" : "text-light-muted hover:text-on-surface dark:hover:text-dark-text"}`}>{m}</button>
-        ))}
-      </div>
-      <p className="text-[10px] text-light-muted mb-3">{help}</p>
+      <Section label="Approval for this run">
+        <div className="flex items-center bg-surface-container-low dark:bg-dark-bg p-1 rounded-xl">
+          {MODES.map((m) => (
+            <button key={m} onClick={() => setMode(m)}
+              className={`flex-1 px-2 py-1.5 text-[11px] capitalize rounded-lg transition ${mode === m ? "bg-white dark:bg-dark-surface shadow-sm font-medium" : "text-light-muted hover:text-on-surface dark:hover:text-dark-text"}`}>{m}</button>
+          ))}
+        </div>
+        <p className="text-[11px] text-light-muted mt-2">{help}</p>
+      </Section>
 
-      <p className="text-[9px] uppercase tracking-widest text-light-muted mb-1">Behavior</p>
-      <div className="mb-3 border-b border-light-border/50 dark:border-dark-border pb-2">
-        <Toggle on={planFirst} set={setPlanFirst} label="Plan first" title="Preview a plan and approve before running" />
-        <Toggle on={review} set={setReview} label="Force QA" title="QA already runs on substantive tasks; force it on every task" />
-        <Toggle on={parallel} set={setParallel} label="Parallel subtasks" title="Run independent subtasks concurrently" />
-        <Toggle on={stream} set={setStream} label="Stream tokens" title="Stream tokens live as the agent works (on by default)" />
-      </div>
+      <Section label="Behavior">
+        <Toggle on={planFirst} set={setPlanFirst} label="Plan first" hint="Preview a plan and approve before running" />
+        <Toggle on={review} set={setReview} label="Force QA" hint="QA already runs on substantive tasks" />
+        <Toggle on={parallel} set={setParallel} label="Parallel subtasks" hint="Run independent subtasks at once" />
+        <Toggle on={stream} set={setStream} label="Stream tokens" hint="Show output as it's written" />
+      </Section>
 
-      <p className="text-[9px] uppercase tracking-widest text-light-muted mb-1">Acceptance criteria <span className="lowercase tracking-normal">(optional)</span></p>
-      <textarea value={acceptance} onChange={(e) => setAcceptance(e.target.value)}
-        placeholder="Definition of done — the critic checks against these (e.g. 'prints 42; pytest passes')."
-        className={fieldCls + " resize-none h-14 mb-3 placeholder-light-muted text-[12px]"} />
+      <Section label="Limits for this run">
+        <div className="flex items-center gap-3">
+          <label className="flex-1 text-[10px] uppercase tracking-wide text-light-muted">Max $
+            <input type="number" min="0" step="0.05" value={maxUsd} aria-label="Max cost per run in dollars" onChange={(e) => num(e, "maxUsd")} className={field} /></label>
+          <label className="flex-1 text-[10px] uppercase tracking-wide text-light-muted">Max loops
+            <input type="number" min="1" value={maxIter} aria-label="Max loops per run" onChange={(e) => num(e, "maxIter")} className={field} /></label>
+        </div>
+      </Section>
 
-      <p className="text-[9px] uppercase tracking-widest text-light-muted mb-1.5">Limits for this run</p>
-      <div className="flex items-center gap-3 mb-2">
-        <label className="flex-1 text-[10px] uppercase tracking-wide text-light-muted">Max $
-          <input type="number" min="0" step="0.05" value={maxUsd} aria-label="Max cost per run in dollars" onChange={(e) => num(e, "maxUsd")} className={fieldCls} /></label>
-        <label className="flex-1 text-[10px] uppercase tracking-wide text-light-muted">Max loops
-          <input type="number" min="1" value={maxIter} aria-label="Max loops per run" onChange={(e) => num(e, "maxIter")} className={fieldCls} /></label>
-      </div>
+      <Section label="Acceptance criteria (optional)">
+        <textarea value={acceptance} onChange={(e) => setAcceptance(e.target.value)}
+          placeholder="Definition of done the QA step checks (e.g. 'prints 42; pytest passes')."
+          className={field + " resize-none h-14 text-[12px] placeholder-light-muted"} />
+      </Section>
 
-      <div className="flex items-center justify-between pt-2 border-t border-light-border/50 dark:border-dark-border">
+      <div className="flex items-center justify-between pt-3 border-t border-light-border/60 dark:border-dark-border">
         <button onClick={() => { if (canQueue) { onQueue(); onClose(); } }} disabled={!canQueue} title="Queue as a background task (runs unattended)"
-          className="text-[10px] uppercase tracking-wide text-light-muted hover:text-on-surface dark:hover:text-dark-text flex items-center gap-1 disabled:opacity-40">
-          <span className="material-symbols-outlined text-[14px]">schedule</span> Queue as task
+          className="text-[11px] text-light-muted hover:text-on-surface dark:hover:text-dark-text flex items-center gap-1.5 disabled:opacity-40">
+          <span className="material-symbols-outlined text-[15px]">schedule</span> Queue as task
         </button>
         <span className="text-[10px] text-light-muted">this run only</span>
       </div>

@@ -187,31 +187,75 @@ function Message({ m, index, isLast }: { m: Msg; index: number; isLast?: boolean
         </div>
       ) : null}
       {m.events.length > 0 && <Activity events={m.events} running={m.pending} />}
-      {m.content && !m.pending && <MessageActions content={m.content} last={isLast} />}
+      {m.content && !m.pending && <ResponseFooter m={m} last={isLast} />}
     </div>
   );
 }
 
-function MessageActions({ content, last }: { content: string; last?: boolean }) {
+const fmtDur = (ms?: number) => {
+  if (!ms || ms < 0) return null;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const mins = Math.floor(s / 60);
+  return `${mins}m ${Math.round(s - mins * 60)}s`;
+};
+
+// Claude Code-style run summary (time · tokens · cost · tools · files edited) plus the
+// always-visible response actions (copy / regenerate / feedback).
+function ResponseFooter({ m, last }: { m: Msg; last?: boolean }) {
   const { regenerate, running, sendFeedback } = useStore();
   const [copied, setCopied] = useState(false);
   const [fb, setFb] = useState("");
-  const copy = () => { navigator.clipboard?.writeText(content); setCopied(true); setTimeout(() => setCopied(false), 1200); };
-  const btn = "p-1.5 rounded-md text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg";
+  const copy = () => { navigator.clipboard?.writeText(m.content); setCopied(true); setTimeout(() => setCopied(false), 1200); };
+  const btn = "p-1.5 rounded-md text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg transition";
+
+  const tools = m.events.filter((e) => e.type === "tool");
+  const fileSet = new Set<string>();
+  for (const e of tools) {
+    if (["write_file", "edit_file", "create_file"].includes(e.name) && e.args?.path) fileSet.add(e.args.path);
+  }
+  const files = [...fileSet];
+  const meta = m.meta;
+  const dur = fmtDur(meta?.durationMs);
+
+  const stats: string[] = [];
+  if (dur) stats.push(dur);
+  if (meta?.tokens) stats.push(`${meta.tokens.toLocaleString()} tokens`);
+  if (meta?.cost) stats.push(`$${meta.cost.toFixed(4)}`);
+  if (tools.length) stats.push(`${tools.length} tool${tools.length > 1 ? "s" : ""}`);
+
   return (
-    <div className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-60 hover:!opacity-100 focus-within:opacity-100 transition">
-      <button onClick={copy} title="Copy" className={btn}><span className="material-symbols-outlined text-[16px]">{copied ? "check" : "content_copy"}</span></button>
-      {last && (
-        <button onClick={() => !running && regenerate()} title="Regenerate" className={btn} disabled={running}>
-          <span className="material-symbols-outlined text-[16px]">refresh</span>
-        </button>
+    <div className="mt-2.5 space-y-1.5">
+      {(stats.length > 0 || files.length > 0) && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-light-muted">
+          {stats.length > 0 && (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[13px] text-emerald-500">check_circle</span>
+              {stats.join(" · ")}
+            </span>
+          )}
+          {files.map((f) => (
+            <span key={f} className="inline-flex items-center gap-1">
+              <span className="material-symbols-outlined text-[13px]">draft</span>
+              <code className="font-code text-[10px] bg-surface-container dark:bg-dark-bg rounded px-1 py-0.5">{f}</code>
+            </span>
+          ))}
+        </div>
       )}
-      <button onClick={() => { setFb("up"); sendFeedback("up"); }} title="Good response" className={btn}>
-        <span className="material-symbols-outlined text-[16px]" style={fb === "up" ? { fontVariationSettings: "'FILL' 1", color: "#16a34a" } : undefined}>thumb_up</span>
-      </button>
-      <button onClick={() => { setFb("down"); sendFeedback("down"); }} title="Bad response" className={btn}>
-        <span className="material-symbols-outlined text-[16px]" style={fb === "down" ? { fontVariationSettings: "'FILL' 1", color: "#dc2626" } : undefined}>thumb_down</span>
-      </button>
+      <div className="flex items-center gap-0.5 -ml-1.5">
+        <button onClick={copy} title="Copy" className={btn}><span className="material-symbols-outlined text-[16px]">{copied ? "check" : "content_copy"}</span></button>
+        {last && (
+          <button onClick={() => !running && regenerate()} title="Regenerate" className={btn} disabled={running}>
+            <span className="material-symbols-outlined text-[16px]">refresh</span>
+          </button>
+        )}
+        <button onClick={() => { setFb("up"); sendFeedback("up"); }} title="Good response" className={btn}>
+          <span className="material-symbols-outlined text-[16px]" style={fb === "up" ? { fontVariationSettings: "'FILL' 1", color: "#16a34a" } : undefined}>thumb_up</span>
+        </button>
+        <button onClick={() => { setFb("down"); sendFeedback("down"); }} title="Bad response" className={btn}>
+          <span className="material-symbols-outlined text-[16px]" style={fb === "down" ? { fontVariationSettings: "'FILL' 1", color: "#dc2626" } : undefined}>thumb_down</span>
+        </button>
+      </div>
     </div>
   );
 }

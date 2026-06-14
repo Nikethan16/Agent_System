@@ -126,7 +126,8 @@ async def run_socket(websocket: WebSocket, session_id: str):
                         emit({"type": "error", "text": f"{type(e).__name__}: {e}"})
                     finally:
                         runs.finish_run(run_id, status, budget.spent_usd)
-                        emit({"type": "run_complete", "cost": round(budget.spent_usd, 6)})
+                        emit({"type": "run_complete", "cost": round(budget.spent_usd, 6),
+                              "tokens": budget.tokens, "iterations": budget.iterations})
 
                 threading.Thread(target=worker, daemon=True).start()
 
