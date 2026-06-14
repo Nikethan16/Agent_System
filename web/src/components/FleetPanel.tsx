@@ -69,7 +69,7 @@ export default function FleetPanel() {
   return (
     <div className="space-y-6">
       <div>
-        <div className="text-sm font-medium mb-1">API keys (pool)</div>
+        <p className="text-[10px] uppercase tracking-widest text-light-muted mb-1.5">API key pool</p>
         <div className="text-[11px] text-light-muted mb-3">
           Add more free accounts' keys to raise throughput — the pool spreads calls across them
           (least-loaded, ~40 rpm each). Keys are masked + stored server-side, never shown in full.
@@ -87,7 +87,7 @@ export default function FleetPanel() {
               </button>
             </div>
             {list.map((k: any) => (
-              <div key={k.key} className="flex items-center justify-between gap-2 text-[11px] py-1 pl-2">
+              <div key={k.key} className="flex items-center justify-between gap-2 text-[11px] py-1.5 px-2 rounded-lg hover:bg-surface-container-low dark:hover:bg-dark-bg">
                 <span className="font-code">{k.key}</span>
                 <span className="text-light-muted flex-1 text-right">
                   {k.used}/{k.rpm} rpm{k.cooldown_s > 0 ? ` · cooldown ${k.cooldown_s}s` : ""}{!k.enabled ? " · disabled" : ""}
@@ -112,7 +112,7 @@ export default function FleetPanel() {
       </div>
 
       <div>
-        <div className="text-sm font-medium mb-1">Catalog models (add + when-to-use)</div>
+        <p className="text-[10px] uppercase tracking-widest text-light-muted mb-1.5">Catalog models</p>
         <div className="text-[11px] text-light-muted mb-3">
           Add any model a provider offers. <b>good_for</b> tags + <b>tier</b> are the "when to use" signals
           the cost-first picker reads; new models slot into the fallback chains automatically.
@@ -142,7 +142,7 @@ export default function FleetPanel() {
       </div>
 
       <div>
-        <div className="text-sm font-medium mb-1">Routing &amp; fallback chains</div>
+        <p className="text-[10px] uppercase tracking-widest text-light-muted mb-1.5">Routing &amp; fallback chains</p>
         <div className="text-[11px] text-light-muted mb-3">
           Per task type: the models tried in order (primary first; the rest are automatic fallbacks
           if one is rate-limited or down). One model id per line.
