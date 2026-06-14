@@ -3,10 +3,12 @@ import { useStore } from "../lib/store";
 import ProjectModal from "./ProjectModal";
 import Sunburst from "./Sunburst";
 
-export default function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void } = {}) {
-  const { sessions, currentId, newSession, selectSession, deleteSession, renameSession, resolved, strategy,
+export default function Sidebar({ open = false, onClose, email = "", onOpenSettings, onLogout }:
+  { open?: boolean; onClose?: () => void; email?: string; onOpenSettings?: () => void; onLogout?: () => void } = {}) {
+  const { sessions, currentId, newSession, selectSession, deleteSession, renameSession,
           projects, activeProject, setActiveProject, createProject, toggleStar, theme, toggleTheme } = useStore();
   const [projModal, setProjModal] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const dark = theme === "dark";
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -92,17 +94,34 @@ export default function Sidebar({ open = false, onClose }: { open?: boolean; onC
         ))}
       </nav>
 
-      <div className="px-3 pt-3 mt-auto">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-white/50 dark:hover:bg-dark-surface transition">
-          <span className="material-symbols-outlined text-accent-terracotta text-[20px]">smart_toy</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-[12px] font-medium truncate">{strategy === "cheapest" ? (resolved.tier2 || "auto") : "fixed tiers"}</p>
-            <p className="text-[10px] text-light-muted uppercase tracking-tight">{strategy === "cheapest" ? "cost-first" : "per-tier"}</p>
-          </div>
-          <button onClick={toggleTheme} title="Toggle theme" className="p-1.5 rounded-lg text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-white/70 dark:hover:bg-dark-bg transition">
-            <span className="material-symbols-outlined text-[18px]">{dark ? "light_mode" : "dark_mode"}</span>
-          </button>
-        </div>
+      <div className="px-3 pt-2 mt-auto relative">
+        <button onClick={() => setAccountOpen((o) => !o)} aria-label="Account menu"
+          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-white/60 dark:hover:bg-dark-surface transition">
+          <span className="w-7 h-7 rounded-full bg-accent-terracotta text-white flex items-center justify-center text-[12px] font-semibold uppercase shrink-0">{(email || "A").charAt(0)}</span>
+          <span className="flex-1 min-w-0 text-left text-[13px] truncate">{email || "Account"}</span>
+          <span className="material-symbols-outlined text-[18px] text-light-muted">more_horiz</span>
+        </button>
+        {accountOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setAccountOpen(false)} />
+            <div className="absolute bottom-[52px] left-3 right-3 bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl shadow-xl p-1 z-50 fadeup">
+              <button onClick={() => { onOpenSettings?.(); setAccountOpen(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm hover:bg-surface-container-low dark:hover:bg-dark-bg text-left">
+                <span className="material-symbols-outlined text-[18px] text-light-muted">settings</span>Settings
+              </button>
+              <button onClick={() => toggleTheme()}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm hover:bg-surface-container-low dark:hover:bg-dark-bg text-left">
+                <span className="material-symbols-outlined text-[18px] text-light-muted">{dark ? "light_mode" : "dark_mode"}</span>{dark ? "Light mode" : "Dark mode"}
+              </button>
+              {onLogout && (
+                <button onClick={() => { onLogout(); setAccountOpen(false); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm hover:bg-surface-container-low dark:hover:bg-dark-bg text-left text-red-500">
+                  <span className="material-symbols-outlined text-[18px]">logout</span>Log out
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </aside>
   );

@@ -61,6 +61,11 @@ const UPLOAD = (url: string, file: File) => {
 };
 
 export const api = {
+  // auth: email+password login gate (optional — see server/auth_routes.py)
+  authConfig: () => GET("/api/auth/config"),
+  login: (email: string, password: string) => POST("/api/login", { email, password }),
+  me: () => GET("/api/me"),
+
   models: () => GET("/api/models"),
   agents: () => GET("/api/agents"),
   skills: () => GET("/api/skills"),

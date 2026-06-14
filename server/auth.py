@@ -25,6 +25,40 @@ def _configured_token() -> str:
     return (os.environ.get("AGENT_AUTH_TOKEN") or "").strip()
 
 
+# ---- email + password login (optional UI gate on top of the token) ----------
+# When AGENT_LOGIN_EMAIL + AGENT_LOGIN_PASSWORD are set, the SPA shows a login
+# screen and exchanges the credentials for the auth token via POST /api/login.
+# If they are NOT set, the login screen is skipped (token/loopback rules apply).
+
+def _login_creds() -> tuple[str, str]:
+    return ((os.environ.get("AGENT_LOGIN_EMAIL") or "").strip(),
+            (os.environ.get("AGENT_LOGIN_PASSWORD") or ""))
+
+
+def login_enabled() -> bool:
+    email, pw = _login_creds()
+    return bool(email and pw)
+
+
+def login_email() -> str:
+    return _login_creds()[0]
+
+
+def verify_login(email: str, password: str) -> bool:
+    cfg_email, cfg_pw = _login_creds()
+    if not (cfg_email and cfg_pw):
+        return False
+    ok_email = hmac.compare_digest((email or "").strip().lower(), cfg_email.lower())
+    ok_pw = hmac.compare_digest(password or "", cfg_pw)
+    return ok_email and ok_pw
+
+
+def issued_token() -> str:
+    """The token a client should use after a successful login: the real auth
+    token when configured, else a harmless sentinel (loopback dev ignores it)."""
+    return _configured_token() or "local-session"
+
+
 def _present_token(request: Request) -> str:
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):

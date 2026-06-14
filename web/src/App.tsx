@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "./lib/store";
+import { api, setAuthToken } from "./lib/api";
+import Login from "./components/Login";
 import Sidebar from "./components/Sidebar";
 import Chat from "./components/Chat";
 import Composer from "./components/Composer";
@@ -56,9 +58,31 @@ export default function App() {
   const [palette, setPalette] = useState(false);      // ⌘K command palette
   const [leftOpen, setLeftOpen] = useState(false);    // mobile sidebar drawer
   const [rightOpen, setRightOpen] = useState(false);  // artifacts panel (desktop + mobile)
+  const [auth, setAuth] = useState<"checking" | "login" | "in">("checking");
+  const [email, setEmail] = useState("");
   const hasMessages = messages.length > 0;
 
-  useEffect(() => { init(); }, []);
+  // Decide whether to show the login screen: skip it when login isn't enabled on
+  // the server; otherwise verify the stored token via /api/me.
+  useEffect(() => {
+    let cancel = false;
+    api.authConfig()
+      .then((cfg) => {
+        if (cancel) return;
+        if (!cfg.login_enabled) { setAuth("in"); return; }
+        api.me()
+          .then((r) => { if (!cancel) { setEmail(r.email || ""); setAuth("in"); } })
+          .catch(() => { if (!cancel) setAuth("login"); });
+      })
+      .catch(() => { if (!cancel) setAuth("in"); });   // config unreachable -> don't lock out
+    return () => { cancel = true; };
+  }, []);
+
+  // Load the app only once we're past the gate.
+  useEffect(() => { if (auth === "in") init(); }, [auth]);
+
+  const logout = () => { setAuthToken(""); setEmail(""); setAuth("login"); };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((p) => !p); }
@@ -79,9 +103,21 @@ export default function App() {
     if (!hasMessages) setRightOpen(false);
   }, [hasMessages]);
 
+  if (auth === "checking") {
+    return (
+      <div className="h-screen flex items-center justify-center bg-surface dark:bg-dark-bg">
+        <Sunburst size={36} className="animate-pulse" />
+      </div>
+    );
+  }
+  if (auth === "login") {
+    return <Login onSuccess={(em) => { setEmail(em); setAuth("in"); }} />;
+  }
+
   return (
     <div className="h-screen overflow-hidden text-on-surface dark:text-dark-text">
-      <Sidebar open={leftOpen} onClose={() => setLeftOpen(false)} />
+      <Sidebar open={leftOpen} onClose={() => setLeftOpen(false)}
+        email={email} onOpenSettings={() => setSettings(true)} onLogout={logout} />
       {/* Mobile backdrop when a drawer is open */}
       {(leftOpen || rightOpen) && (
         <div className="fixed inset-0 bg-black/30 z-30 md:hidden"
