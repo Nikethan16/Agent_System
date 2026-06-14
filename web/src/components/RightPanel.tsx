@@ -23,17 +23,20 @@ export default function RightPanel({ open = false, onClose }: { open?: boolean; 
     return null;
   };
   return (
-    <aside className={`fixed right-0 top-0 h-screen w-panel-width flex flex-col border-l border-light-border dark:border-dark-border bg-surface dark:bg-dark-surface z-40 transition-transform duration-200 md:translate-x-0 ${open ? "translate-x-0" : "translate-x-full"}`}>
-      <button onClick={onClose} title="Close"
-        className="md:hidden absolute -left-10 top-3 bg-surface dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-l-lg p-1.5 text-light-muted">
-        <span className="material-symbols-outlined text-[18px]">close</span>
-      </button>
-      <div className="flex border-b border-light-border dark:border-dark-border">
+    <aside className={`fixed right-0 top-0 h-screen w-panel-width flex flex-col border-l border-light-border dark:border-dark-border bg-surface dark:bg-dark-surface z-40 transition-transform duration-200 ${open ? "translate-x-0" : "translate-x-full"}`}>
+      <div className="flex items-center justify-between h-14 px-4 shrink-0">
+        <span className="text-[13px] font-medium text-on-surface dark:text-dark-text">Artifacts</span>
+        <button onClick={onClose} title="Close panel" aria-label="Close panel"
+          className="p-1.5 rounded-lg text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg transition">
+          <span className="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+      <div className="flex border-b border-light-border dark:border-dark-border px-2">
         {TABS.map((t) => {
           const n = count(t.id);
           return (
             <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex-1 py-4 text-[10px] uppercase tracking-wide border-b-2 transition flex items-center justify-center gap-1 ${tab === t.id ? "text-primary dark:text-accent-terracotta border-accent-terracotta font-bold" : "text-light-muted border-transparent hover:text-on-surface dark:hover:text-dark-text"}`}>
+              className={`flex-1 py-2.5 text-[11px] rounded-lg my-1 transition flex items-center justify-center gap-1 ${tab === t.id ? "bg-surface-container-high dark:bg-dark-bg text-on-surface dark:text-dark-text font-medium" : "text-light-muted hover:text-on-surface dark:hover:text-dark-text"}`}>
               {t.label}
               {n != null && <span className="px-1 min-w-[15px] rounded-full bg-accent-terracotta/15 text-accent-terracotta text-[9px] font-bold leading-[15px]">{n}</span>}
             </button>

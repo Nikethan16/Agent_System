@@ -15,13 +15,6 @@ const MD = {
   },
 };
 
-const SUGGESTIONS = [
-  "Write a Python function to check if a number is prime",
-  "Explain how async/await works in JavaScript",
-  "Build a simple landing page in HTML",
-  "Summarize the pros and cons of microservices",
-];
-
 const PILL: Record<string, string> = {
   route: "bg-blue-100 text-blue-700",
   plan: "bg-amber-100 text-amber-700",
@@ -105,8 +98,8 @@ function Activity({ events, running }: { events: Ev[]; running?: boolean }) {
     events.filter((e) => e.type === "assign").length > 1 || running;
   if (!steps.length || !worthShowing) return null;
   return (
-    <div className="mt-3 border border-light-border dark:border-dark-border rounded-lg overflow-hidden">
-      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-3 py-1.5 hover:bg-surface-container-low dark:hover:bg-dark-bg/50 transition">
+    <div className="mt-3 border border-light-border dark:border-dark-border rounded-xl overflow-hidden">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-3 py-2 hover:bg-surface-container-low dark:hover:bg-dark-bg/50 transition">
         <div className="flex items-center gap-2 text-light-muted">
           <span className={`w-1.5 h-1.5 rounded-full ${running ? "bg-accent-terracotta animate-pulse" : "bg-light-muted"}`} />
           <span className="text-[11px] uppercase tracking-wide">Agent activity · {steps.length} steps</span>
@@ -145,8 +138,8 @@ function UserMessage({ m, index }: { m: Msg; index: number }) {
   const [draft, setDraft] = useState(m.content);
   if (editing) {
     return (
-      <div className="flex justify-end fadeup">
-        <div className="w-[85%] bg-white dark:bg-dark-surface border border-accent-terracotta/40 rounded-2xl p-3">
+      <div className="fadeup">
+        <div className="bg-white dark:bg-dark-surface border border-accent-terracotta/40 rounded-2xl p-3">
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus rows={2}
             className="w-full bg-transparent resize-none outline-none text-[15px]" />
           <div className="flex justify-end gap-2 mt-1">
@@ -159,16 +152,14 @@ function UserMessage({ m, index }: { m: Msg; index: number }) {
     );
   }
   return (
-    <div className="flex justify-end fadeup group">
-      <div className="flex items-start gap-1.5 max-w-[85%]">
-        {!running && (
-          <button onClick={() => { setDraft(m.content); setEditing(true); }} title="Edit & branch"
-            className="material-symbols-outlined text-[16px] text-light-muted hover:text-on-surface dark:hover:text-dark-text opacity-0 group-hover:opacity-100 mt-3">edit</button>
-        )}
-        <div className="bg-surface-container-high/70 dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl px-5 py-3 shadow-sm">
-          <p className="text-[15px] whitespace-pre-wrap">{m.content}</p>
-        </div>
+    <div className="group flex items-start gap-2 fadeup">
+      <div className="flex-1 bg-surface-container dark:bg-dark-surface rounded-2xl px-5 py-3.5">
+        <p className="text-[15px] whitespace-pre-wrap leading-7">{m.content}</p>
       </div>
+      {!running && (
+        <button onClick={() => { setDraft(m.content); setEditing(true); }} title="Edit & branch"
+          className="material-symbols-outlined text-[16px] text-light-muted hover:text-on-surface dark:hover:text-dark-text opacity-0 group-hover:opacity-100 mt-3 shrink-0">edit</button>
+      )}
     </div>
   );
 }
@@ -177,31 +168,26 @@ function Message({ m, index, isLast }: { m: Msg; index: number; isLast?: boolean
   if (m.role === "user") return <UserMessage m={m} index={index} />;
   return (
     <div className="fadeup group">
-      <div className="flex items-center gap-2 mb-2">
-        <div className="w-6 h-6 rounded bg-accent-terracotta flex items-center justify-center text-white text-[10px] font-bold">A</div>
-        <span className="text-[11px] uppercase tracking-widest font-bold">Assistant</span>
-      </div>
-      <div className="pl-8">
-        {m.content ? (
-          <div className="prose-msg text-on-surface dark:text-dark-text">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD}>{m.content}</ReactMarkdown>
-            {m.pending && <span className="caret" />}
+      {m.content ? (
+        <div className="prose-msg text-on-surface dark:text-dark-text">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD}>{m.content}</ReactMarkdown>
+          {m.pending && <span className="caret" />}
+        </div>
+      ) : m.pending && !m.live ? (
+        <div className="flex items-center gap-2 text-light-muted text-sm">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent-terracotta animate-pulse" /> Thinking…
+        </div>
+      ) : null}
+      {m.live ? (
+        <div className="mt-2 rounded-xl border border-light-border dark:border-dark-border bg-surface-container-low dark:bg-dark-bg/60 px-3 py-2">
+          <div className="flex items-center gap-1.5 mb-1 text-[9px] uppercase tracking-widest text-accent-terracotta font-bold">
+            <span className="w-1.5 h-1.5 rounded-full bg-accent-terracotta animate-pulse" /> streaming
           </div>
-        ) : m.pending && !m.live ? (
-          <span className="text-light-muted text-sm">working…</span>
-        ) : null}
-        {m.live ? (
-          <div className="mt-2 rounded-lg border border-light-border dark:border-dark-border bg-surface-container-low dark:bg-dark-bg/60 px-3 py-2">
-            <div className="flex items-center gap-1.5 mb-1 text-[9px] uppercase tracking-widest text-accent-terracotta font-bold">
-              <span className="w-1.5 h-1.5 rounded-full bg-accent-terracotta animate-pulse" /> streaming
-            </div>
-            <div className="font-code text-[12px] leading-5 text-on-surface-variant dark:text-light-muted whitespace-pre-wrap">{m.live}<span className="caret" /></div>
-          </div>
-        ) : null}
-        {m.events.length > 0 && <Activity events={m.events} running={m.pending} />}
-        {m.content && !m.pending && <MessageActions content={m.content} last={isLast} />}
-      {/* actions row uses group-hover from the wrapper above */}
-      </div>
+          <div className="font-code text-[12px] leading-5 text-on-surface-variant dark:text-light-muted whitespace-pre-wrap">{m.live}<span className="caret" /></div>
+        </div>
+      ) : null}
+      {m.events.length > 0 && <Activity events={m.events} running={m.pending} />}
+      {m.content && !m.pending && <MessageActions content={m.content} last={isLast} />}
     </div>
   );
 }
@@ -234,13 +220,13 @@ function PlanCard() {
   const { pendingPlan, runPlan, running } = useStore();
   if (!pendingPlan || running) return null;
   return (
-    <div className="pl-8 fadeup">
-      <div className="border border-accent-terracotta/40 bg-accent-terracotta/5 rounded-xl p-4 max-w-[760px]">
+    <div className="fadeup">
+      <div className="border border-accent-terracotta/40 bg-accent-terracotta/5 rounded-2xl p-4">
         <p className="text-[11px] uppercase tracking-widest font-bold text-accent-terracotta mb-2">▶ Plan ready</p>
         <ol className="list-decimal pl-5 text-sm space-y-1 text-on-surface-variant dark:text-light-muted mb-3">
           {pendingPlan.map((s, i) => <li key={i}>{s}</li>)}
         </ol>
-        <button onClick={() => runPlan()} className="px-4 py-1.5 bg-accent-terracotta text-white text-[11px] uppercase tracking-wide rounded-lg hover:brightness-110 active:scale-95 transition">Run this plan</button>
+        <button onClick={() => runPlan()} className="px-4 py-1.5 bg-accent-terracotta hover:bg-accent-deep text-white text-[11px] uppercase tracking-wide rounded-lg active:scale-95 transition">Run this plan</button>
       </div>
     </div>
   );
@@ -263,7 +249,7 @@ function ApprovalModal() {
         className="w-full max-w-md bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-2xl p-6 fadeup">
         <div className="flex items-center gap-2 mb-3">
           <span className="material-symbols-outlined text-red-500">gpp_maybe</span>
-          <h4 className="font-display text-lg font-semibold">Approval required</h4>
+          <h4 className="font-headline text-lg font-semibold">Approval required</h4>
         </div>
         <div className="flex items-center gap-2 mb-3 text-sm">
           <span>Tool <b>{a.tool}</b></span>
@@ -273,27 +259,9 @@ function ApprovalModal() {
         <div className="text-xs text-on-surface-variant dark:text-light-muted mb-1">policy: {a.reason}</div>
         {a.manager_reason && <div className="text-xs text-on-surface-variant dark:text-light-muted mb-4">security manager: {a.manager_reason}</div>}
         <div className="flex gap-3 mt-4">
-          <button onClick={() => respond(true)} className="flex-1 py-2.5 bg-accent-terracotta text-white font-medium rounded-lg hover:brightness-110 active:scale-95 transition">Approve</button>
+          <button onClick={() => respond(true)} className="flex-1 py-2.5 bg-accent-terracotta hover:bg-accent-deep text-white font-medium rounded-lg active:scale-95 transition">Approve</button>
           <button onClick={() => respond(false)} className="flex-1 py-2.5 border border-light-border dark:border-dark-border rounded-lg hover:bg-surface-container-low dark:hover:bg-dark-bg transition">Deny</button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function EmptyState() {
-  const { submit } = useStore();
-  return (
-    <div className="text-center mt-[16vh]">
-      <h2 className="font-display text-3xl font-semibold mb-3">What should we build?</h2>
-      <p className="text-light-muted mb-6">Ask anything — coding or general. A complex goal is split across specialist agents automatically.</p>
-      <div className="flex flex-wrap gap-2 justify-center max-w-[640px] mx-auto">
-        {SUGGESTIONS.map((s) => (
-          <button key={s} onClick={() => submit(s)}
-            className="text-left text-sm px-3.5 py-2 rounded-xl border border-light-border dark:border-dark-border bg-white dark:bg-dark-surface hover:border-accent-terracotta/40 hover:bg-surface-container-low dark:hover:bg-dark-bg transition text-on-surface-variant dark:text-light-muted">
-            {s}
-          </button>
-        ))}
       </div>
     </div>
   );
@@ -307,8 +275,7 @@ export default function Chat() {
   return (
     <>
       <div ref={ref} className="flex-1 overflow-y-auto scrollbar flex flex-col items-center px-gutter">
-        <div className="w-full max-w-[760px] py-10 space-y-10">
-          {messages.length === 0 && <EmptyState />}
+        <div className="w-full max-w-[760px] py-8 space-y-8">
           {messages.map((m, i) => (
             <Message key={m.id} m={m} index={i} isLast={i === messages.length - 1 && m.role === "assistant"} />
           ))}

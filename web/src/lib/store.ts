@@ -9,7 +9,9 @@ export type Msg = { id: string; role: "user" | "assistant"; content: string; eve
 // attach stale component state to the wrong message).
 let _mid = 0;
 const newMid = () => `m${Date.now()}_${_mid++}`;
+let _tid = 0;
 export type Attachment = { path: string; name: string };
+export type Toast = { id: number; text: string; kind: "info" | "error" | "success" };
 
 type State = {
   connected: boolean;
@@ -44,6 +46,7 @@ type State = {
   stream: boolean;
   acceptance: string;
   attachments: Attachment[];
+  toasts: Toast[];
 
   init: () => Promise<void>;
   selectSession: (id: string) => Promise<void>;
@@ -91,6 +94,8 @@ type State = {
   exportChat: () => void;
   theme: "light" | "dark";
   toggleTheme: () => void;
+  pushToast: (text: string, kind?: Toast["kind"]) => void;
+  dismissToast: (id: number) => void;
 };
 
 // Single source of truth for the theme (was duplicated + desyncing across Sidebar
@@ -151,6 +156,7 @@ export const useStore = create<State>((set, get) => ({
   stream: true,
   acceptance: "",
   attachments: [],
+  toasts: [],
 
   async init() {
     applyTheme(get().theme);   // restore the persisted theme on load
@@ -506,6 +512,16 @@ export const useStore = create<State>((set, get) => ({
     set({ theme: next });
   },
 
+  pushToast(text, kind = "info") {
+    const id = ++_tid;
+    set({ toasts: [...get().toasts, { id, text, kind }] });
+    setTimeout(() => useStore.getState().dismissToast(id), 4500);
+  },
+
+  dismissToast(id) {
+    set({ toasts: get().toasts.filter((t) => t.id !== id) });
+  },
+
   exportChat() {
     const { messages, sessions, currentId } = get();
     const title = sessions.find((s) => s.id === currentId)?.title || "chat";
@@ -534,6 +550,7 @@ function reportError(get: any, e: any) {
   // eslint-disable-next-line no-console
   console.error("[api]", e);
   appendInfo((p: any) => useStore.setState(p), get, `⚠️ ${msg}`);
+  try { useStore.getState().pushToast(msg, "error"); } catch { /* ignore */ }
 }
 
 function handleSlash(set: any, get: any, text: string) {
@@ -682,6 +699,14 @@ function handleEvent(set: any, get: any, ev: Ev) {
     case "plan":
       appendToAssistant(set, get, ev);
       if (ev.plan_only) set({ pendingPlan: ev.subtasks || [] });
+      break;
+    case "error":
+      appendToAssistant(set, get, ev);
+      get().pushToast(ev.text || "Something went wrong.", "error");
+      break;
+    case "limit":
+      appendToAssistant(set, get, ev);
+      get().pushToast("Run hit its budget / loop limit.", "info");
       break;
     default:
       appendToAssistant(set, get, ev);

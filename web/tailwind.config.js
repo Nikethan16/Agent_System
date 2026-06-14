@@ -29,6 +29,10 @@ export default {
         "dark-border": "#3A3833",
         "dark-text": "#ECEAE3",
         "accent-terracotta": "#D97757",
+        "accent-deep": "#BD5D40",
+        // Claude-style warm "cloud" sidebar tone (a touch warmer than the canvas)
+        "claude-sidebar": "#F0EEE6",
+        "claude-sidebar-dark": "#1A1917",
       },
       borderRadius: { DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", "2xl": "1rem", full: "9999px" },
       spacing: { "sidebar-width": "260px", "panel-width": "340px", gutter: "24px" },

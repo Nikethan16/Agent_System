@@ -6,18 +6,21 @@ import MemoryPanel from "./MemoryPanel";
 import FleetPanel from "./FleetPanel";
 import HealthPanel from "./HealthPanel";
 import SchedulesPanel from "./SchedulesPanel";
-import RoadmapPanel from "./RoadmapPanel";
 
+// Five clear homes — every feature lives in exactly one (the old build had drifted to 9).
 const TABS = [
   { id: "general", label: "General", icon: "tune" },
   { id: "limits", label: "Limits & cost", icon: "savings" },
-  { id: "models", label: "Models", icon: "smart_toy" },
-  { id: "fleet", label: "Fleet & keys", icon: "key" },
-  { id: "health", label: "Model health", icon: "monitoring" },
-  { id: "schedules", label: "Schedules", icon: "schedule" },
-  { id: "roadmap", label: "Roadmap", icon: "checklist" },
+  { id: "models", label: "Models & keys", icon: "smart_toy" },
   { id: "memory", label: "Memory", icon: "neurology" },
-  { id: "security", label: "Security", icon: "shield" },
+  { id: "advanced", label: "Advanced", icon: "shield" },
+];
+
+// "Models & keys" gathers everything model-related (was 3 separate tabs).
+const MODEL_SUBS = [
+  { id: "tiers", label: "Tiers" },
+  { id: "keys", label: "Keys & fleet" },
+  { id: "health", label: "Health" },
 ];
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: any }) {
@@ -37,6 +40,7 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
           loadFacts, loadRules } = useStore();
   const dark = theme === "dark";
   const [tab, setTab] = useState("general");
+  const [modelSub, setModelSub] = useState("tiers");
   const [token, setToken] = useState(getAuthToken());
   const inp = "bg-surface-container-low dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-2 py-1 text-sm outline-none";
 
@@ -55,15 +59,15 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4 md:p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 md:p-6" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label="Settings"
         className="w-full max-w-3xl h-[600px] max-h-[88vh] bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-2xl flex overflow-hidden" onClick={(e) => e.stopPropagation()}>
         {/* Left nav */}
-        <div className="w-44 md:w-52 shrink-0 border-r border-light-border dark:border-dark-border p-3 bg-surface-container-low dark:bg-dark-bg/40 flex flex-col">
-          <h3 className="font-display text-lg font-semibold px-2 mb-4">Settings</h3>
+        <div className="w-44 md:w-52 shrink-0 border-r border-light-border dark:border-dark-border p-3 bg-claude-sidebar dark:bg-dark-bg/40 flex flex-col">
+          <h3 className="font-headline text-lg font-semibold px-2 mb-4">Settings</h3>
           {TABS.map((t) => (
             <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm text-left transition mb-0.5 ${tab === t.id ? "bg-white dark:bg-dark-surface text-accent-terracotta font-medium shadow-sm" : "text-on-surface-variant dark:text-light-muted hover:bg-surface-container dark:hover:bg-dark-surface"}`}>
+              className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm text-left transition mb-0.5 ${tab === t.id ? "bg-white dark:bg-dark-surface text-accent-terracotta font-medium shadow-sm" : "text-on-surface-variant dark:text-light-muted hover:bg-white/60 dark:hover:bg-dark-surface"}`}>
               <span className="material-symbols-outlined text-[18px]">{t.icon}</span>{t.label}
             </button>
           ))}
@@ -91,7 +95,7 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
                     <span className="material-symbols-outlined text-[16px]">download</span>Export
                   </button>
                 </Row>
-                <p className="text-xs text-light-muted mt-4">Shortcut: <b>Ctrl/⌘+K</b> = new chat. Slash commands: <code>/new /export /model /mode /help</code>.</p>
+                <p className="text-xs text-light-muted mt-4">Shortcut: <b>Ctrl/⌘+K</b> = command palette. Slash commands: <code>/new /export /model /mode /help</code>.</p>
               </div>
             )}
             {tab === "limits" && (
@@ -111,10 +115,12 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
             )}
             {tab === "models" && (
               <div>
-                <div className="flex items-center justify-between gap-3 mb-3">
-                  <div>
-                    <div className="text-sm font-medium">Model selection</div>
-                    <div className="text-[11px] text-light-muted">Strategy: {strategy === "cheapest" ? "cost-first (auto-picks cheapest capable model)" : "fixed per-tier"}</div>
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <div className="flex items-center bg-surface-container-low dark:bg-dark-bg p-1 rounded-xl">
+                    {MODEL_SUBS.map((s) => (
+                      <button key={s.id} onClick={() => setModelSub(s.id)}
+                        className={`px-3 py-1 text-xs rounded-lg transition ${modelSub === s.id ? "bg-white dark:bg-dark-surface shadow-sm font-medium" : "text-light-muted hover:text-on-surface dark:hover:text-dark-text"}`}>{s.label}</button>
+                    ))}
                   </div>
                   {onOpenBench && (
                     <button onClick={onOpenBench} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-light-border dark:border-dark-border hover:bg-surface-container-low dark:hover:bg-dark-bg shrink-0">
@@ -122,21 +128,31 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
                     </button>
                   )}
                 </div>
-                <ModelRail />
+                {modelSub === "tiers" && (
+                  <div>
+                    <div className="text-[11px] text-light-muted mb-3">Strategy: {strategy === "cheapest" ? "cost-first (auto-picks cheapest capable model)" : "fixed per-tier"}</div>
+                    <ModelRail />
+                  </div>
+                )}
+                {modelSub === "keys" && <FleetPanel />}
+                {modelSub === "health" && <HealthPanel />}
               </div>
             )}
-            {tab === "fleet" && <FleetPanel />}
-            {tab === "health" && <HealthPanel />}
-            {tab === "schedules" && <SchedulesPanel />}
-            {tab === "roadmap" && <RoadmapPanel />}
             {tab === "memory" && <MemoryPanel />}
-            {tab === "security" && (
-              <div>
-                <Row label="Access token" hint="Only needed when hosting off this machine.">
-                  <input type="password" value={token} placeholder="(deployed only)"
-                    onChange={(e) => { setToken(e.target.value); setAuthToken(e.target.value); }} className={inp + " w-44"} />
-                </Row>
-                <p className="text-xs text-light-muted mt-4">Embeddings, search and connectors are configured in <code>.env</code> / <code>config/</code> — see <code>docs/PLACEHOLDERS.md</code>.</p>
+            {tab === "advanced" && (
+              <div className="space-y-6">
+                <div>
+                  <p className="text-[11px] uppercase tracking-widest text-light-muted mb-2">Security</p>
+                  <Row label="Access token" hint="Only needed when hosting off this machine.">
+                    <input type="password" value={token} placeholder="(deployed only)"
+                      onChange={(e) => { setToken(e.target.value); setAuthToken(e.target.value); }} className={inp + " w-44"} />
+                  </Row>
+                  <p className="text-xs text-light-muted mt-3">Embeddings, search and connectors are configured in <code>.env</code> / <code>config/</code> — see <code>docs/PLACEHOLDERS.md</code>.</p>
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-widest text-light-muted mb-2">Scheduled tasks</p>
+                  <SchedulesPanel />
+                </div>
               </div>
             )}
           </div>
