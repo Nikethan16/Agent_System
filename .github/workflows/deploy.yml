@@ -1,0 +1,42 @@
+name: Deploy to Oracle server
+
+# Auto-deploy on every push to main. Runs on the self-hosted runner that lives
+# ON the Oracle server, so it just updates the app in place and restarts it.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}      # also lets you trigger a deploy manually from the Actions tab
+
+# Never run two deploys at once; if you push twice quickly, they queue.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Pull latest code
+        run: |
+          cd /home/ubuntu/agent_system
+          git fetch origin main
+          git reset --hard origin/main
+
+      - name: Update backend dependencies
+        run: |
+          cd /home/ubuntu/agent_system
+          .venv/bin/pip install -r requirements.txt
+
+      - name: Rebuild web UI
+        run: |
+          cd /home/ubuntu/agent_system
+          npm --prefix web install
+          npm --prefix web run build
+
+      - name: Restart the service
+        run: sudo /usr/bin/systemctl restart agentcore
+
+      - name: Health check
+        run: |
+          sleep 5
+          curl -fsS -o /dev/null -w "deployed; server responded %{http_code}\n" http://localhost:8800/api/health
