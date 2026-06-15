@@ -19,6 +19,7 @@ Run on the VM (needs a provider key in .env; Docker sandbox must be configured):
 import os
 import sys
 import time
+import shutil
 import argparse
 from collections import Counter
 
@@ -59,7 +60,17 @@ def _has_key():
     return any(os.environ.get(k) and len(os.environ[k]) > 8 for k in keys)
 
 
+def _reset_workspace():
+    """Wipe the benchmark workspace so every scenario starts from a clean slate —
+    otherwise a later run sees files a previous run left behind and the result isn't
+    reproducible (the coder skips work it thinks is already done)."""
+    ws = os.environ["AGENT_WORKSPACE"]
+    shutil.rmtree(ws, ignore_errors=True)
+    os.makedirs(ws, exist_ok=True)
+
+
 def run_scenario(name, prompt, max_usd, max_iter):
+    _reset_workspace()
     events = []
 
     def emit(ev):
