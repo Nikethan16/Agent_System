@@ -406,6 +406,19 @@ sudo usermod -aG docker ubuntu      # then log out and back in
 Then in `.env`: remove `AGENT_DISABLE_BASH=1` and add `AGENT_BASH_DOCKER_IMAGE=python:3.11-slim`,
 and `sudo systemctl restart agentcore`.
 
+**To let the verify loop actually run tests (pytest/npm), not just inspect code:**
+the sandbox runs with `--network none` (no egress) by default — the right security
+posture, but it means the container can't `pip install`/`npm install` at runtime. The
+fix is a **preloaded image** with the test tooling baked in, so a suite runs *offline*:
+
+```bash
+./docker/build-verify-image.sh        # builds agent-verify:latest (python+node+pytest+common deps)
+```
+Then in `.env` set `AGENT_BASH_DOCKER_IMAGE=agent-verify:latest` and restart. Need a dep
+that isn't baked in? Either add it to `docker/verify.Dockerfile` and rebuild (keeps
+`network=none`), or for a one-off set `AGENT_BASH_DOCKER_NETWORK=bridge` to allow a fresh
+install for that run (less secure — only when you trust the task).
+
 ---
 
 ## One-page cheat sheet
