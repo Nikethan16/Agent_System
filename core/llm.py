@@ -517,3 +517,36 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
         budget.add_tokens(tokens)
         budget.tick()
     return msg, cost
+
+
+def stream_complete_chain(models, messages, tools=None, max_tokens=4096,
+                          budget: Budget = None, temperature=0.2,
+                          on_token=None, on_fallback=None):
+    """Streaming variant of complete_chain: tries each model in order, falling back on
+    failure. Returns (assistant_message_dict, cost) — same shape as stream_complete_tools.
+    on_token(piece) is called for each content delta from the first successful model.
+    BudgetExceeded and client-side bugs surface immediately (no fallback)."""
+    chain = [m for m in (models or []) if m]
+    if not chain:
+        raise ValueError("stream_complete_chain: empty model list")
+    last_exc = None
+    for i, model in enumerate(chain):
+        try:
+            return stream_complete_tools(model, messages, tools=tools,
+                                         max_tokens=max_tokens, budget=budget,
+                                         temperature=temperature, on_token=on_token)
+        except BudgetExceeded:
+            raise
+        except _BUG:
+            raise
+        except Exception as e:
+            last_exc = e
+            nxt = chain[i + 1] if i + 1 < len(chain) else None
+            metrics.record(model, 0.0, ok=False, fallback=bool(nxt), error=type(e).__name__)
+            if nxt and on_fallback:
+                try:
+                    on_fallback(model, nxt, f"{type(e).__name__}: {str(e)[:120]}")
+                except Exception:
+                    pass
+            continue
+    raise last_exc or RuntimeError("stream_complete_chain: all models failed")

@@ -22,8 +22,8 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 
-from .llm import (complete, complete_chain, Budget, BudgetExceeded,
-                  set_run_budget, use_budget, _span_ctx, use_span_ctx)
+from .llm import (complete, complete_chain, stream_complete, stream_complete_chain,
+                  Budget, BudgetExceeded, set_run_budget, use_budget, _span_ctx, use_span_ctx)
 from .registry import registry
 from .router import classify
 from . import agents as team
@@ -253,7 +253,7 @@ def _master_tool_schemas():
 
 
 def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_type=None,
-                 acceptance=""):
+                 acceptance="", stream=False):
     def _emit(ev):
         if emit:
             emit(ev)
@@ -335,34 +335,51 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
 
     while True:
         force_final = rounds >= MAX_MASTER_ROUNDS
+        active_tools = None if force_final else schemas
+        max_tok = registry.max_tokens_for_tier("tier3")
         try:
-            resp, _ = complete_chain(chain, messages, tools=None if force_final else schemas,
-                                     max_tokens=registry.max_tokens_for_tier("tier3"),
-                                     budget=budget, on_fallback=_fb)
+            if stream:
+                # Stream the lead's tokens so the UI shows a live rolling answer.
+                # on_token fires for content pieces; tool-call deltas are assembled silently.
+                msg_dict, _ = stream_complete_chain(
+                    chain, messages, tools=active_tools, max_tokens=max_tok,
+                    budget=budget, on_fallback=_fb,
+                    on_token=lambda t: _emit({"type": "agent_token", "agent": "lead", "text": t}))
+                msg_content = msg_dict.get("content") or ""
+                msg_tool_calls = msg_dict.get("tool_calls") or []
+                messages.append(msg_dict)
+            else:
+                resp, _ = complete_chain(chain, messages, tools=active_tools, max_tokens=max_tok,
+                                         budget=budget, on_fallback=_fb)
+                if not getattr(resp, "choices", None):
+                    # Provider returned NO choices (free-tier rate-limit / safety filter).
+                    _emit({"type": "error", "agent": "lead",
+                           "text": "empty response from model (often a free-tier rate limit)"})
+                    return (_finalize_from_board(board, task, budget, emit, stream) or
+                            "(The model returned an empty response — often a free-tier rate "
+                            "limit. Wait a moment and try again.)")
+                msg = resp.choices[0].message
+                msg_content = msg.content or ""
+                msg_tool_calls = getattr(msg, "tool_calls", None) or []
+                messages.append(msg.model_dump() if hasattr(msg, "model_dump") else dict(msg))
         except BudgetExceeded as e:
             _emit({"type": "limit", "agent": "lead", "text": str(e)})
-            return _finalize_from_board(board, task, budget, emit) or f"(stopped: {e})"
+            return _finalize_from_board(board, task, budget, emit, stream) or f"(stopped: {e})"
         except Exception as e:
             _emit({"type": "error", "agent": "lead", "text": f"{type(e).__name__}: {e}"})
-            return _finalize_from_board(board, task, budget, emit) or f"(provider error: {type(e).__name__})"
+            return _finalize_from_board(board, task, budget, emit, stream) or f"(provider error: {type(e).__name__})"
 
-        if not getattr(resp, "choices", None):
-            # Provider returned NO choices (free-tier rate-limit / safety filter /
-            # empty completion). The single-agent loop is already guarded; guard the
-            # LEAD loop the same way so a transient empty response can't crash the run.
-            _emit({"type": "error", "agent": "lead",
-                   "text": "empty response from model (often a free-tier rate limit)"})
-            return (_finalize_from_board(board, task, budget, emit) or
-                    "(The model returned an empty response — often a free-tier rate "
-                    "limit. Wait a moment and try again.)")
-        msg = resp.choices[0].message
-        messages.append(msg.model_dump() if hasattr(msg, "model_dump") else dict(msg))
-        if msg.content:
-            _emit({"type": "thought", "agent": "lead", "text": msg.content})
+        # In non-stream mode, emit the lead's reasoning as a "thought" bubble when tool
+        # calls follow. In stream mode the tokens already fired via agent_token; emit
+        # "done" to close that live segment before delegation starts so the bubbles don't mix.
+        if msg_content and msg_tool_calls:
+            if stream:
+                _emit({"type": "done", "agent": "lead"})
+            else:
+                _emit({"type": "thought", "agent": "lead", "text": msg_content})
 
-        tool_calls = getattr(msg, "tool_calls", None)
-        if not tool_calls:
-            return msg.content or _finalize_from_board(board, task, budget, emit)
+        if not msg_tool_calls:
+            return msg_content or _finalize_from_board(board, task, budget, emit, stream)
 
         for tc in tool_calls:
             name = tc.function.name
@@ -409,17 +426,24 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
             messages.append({"role": "user", "content": "(reminder) current todo list:\n" + _todos_text(todos)})
 
 
-def _finalize_from_board(board, task, budget, emit):
+def _finalize_from_board(board, task, budget, emit, stream=False):
     """If the lead ran out of budget mid-flight, synthesize what's on the blackboard."""
     digest = board.digest()
     if not digest:
         return ""
+    msgs = [
+        {"role": "system", "content": "Summarize the work done so far into a final answer for the user."},
+        {"role": "user", "content": f"GOAL: {task}\n\nWORK DONE:\n{digest}"}
+    ]
+    max_tok = registry.max_tokens_for_tier("tier3")
     try:
         model = registry.model_for_tier("tier3")
-        resp, _ = complete(model, [
-            {"role": "system", "content": "Summarize the work done so far into a final answer for the user."},
-            {"role": "user", "content": f"GOAL: {task}\n\nWORK DONE:\n{digest}"}],
-            max_tokens=registry.max_tokens_for_tier("tier3"), budget=budget)
+        if stream and emit:
+            text, _ = stream_complete(model, msgs, max_tokens=max_tok, budget=budget,
+                                      on_token=lambda t: emit({"type": "agent_token",
+                                                                "agent": "lead", "text": t}))
+            return text
+        resp, _ = complete(model, msgs, max_tokens=max_tok, budget=budget)
         return resp.choices[0].message.content
     except Exception:
         return digest[:1500]
@@ -446,7 +470,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         # Approved multi-step plans are substantive -> QA on unless explicitly disabled.
         rv = review if isinstance(review, bool) else True
         final = _master_loop(task or "Execute the approved plan.", budget, emit, approve, rv,
-                             todos, acceptance=acceptance)
+                             todos, acceptance=acceptance, stream=stream)
         _emit({"type": "final", "text": final, "cost": round(budget.spent_usd, 4)})
         return final
 
@@ -512,6 +536,6 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
 
     # Complex -> the LEAD master loop, seeded with the task's playbook + delegation.
     final = _master_loop(task, budget, emit, approve, review, task_type=task_type,
-                         acceptance=acceptance)
+                         acceptance=acceptance, stream=stream)
     _emit({"type": "final", "text": final, "cost": round(budget.spent_usd, 4)})
     return final
