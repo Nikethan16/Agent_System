@@ -45,14 +45,8 @@ Code is done; the items below note the **operational steps** still needed to act
   sub-linear ANN index is only worth it at much larger scale.
 
 ## UI / UX polish
-- **File `+/- line counts`** in the run summary (currently shows file names + tool count; line
-  counts need diff computation per run).
-- **Deep-polish the last two Settings panels** — Health and Schedules (Models/Memory/Fleet done
-  2026-06-14).
 - **Mobile pass** on the new Claude UI (desktop verified; phone drawers need a look).
-- A **trace viewer** panel surfacing the new span tree (latency/token/cost per node).
-- Stream the **lead's final answer**; smarter activity-strip defaults.
-- Cleanups: remove the now-unused `web/src/components/RoadmapPanel.tsx`.
+- **Deep-polish the last two Settings panels** — Health and Schedules (Models/Memory/Fleet done).
 
 ## Performance / cost
 - Add more **free NVIDIA keys** (`NVIDIA_NIM_API_KEY_1..N`) to multiply throughput.
@@ -60,9 +54,7 @@ Code is done; the items below note the **operational steps** still needed to act
 - Prompt caching — deferred (low payoff on NVIDIA's free tier; the classifier cache covers repeats).
 
 ## Reliability / quality
-- Broaden tests beyond the 158-check smoke (real integration tests; a repo-mode dry-run test).
-- Apply the **untrusted-content wrapper** to *all* content sources, not just fetched web pages
-  (repo-engineer prompt already treats repo content as untrusted DATA).
+- Broaden integration tests further (more edge cases; multi-agent flow tests).
 
 ## Security / ops (matters most if ever exposed beyond Tailscale)
 - **API rate-limiting** + **encrypt stored API keys** at rest.
@@ -72,7 +64,8 @@ Code is done; the items below note the **operational steps** still needed to act
 ---
 
 ## Suggested next sequence
-1. **Activate repo mode + sandbox on the server** (ARM image, `GITHUB_TOKEN`, flip
-   `AGENT_DISABLE_BASH` off) and run an end-to-end repo-mode test.
-2. **Trace viewer** UI panel for the new span tree.
-3. Quick UI wins (file +/- counts, Health/Schedules polish, mobile pass).
+1. **Activate repo mode + sandbox on the server** (`GITHUB_TOKEN`, flip `AGENT_DISABLE_BASH`
+   off, set `AGENT_BASH_DOCKER_IMAGE`/`NETWORK`) and run `scripts/test_repo_mode.py`.
+2. **Off-site backups** — set `BACKUP_UPLOAD_CMD` in server `.env`.
+3. **Mobile pass** — CSS tweaks for phone drawers.
+4. **API rate-limiting** before any wider exposure.

@@ -4,6 +4,7 @@ import FilesPanel from "./FilesPanel";
 import CheckpointsPanel from "./CheckpointsPanel";
 import JobsPanel from "./JobsPanel";
 import SkillsPanel from "./SkillsPanel";
+import TracesPanel from "./TracesPanel";
 
 // Per-chat OUTPUT only. Configuration (Models, Memory) moved to Settings so this
 // panel shows just what the agent produced for this conversation.
@@ -12,6 +13,7 @@ const TABS = [
   { id: "checkpoints", label: "Rewind" },
   { id: "skills", label: "Skills" },
   { id: "tasks", label: "Tasks" },
+  { id: "trace", label: "Trace" },
 ];
 
 export default function RightPanel({ open = false, onClose }: { open?: boolean; onClose?: () => void } = {}) {
@@ -48,6 +50,7 @@ export default function RightPanel({ open = false, onClose }: { open?: boolean; 
         {tab === "checkpoints" && <CheckpointsPanel />}
         {tab === "skills" && <SkillsPanel />}
         {tab === "tasks" && <JobsPanel />}
+        {tab === "trace" && <TracesPanel />}
       </div>
     </aside>
   );

@@ -8,9 +8,10 @@ for "how it works under the hood"._
 
 > **Now live (2026-06-15):** deployed 24/7 on an Oracle Always-Free VM, reached privately via
 > Tailscale, with push-to-main CI/CD. The UI is a **Claude.ai clone** with **email+password
-> login**, per-response **run summaries** (time/tokens/cost/tools/files), a **5-tab Settings**,
-> and a ⌘K command palette. Telegram phone control is live. Repo-engineer mode, Docker sandbox,
-> Langfuse tracing, and NumPy ANN memory index shipped 2026-06-15.
+> login**, per-response **run summaries** (time/tokens/cost/tools/files with `+/-` line counts),
+> a **5-tab Settings**, and a ⌘K command palette. Telegram phone control is live. Repo-engineer
+> mode, Docker sandbox, Langfuse tracing, NumPy ANN memory index, trace-viewer panel, and a
+> 55-case pytest suite all shipped 2026-06-15.
 > See `docs/SETUP_GUIDE.md` (hosting) and `docs/BACKLOG.md` (what's left).
 
 ---
@@ -49,7 +50,7 @@ Using the bundled **Anthropic document skills**, it creates genuine **Word (.doc
 advanced formatting paths optionally want LibreOffice/pandoc/Node; the common cases work
 with the Python libraries already installed.)
 
-### 5. Research the web ✅ (now working)
+### 5. Research the web ✅
 A **research** agent can **search the web** (via Tavily) and **fetch & read pages**, then
 write a cited summary. Fetched content is treated as untrusted **data**, never instructions
 (a prompt-injection guard). _This was fixed and enabled on 2026-06-07 — see HANDOFF.md._
@@ -125,13 +126,25 @@ container** (cap-drop ALL, no-new-privileges, read-only filesystem + tmpfs, PID/
 limits, killed on timeout) — no access to the host system. Without the image set, bash is
 blocked entirely (fails closed). Tunable via `AGENT_BASH_DOCKER_TIMEOUT/MEMORY/CPUS/NETWORK/PIDS`.
 
-### 18. Distributed tracing (Langfuse span tree)
+### 18. Live trace viewer
+The **Trace** tab in the right panel renders the span tree for every run: agent nodes,
+tool calls, and LLM generations — each with cost, token counts, and duration chips.
+Collapsible hierarchy; refreshes automatically when a run completes. Backed by
+`GET /api/traces/{session_id}` which reconstructs the tree from the always-on local JSONL
+(works on all existing traces without any write-path change).
+
+### 19. File `+/−` line counts in run summaries
+The response footer shows each changed file as `file.py +42 −8` (green/red) — computed
+via unified diff of the workspace checkpoint vs. post-run state. Falls back to path-only
+display for older messages that predate the feature.
+
+### 20. Distributed tracing (Langfuse span tree)
 Every run produces a **span tree**: run → subagent → LLM generation, each node carrying
 model name, prompt + completion tokens, cost, and latency. Always-on as local JSONL files
 in `data/traces/`. Optionally forwarded to **Langfuse** when `LANGFUSE_*` keys are set.
 `core/` stays offline — it holds only a callback hook + a ContextVar; no provider import in core.
 
-### 19. Fast semantic memory recall (NumPy ANN index)
+### 21. Fast semantic memory recall (NumPy ANN index)
 Episodic memory and RAG retrieval now use a lazy in-memory **unit-normalized NumPy matrix**
 for vectorized cosine search over the full corpus — no `_MAX_SCAN` ceiling. Invalidated
 automatically on every memory write. Falls back to the Python cosine loop, then to lexical
@@ -149,9 +162,11 @@ runs at **$0**:
 | Chat, coding, documents, multi-agent, QA, security, memory, checkpoints, projects, jobs, Model Lab | ✅ Working |
 | **Web search** (Tavily key set) | ✅ Working |
 | **Semantic (meaning-based) memory** (Gemini embeddings + NumPy ANN index) | ✅ Working |
-| **Repo-engineer** (clone/branch/edit/commit/push/PR) | ✅ Code done — needs `GITHUB_TOKEN` on server |
-| **Docker sandbox** for shell commands | ✅ Code done — needs `AGENT_BASH_DOCKER_IMAGE` set on server |
-| **Langfuse cloud tracing** | ✅ Code done — local JSONL always-on; needs `LANGFUSE_*` keys for cloud |
+| **Repo-engineer** (clone/branch/edit/commit/push/PR) | ✅ Code done — needs `GITHUB_TOKEN` in server `.env` |
+| **Docker sandbox** for shell commands | ✅ Image built on server — needs `AGENT_BASH_DOCKER_IMAGE` env var flip |
+| **Langfuse cloud tracing** | ✅ Local JSONL always-on; needs `LANGFUSE_*` keys for cloud |
+| **Trace viewer** (Trace tab, span tree) | ✅ Working |
+| **File `+/−` line counts** in run footer | ✅ Working |
 | Image generation | ⏸ Off — needs an image model + key (code is ready) |
 
 ## How to run it

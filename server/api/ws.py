@@ -126,8 +126,16 @@ async def run_socket(websocket: WebSocket, session_id: str):
                         emit({"type": "error", "text": f"{type(e).__name__}: {e}"})
                     finally:
                         runs.finish_run(run_id, status, budget.spent_usd)
+                        # Per-file +/- line counts for this turn (checkpoint = pre-turn
+                        # snapshot vs current workspace). Best-effort — never break the run.
+                        try:
+                            from .workspace import compute_changes
+                            files = compute_changes(session_id)
+                        except Exception:
+                            files = []
                         emit({"type": "run_complete", "cost": round(budget.spent_usd, 6),
-                              "tokens": budget.tokens, "iterations": budget.iterations})
+                              "tokens": budget.tokens, "iterations": budget.iterations,
+                              "files": files})
 
                 threading.Thread(target=worker, daemon=True).start()
 

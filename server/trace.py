@@ -62,6 +62,122 @@ def trace(session_id: str, event: dict) -> None:
             pass
 
 
+# ---- local trace reading + tree reconstruction -----------------------------
+
+def load_trace(session_id: str) -> list:
+    """Read a session's JSONL trace as a list of event dicts (oldest→newest).
+
+    Pure read; tolerates malformed lines (a partial final write never breaks it).
+    Returns [] when no trace exists for the session."""
+    path = os.path.join(_DIR, f"{session_id}.jsonl")
+    out = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except (ValueError, TypeError):
+                    continue
+    except OSError:
+        return []
+    return out
+
+
+# Events that attach to the current open span rather than opening their own.
+_LEAF_TYPES = {"tool", "thought", "agent_token", "skill", "critic", "fallback",
+               "retry", "blocked", "denied", "limit", "memory", "feedback"}
+# Events that belong to the run as a whole (the root node).
+_ROOT_TYPES = {"route", "plan", "final", "run_complete", "error"}
+
+
+def _node(name: str, kind: str, ev: dict | None = None) -> dict:
+    return {"name": name, "kind": kind, "start": (ev or {}).get("ts"),
+            "end": None, "cost": 0.0, "tokens": 0, "children": [], "events": []}
+
+
+def _accrue(node: dict, ev: dict) -> None:
+    """Fold an event's cost/tokens into a node (best-effort; fields are optional)."""
+    try:
+        node["cost"] += float(ev.get("cost") or 0)
+    except (ValueError, TypeError):
+        pass
+    try:
+        node["tokens"] += int(ev.get("tokens") or 0)
+    except (ValueError, TypeError):
+        pass
+
+
+def build_tree(session_id: str) -> dict:
+    """Reconstruct a span tree from the flat JSONL, mirroring the Langfuse stack
+    logic: `assign` pushes a child span, `done` pops it, leaf events attach to the
+    deepest open span, run-level events sit on the root. Cost/tokens/duration are
+    aggregated per node. Returns {root, totals, events_count}."""
+    events = load_trace(session_id)
+    root = _node("agent-run", "run")
+    stack = [root]  # deepest open span is stack[-1]
+    for ev in events:
+        typ = ev.get("type", "")
+        ts = ev.get("ts")
+        if root["start"] is None:
+            root["start"] = ts
+        if typ == "assign":
+            child = _node(f"agent:{ev.get('agent', 'unknown')}", "agent", ev)
+            child["subtask"] = (ev.get("subtask") or "")[:300]
+            child["model"] = ev.get("model")
+            child["step"] = ev.get("step")
+            stack[-1]["children"].append(child)
+            stack.append(child)
+        elif typ == "done":
+            node = stack.pop() if len(stack) > 1 else stack[-1]
+            node["end"] = ts
+            _accrue(node, ev)
+        elif typ == "tool":
+            leaf = _node(f"tool:{ev.get('name', 'unknown')}", "tool", ev)
+            leaf["end"] = ts
+            leaf["args"] = str(ev.get("args", ""))[:300]
+            _accrue(leaf, ev)
+            stack[-1]["children"].append(leaf)
+        elif typ in _ROOT_TYPES:
+            _accrue(root, ev)
+            root["events"].append({"type": typ, "ts": ts})
+            if typ in ("run_complete", "final"):
+                root["end"] = ts
+                # run-level totals are authoritative when present
+                if ev.get("cost") is not None:
+                    try:
+                        root["cost"] = float(ev.get("cost") or 0)
+                    except (ValueError, TypeError):
+                        pass
+                if ev.get("tokens") is not None:
+                    try:
+                        root["tokens"] = int(ev.get("tokens") or 0)
+                    except (ValueError, TypeError):
+                        pass
+        else:  # _LEAF_TYPES and anything unknown → attach to the current span
+            _accrue(stack[-1], ev)
+            stack[-1]["events"].append({"type": typ, "ts": ts})
+    # Close any spans left open (a crashed/incomplete run).
+    last_ts = events[-1]["ts"] if events else None
+    for node in stack:
+        if node["end"] is None:
+            node["end"] = last_ts
+
+    def _dur(n):
+        if n.get("start") is not None and n.get("end") is not None:
+            n["duration_ms"] = round((n["end"] - n["start"]) * 1000)
+        else:
+            n["duration_ms"] = None
+        for c in n["children"]:
+            _dur(c)
+    _dur(root)
+    return {"root": root, "totals": {"cost": root["cost"], "tokens": root["tokens"],
+                                     "duration_ms": root.get("duration_ms")},
+            "events_count": len(events)}
+
+
 # ---- Langfuse client -------------------------------------------------------
 
 def _ensure_client():

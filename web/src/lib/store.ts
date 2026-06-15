@@ -3,7 +3,8 @@ import { api, wsUrl } from "./api";
 import { downloadBlob } from "./util";
 
 export type Ev = any;
-export type RunMeta = { durationMs?: number; tokens?: number; cost?: number; iterations?: number };
+export type FileChange = { path: string; status: string; added: number; removed: number };
+export type RunMeta = { durationMs?: number; tokens?: number; cost?: number; iterations?: number; files?: FileChange[] };
 export type Msg = { id: string; role: "user" | "assistant"; content: string; events: Ev[]; pending?: boolean; live?: string; local?: boolean; meta?: RunMeta };
 
 // Stable client id for a message (used as the React key so edit/branch can't
@@ -34,6 +35,7 @@ type State = {
   files: any[];
   checkpoints: any[];
   jobs: any[];
+  trace: any | null;
   facts: any[];
   rules: any[];
   spend: { spent_today: number; cap: number | null; remaining: number | null } | null;
@@ -83,6 +85,7 @@ type State = {
   restore: (id: string) => Promise<void>;
   loadJobs: () => Promise<void>;
   enqueueJob: (text: string) => Promise<void>;
+  loadTrace: () => Promise<void>;
   loadFacts: () => Promise<void>;
   forgetFact: (id: string) => Promise<void>;
   addFact: (text: string, key: string) => Promise<void>;
@@ -144,6 +147,7 @@ export const useStore = create<State>((set, get) => ({
   files: [],
   checkpoints: [],
   jobs: [],
+  trace: null,
   facts: [],
   rules: [],
   spend: null,
@@ -413,6 +417,14 @@ export const useStore = create<State>((set, get) => ({
     if (!id) return;
     try {
       set({ checkpoints: await api.checkpoints(id) });
+    } catch (e) { reportError(get, e); }
+  },
+
+  async loadTrace() {
+    const id = get().currentId;
+    if (!id) return;
+    try {
+      set({ trace: await api.traces(id) });
     } catch (e) { reportError(get, e); }
   },
 
@@ -696,12 +708,14 @@ function handleEvent(set: any, get: any, ev: Ev) {
       set({ running: false });
       patchLastAssistant(set, get, (m) => ({
         ...m, live: "",
-        meta: { durationMs, tokens: ev.tokens, cost: ev.cost, iterations: ev.iterations },
+        meta: { durationMs, tokens: ev.tokens, cost: ev.cost, iterations: ev.iterations,
+                files: ev.files || [] },
       }));
       closeSocket();
       get().loadFiles().catch((e: any) => reportError(get, e));
       get().loadCheckpoints().catch((e: any) => reportError(get, e));
       get().loadSpend().catch((e: any) => reportError(get, e));
+      get().loadTrace().catch((e: any) => reportError(get, e));
       break;
     }
     case "plan":
