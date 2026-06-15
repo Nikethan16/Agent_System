@@ -17,10 +17,19 @@ from .registry import registry
 CLASSIFIER_SYS = (
     "You are a task router. Output ONLY valid JSON, no prose, no code fences:\n"
     '{"tier": 1|2|3, "task_type": "coding"|"writing"|"research"|"math"|"data", '
-    '"requires_web": true|false, "reason": "<=8 words"}\n'
-    "Tier 1 = trivial (summarize, classify, format, short answer).\n"
-    "Tier 2 = moderate (write code, draft a report, analyze).\n"
-    "Tier 3 = hard (multi-file code, deep reasoning, architecture, long research)."
+    '"requires_web": true|false, "reason": "<=8 words"}\n\n'
+    "TIER RULES — bias STRONGLY toward tier 2 for any build/write/code task:\n"
+    "Tier 1 — trivial only: greeting, single factual lookup, format/classify/summarize a snippet.\n"
+    "Tier 2 — DEFAULT for almost all real work: writing ONE file or script, ONE component, "
+    "ONE focused feature, fixing a bug, building an app that fits in a single session (a "
+    "calculator, landing page, form, CLI tool, etc.), drafting a document, analyzing data. "
+    "A single specialist handles this in one loop — no planner, no delegation needed.\n"
+    "Tier 3 — RARE. Only for genuinely multi-component systems where independent parts "
+    "MUST be built and coordinated separately (e.g. full-stack app with backend + DB + "
+    "frontend + tests as separate deliverables, multi-step research requiring 3+ distinct "
+    "sources). Do NOT use tier 3 for anything one skilled engineer can finish in one session.\n\n"
+    "Examples: 'build a calculator' → tier 2 coding. 'hi' → tier 1 chat. "
+    "'build a REST API with auth, PostgreSQL, tests, and React frontend' → tier 3 coding."
 )
 
 _RETRIES = 1          # extra attempts after the first, on transient/rate-limit errors

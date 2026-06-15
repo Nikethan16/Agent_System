@@ -87,9 +87,9 @@ async def run_socket(websocket: WebSocket, session_id: str):
                 # client to bound its own spend.
                 try:
                     req_usd = float(msg.get("max_usd", 0.5))
-                    req_iter = int(msg.get("max_iterations", 20))
+                    req_iter = int(msg.get("max_iterations", 24))
                 except (TypeError, ValueError):
-                    req_usd, req_iter = 0.5, 20
+                    req_usd, req_iter = 0.5, 24
                 budget = Budget(
                     max_usd=max(0.0, min(req_usd, _MAX_USD_CEILING)),
                     max_iterations=max(1, min(req_iter, _MAX_ITER_CEILING)),

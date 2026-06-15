@@ -36,10 +36,34 @@ litellm.num_retries = 0
 
 # Hard per-call wall-clock timeout (seconds). Bounds a cold-start/stuck provider so
 # it fails fast and the fallback chain can move on, instead of freezing the run.
-_TIMEOUT = float(os.environ.get("AGENT_LLM_TIMEOUT", "90"))
+_TIMEOUT = float(os.environ.get("AGENT_LLM_TIMEOUT", "45"))
 # How many keys to try for ONE model before giving up on it (then the chain falls
 # back to the next model). At least a couple even with a single key (brief backoff).
 _KEY_ATTEMPTS = int(os.environ.get("AGENT_KEY_ATTEMPTS", "4"))
+
+# Circuit breaker: once a model fails (timeout / 5xx / rate-limit-exhausted), mark it
+# "open" for _BREAKER_COOLDOWN seconds so every later call in the same run (and
+# concurrent runs) skips it immediately instead of waiting _TIMEOUT each time.
+# This is the fix for multi-minute hangs caused by a dead primary being retried on
+# every step. The last model in the chain is NEVER skipped (always a live attempt).
+_BREAKER: dict[str, float] = {}        # model_id -> open_until epoch
+_BREAKER_LOCK = threading.Lock()
+_BREAKER_COOLDOWN = float(os.environ.get("AGENT_BREAKER_COOLDOWN", "60"))
+
+
+def _breaker_open(model: str) -> bool:
+    with _BREAKER_LOCK:
+        return time.time() < _BREAKER.get(model, 0)
+
+
+def _trip_breaker(model: str) -> None:
+    with _BREAKER_LOCK:
+        _BREAKER[model] = time.time() + _BREAKER_COOLDOWN
+
+
+def _reset_breaker(model: str) -> None:
+    with _BREAKER_LOCK:
+        _BREAKER.pop(model, None)
 
 
 def _exc(*names):
@@ -347,15 +371,28 @@ def complete_chain(models, messages, tools=None, max_tokens=4096, budget: Budget
         raise ValueError("complete_chain: empty model list")
     last_exc = None
     for i, model in enumerate(chain):
+        # Circuit breaker: skip a recently-failed model unless it's the last option.
+        # Never skip the last fallback — we always make a live attempt.
+        if _breaker_open(model) and i < len(chain) - 1:
+            nxt = chain[i + 1]
+            if on_fallback:
+                try:
+                    on_fallback(model, nxt, "circuit-breaker: skipped (recent failure)")
+                except Exception:
+                    pass
+            continue
         try:
-            return complete(model, messages, tools=tools, max_tokens=max_tokens,
+            resp = complete(model, messages, tools=tools, max_tokens=max_tokens,
                             budget=budget, temperature=temperature, timeout=timeout)
+            _reset_breaker(model)             # success — clear any open breaker
+            return resp
         except BudgetExceeded:
             raise                                  # hard cap — do not fall back
         except _BUG:
             raise                                  # our bug — surface it, don't mask
         except Exception as e:                     # rate-limit-exhausted / timeout / 5xx / empty
             last_exc = e
+            _trip_breaker(model)              # trip the breaker so later calls skip it
             nxt = chain[i + 1] if i + 1 < len(chain) else None
             metrics.record(model, 0.0, ok=False, fallback=bool(nxt), error=type(e).__name__)
             if nxt and on_fallback:

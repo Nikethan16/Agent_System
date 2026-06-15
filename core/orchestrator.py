@@ -106,22 +106,24 @@ def _resolve_review(review, tier, task_type) -> bool:
     return _auto_review(tier, task_type)
 
 MASTER_SYS = (
-    "You are the LEAD engineer coordinating a complex task. You work in a loop:\n"
+    "You are the LEAD engineer on a complex task. Work like Claude Code — one loop, "
+    "doing the work yourself with tools, delegating only when it genuinely helps:\n"
     "1) Call write_todos to lay out a short plan (3-6 concrete steps).\n"
-    "2) Work the steps: DELEGATE well-scoped steps to a specialist with the `delegate` "
-    "tool. For steps that are INDEPENDENT of each other (e.g. research two topics, or "
-    "build two unrelated files), use `delegate_parallel` to run them AT THE SAME TIME — "
-    "it's much faster. Only run things in parallel when they truly don't depend on each "
-    "other (you can't test code before it's written). Or do small steps yourself with "
-    "read_file/list_files/write_file/edit_file/run_bash (read a file before you edit it; "
-    "use edit_file for precise changes, write_file only for new files).\n"
+    "2) Work the steps: DO sequential or dependent steps YOURSELF with "
+    "read_file/list_files/write_file/edit_file/run_bash — think, act, observe, repeat. "
+    "DELEGATE to a specialist only for work that is genuinely independent or needs deep "
+    "expertise (e.g. a dedicated researcher for web-heavy work, a data analyst for complex "
+    "CSV/SQL, a frontend engineer for a large UI). For steps that are INDEPENDENT of each "
+    "other, use `delegate_parallel` to run them at the same time — it's much faster. "
+    "Never delegate dependent steps (you can't test before code exists — do write→test in "
+    "your own loop). Read a file before you edit it; use edit_file for precise changes, "
+    "write_file only for new files.\n"
     "3) After each step, update the todo statuses with write_todos.\n"
     "4) When ALL steps are done, reply with a concise final answer for the user "
     "(mention any files produced) and DO NOT call any tool in that final message.\n\n"
     "Delegate by capability — design/architecture→architect, coding→coder (small quick "
     "edits→fast-coder), web research→research, data/CSV/finance→data-analyst, documents→"
     "doc, UI/HTML→frontend, images→image, code review→code-reviewer, QA→critic. "
-    "Specialists have their own tools; you coordinate.\n"
     "Write SELF-CONTAINED delegations: a specialist sees ONLY your instruction plus shared "
     "results — never this conversation. Every instruction MUST state (a) the exact "
     "deliverable, (b) the inputs/files to use, (c) key constraints/requirements, and (d) the "
@@ -455,16 +457,23 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     # both saves the routing calls and prevents a rate-limited classifier from
     # misrouting a greeting into a tool-spin.
     if not plan_only and _is_trivial_chat(_user_request(task)):
+        tier1_model = registry.model_for_tier("tier1")
         _emit({"type": "route", "tier": 1, "task_type": "chat", "requires_web": False,
-               "reason": "trivial chat (fast-path)",
-               "routed_model": registry.model_for_tier("tier1")})
-        agent = team.agents.get("general")
-        _emit({"type": "assign", "agent": "general",
-               "label": getattr(agent, "label", "general"),
-               "model": registry.model_for_tier(getattr(agent, "tier", "tier2")),
-               "reason": "trivial chat (fast-path)"})
-        result = _do_subtask("general", task, budget, emit, approve, "", False,
-                             stream, task_type="chat")
+               "reason": "trivial chat (fast-path)", "routed_model": tier1_model})
+        _emit({"type": "assign", "agent": "general", "label": "General Assistant",
+               "model": tier1_model, "reason": "trivial chat (fast-path)"})
+        # Direct tier-1 call — no agent machinery, no tools, single cheap call.
+        chain = registry.model_chain("tier1", task_type="chat")
+        try:
+            resp, _ = complete_chain(
+                chain,
+                [{"role": "system", "content": "You are a friendly, concise assistant. Reply in 1-3 sentences."},
+                 {"role": "user", "content": _user_request(task)}],
+                max_tokens=256, budget=budget, temperature=0.7,
+            )
+            result = resp.choices[0].message.content or "Hello! How can I help you?"
+        except Exception:
+            result = "Hello! How can I help you?"
         _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
         return result
 

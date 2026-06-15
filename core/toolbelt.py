@@ -111,12 +111,17 @@ register_fn(
 )
 import os as _os
 _docker_configured = bool(_os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip())
-register_fn(
-    "run_bash", lambda command: run_bash(command),
-    _obj({"command": {"type": "string"}}, ["command"]),
-    "Run a shell command in the sandboxed Docker workspace (tests, builds, executing code).",
-    # Sandboxed (Docker) → RISK_WRITE so auto/trusted modes skip the human-click loop.
-    # Unsandboxed → RISK_CRITICAL + requires_human (the safe default when no image is set).
-    RISK_WRITE if _docker_configured else RISK_CRITICAL,
-    requires_human=not _docker_configured,
-)
+if _docker_configured:
+    # Docker sandbox is configured: run_bash is sandboxed (RISK_WRITE, no human gate).
+    # Agents can use it freely in auto/trusted mode; the Docker container provides containment.
+    register_fn(
+        "run_bash", lambda command: run_bash(command),
+        _obj({"command": {"type": "string"}}, ["command"]),
+        "Run a shell command in the sandboxed Docker workspace (tests, builds, executing code).",
+        RISK_WRITE,
+        requires_human=False,
+    )
+# When Docker is NOT configured, run_bash is not registered at all. Agents won't see
+# it as an available tool, so they verify by code inspection and finish cleanly instead
+# of spinning on a tool that can only return an error. run_bash auto-enables once
+# AGENT_BASH_DOCKER_IMAGE is set (restart the server).

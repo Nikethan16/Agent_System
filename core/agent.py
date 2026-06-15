@@ -76,6 +76,7 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
     rounds = 0
     nudged = False
     seen_calls = {}        # tool-call signature -> count (stuck/loop detection, G4)
+    denied_sigs = {}       # tool-call signature -> denial reason (denial-spin guard)
     loop_break = False
     while True:
         # Loop guard: after too many tool rounds (or a detected stuck loop), drop tools
@@ -148,7 +149,17 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
             if seen_calls[sig] >= 3:
                 loop_break = True
 
-            result = _run_one_tool(name, args, label, approve, emit)
+            # G5: denial-spin guard — if this exact call was already denied, short-circuit
+            # immediately instead of re-running the gate (the outcome won't change).
+            if sig in denied_sigs:
+                result = denied_sigs[sig]
+                loop_break = True
+            else:
+                result = _run_one_tool(name, args, label, approve, emit)
+                if str(result).startswith("DENIED"):
+                    denied_sigs[sig] = str(result)
+                    loop_break = True
+
             messages.append({
                 "role": "tool", "tool_call_id": tc.id, "content": str(result),
             })
