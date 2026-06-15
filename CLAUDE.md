@@ -224,5 +224,6 @@ Docs are split by cadence so there's only **one** per-session write:
 
 **At session end ONLY** (when the owner says they're wrapping up / moving to a new chat):
 (1) commit everything (the commit message IS the changelog), then (2) update `HANDOFF.md`
-(current state + a 1-2 line "last session" + next tasks). **Do NOT update docs mid-session
-or per query.** `STATUS.md` is a frozen historical snapshot — do not add to it.
+(current state + a 1-2 line "last session" + next tasks), and (3) if new features shipped,
+add them to `docs/CAPABILITIES.md` (the comprehensive "what it can do" reference).
+**Do NOT update docs mid-session or per query.** `STATUS.md` is a frozen historical snapshot — do not add to it.

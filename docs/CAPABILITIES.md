@@ -1,16 +1,17 @@
 # AGENT // CORE — What This Application Can Do
 
-_Last updated: 2026-06-14. A plain-language catalogue of everything the app is capable of
+_Last updated: 2026-06-15. A plain-language catalogue of everything the app is capable of
 today, what's working right now vs. what needs a key, and its current limits. If you're
 picking this project up fresh (or it's a new chat with no memory), read this for "what it
 does", then `HANDOFF.md` for "current state + what's next", then `docs/PROJECT_OVERVIEW.md`
 for "how it works under the hood"._
 
-> **Now live (2026-06-14):** deployed 24/7 on an Oracle Always-Free VM, reached privately via
-> Tailscale, with push-to-main CI/CD. The UI was rebuilt as a **Claude.ai clone** with an
-> **email+password login**, an account menu, per-response **run summaries**
-> (time/tokens/cost/tools/files edited), a **5-tab Settings**, and a ⌘K command palette.
-> Telegram phone control is live. See `docs/SETUP_GUIDE.md` (hosting) and `docs/BACKLOG.md` (what's left).
+> **Now live (2026-06-15):** deployed 24/7 on an Oracle Always-Free VM, reached privately via
+> Tailscale, with push-to-main CI/CD. The UI is a **Claude.ai clone** with **email+password
+> login**, per-response **run summaries** (time/tokens/cost/tools/files), a **5-tab Settings**,
+> and a ⌘K command palette. Telegram phone control is live. Repo-engineer mode, Docker sandbox,
+> Langfuse tracing, and NumPy ANN memory index shipped 2026-06-15.
+> See `docs/SETUP_GUIDE.md` (hosting) and `docs/BACKLOG.md` (what's left).
 
 ---
 
@@ -111,6 +112,31 @@ The workspace is snapshotted **before every turn**. You can rewind to an earlier
 Add an **agent** (a YAML block), a **tool** (register it), or a **skill** (drop in a
 `SKILL.md` folder) — no core code changes. Connect external tools via **MCP** servers.
 
+### 16. Work on a GitHub repo end-to-end
+A **repo-engineer** agent can clone a repo, create a branch, read/edit/run code in it,
+commit, push, and open a pull request — all from a single chat prompt. Uses a `repo`
+playbook (clone → plan → branch → implement → verify → push → PR). Push and PR require your
+explicit approval. Repo content is treated as untrusted data (prompt-injection guard).
+Needs `GITHUB_TOKEN` in `.env`.
+
+### 17. Run shell commands in a hardened Docker sandbox
+When `AGENT_BASH_DOCKER_IMAGE` is set, every `run_bash` call runs inside an **ephemeral
+container** (cap-drop ALL, no-new-privileges, read-only filesystem + tmpfs, PID/memory/CPU
+limits, killed on timeout) — no access to the host system. Without the image set, bash is
+blocked entirely (fails closed). Tunable via `AGENT_BASH_DOCKER_TIMEOUT/MEMORY/CPUS/NETWORK/PIDS`.
+
+### 18. Distributed tracing (Langfuse span tree)
+Every run produces a **span tree**: run → subagent → LLM generation, each node carrying
+model name, prompt + completion tokens, cost, and latency. Always-on as local JSONL files
+in `data/traces/`. Optionally forwarded to **Langfuse** when `LANGFUSE_*` keys are set.
+`core/` stays offline — it holds only a callback hook + a ContextVar; no provider import in core.
+
+### 19. Fast semantic memory recall (NumPy ANN index)
+Episodic memory and RAG retrieval now use a lazy in-memory **unit-normalized NumPy matrix**
+for vectorized cosine search over the full corpus — no `_MAX_SCAN` ceiling. Invalidated
+automatically on every memory write. Falls back to the Python cosine loop, then to lexical
+search if NumPy is absent. Tunable via `MEMORY_VECTOR_BACKEND` (auto | numpy | none).
+
 ---
 
 ## What's working *right now* on this machine
@@ -122,9 +148,11 @@ runs at **$0**:
 |---|---|
 | Chat, coding, documents, multi-agent, QA, security, memory, checkpoints, projects, jobs, Model Lab | ✅ Working |
 | **Web search** (Tavily key set) | ✅ Working |
-| **Semantic (meaning-based) memory** (Gemini embeddings) | ✅ Working |
+| **Semantic (meaning-based) memory** (Gemini embeddings + NumPy ANN index) | ✅ Working |
+| **Repo-engineer** (clone/branch/edit/commit/push/PR) | ✅ Code done — needs `GITHUB_TOKEN` on server |
+| **Docker sandbox** for shell commands | ✅ Code done — needs `AGENT_BASH_DOCKER_IMAGE` set on server |
+| **Langfuse cloud tracing** | ✅ Code done — local JSONL always-on; needs `LANGFUSE_*` keys for cloud |
 | Image generation | ⏸ Off — needs an image model + key (code is ready) |
-| Cloud tracing (Langfuse) | ⏸ Off — local trace files work; needs Langfuse keys |
 
 ## How to run it
 ```powershell
