@@ -57,9 +57,14 @@ def _fmt(rc: int, stdout: str, stderr: str) -> str:
     return "\n".join(lines)
 
 
-def _strip_token(s: str, url: str, clean_url: str) -> str:
-    """Remove the authenticated URL from output so the token is never logged."""
-    return s.replace(url, clean_url) if url != clean_url else s
+def _strip_token(s: str, url: str, clean_url: str, token: str = "") -> str:
+    """Remove the authenticated URL and bare token from output so credentials
+    are never logged, even when git echoes them in a different form."""
+    if url != clean_url:
+        s = s.replace(url, clean_url)
+    if token:
+        s = s.replace(token, "***")
+    return s
 
 
 # ---- public tool functions -------------------------------------------------
@@ -80,13 +85,14 @@ def git_clone(url: str, directory: str = "") -> str:
 
     args = ["clone", clone_url]
     if directory:
-        safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", directory)[:100]
+        # Strip . from allowed set so ".." can never appear in the sanitized name.
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", directory)[:100]
         args.append(safe_name)
 
     rc, stdout, stderr = _git(args, cwd=ws)
-    # Scrub the authenticated URL from any output before returning
-    stdout = _strip_token(stdout, clone_url, url)
-    stderr = _strip_token(stderr, clone_url, url)
+    # Scrub the authenticated URL and bare token from any output before returning.
+    stdout = _strip_token(stdout, clone_url, url, token=token)
+    stderr = _strip_token(stderr, clone_url, url, token=token)
     return _fmt(rc, stdout, stderr)
 
 
