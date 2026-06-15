@@ -69,6 +69,11 @@ routing:
   # timeouts in live runs), so it is DEMOTED to a deeper fallback in every chain
   # rather than leading. The faster, reliable NIM models lead each chain. Re-promote
   # it (move to front + drop its catalog cost) if/when NIM serves it dependably.
+  # chat: trivial greetings/short replies lead with GEMINI flash-lite — it's fast and
+  # NOT subject to the NIM free-tier 40-RPM contention that made "hi" take ~139s.
+  chat:      ["gemini/gemini-2.5-flash-lite",
+              "nvidia_nim/deepseek-ai/deepseek-v4-flash",
+              "nvidia_nim/z-ai/glm-5.1"]
   reasoning: ["nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
               "nvidia_nim/minimaxai/minimax-m3",
               "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
