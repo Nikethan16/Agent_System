@@ -50,6 +50,11 @@ def index_text(text: str, source: str, scope: str) -> int:
                          embedding=json.dumps(vec) if vec else ""))
             n += 1
         s.commit()
+    try:
+        from . import vectorstore
+        vectorstore.on_write()
+    except Exception:
+        pass
     return n
 
 
@@ -66,16 +71,32 @@ def ensure_indexed(project_id: str) -> None:
 
 
 def retrieve(query: str, scope: str, k: int = 5) -> list:
-    """Top-k relevant chunks for a query within a scope (embeddings, else lexical)."""
+    """Top-k relevant chunks for a query within a scope (embeddings, else lexical).
+
+    Uses the NumPy vector index (full-corpus, no scan ceiling) when available.
+    Falls back to the Python cosine loop, then to lexical if no embeddings exist."""
     if not scope:
         return []
-    with DBSession(engine) as s:
-        rows = s.exec(select(Memory).where(Memory.kind == "doc_chunk", Memory.scope == scope)).all()
-    if not rows:
-        return []
+
     if _embed_model():
         qv = _vec(query)
         if qv:
+            # Fast path: NumPy vectorstore (full corpus, no ceiling)
+            try:
+                from . import vectorstore
+                hits = vectorstore.search(qv, k, kind="doc_chunk", scope=scope)
+                if hits:
+                    return [t for _, t in hits]
+            except Exception:
+                pass
+
+            # Legacy Python loop (loads all chunks for this scope)
+            with DBSession(engine) as s:
+                rows = s.exec(
+                    select(Memory).where(Memory.kind == "doc_chunk", Memory.scope == scope)
+                ).all()
+            if not rows:
+                return []
             scored = []
             for m in rows:
                 if not m.embedding:
@@ -87,6 +108,14 @@ def retrieve(query: str, scope: str, k: int = 5) -> list:
             scored.sort(key=lambda x: -x[0])
             if scored:
                 return [t for _, t in scored[:k]]
+
+    # Lexical fallback
+    with DBSession(engine) as s:
+        rows = s.exec(
+            select(Memory).where(Memory.kind == "doc_chunk", Memory.scope == scope)
+        ).all()
+    if not rows:
+        return []
     q = set(_tokens(query))
     if not q:
         return []

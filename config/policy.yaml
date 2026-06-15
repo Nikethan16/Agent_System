@@ -22,11 +22,13 @@ require_human:
   - "drop\\s+(table|database|schema)"     # DB destruction
   - "delete\\s+from\\s+"                   # bulk DB delete
   - "truncate\\s+table"
+  - "git\\s+push\\b"                        # any push to a remote (force already covered below)
   - "git\\s+push\\s+.*--force"
   - "rm\\s+-rf\\b"                          # any recursive force delete
   - "(kubectl|helm)\\s+delete"
   - "terraform\\s+(apply|destroy)"
   - "(deploy|publish)\\b"                   # shipping to the outside world
+  - "create.{0,20}pull.?request"            # opening a PR via the API
 
 # Tool risk levels (see core/toolbelt.py) also drive escalation:
 #   critical tools always escalate to the manager agent;

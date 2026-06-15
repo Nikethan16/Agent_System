@@ -144,6 +144,42 @@ class _SubBudget(Budget):
 # invariant even for tool-internal calls. None when no run is active.
 _run_budget = contextvars.ContextVar("run_budget", default=None)
 
+# Opaque span context — set by server/trace.py at run start; read by the LLM observer.
+# Core holds only the ContextVar; the actual value (e.g. a session_id string) is set
+# by server/ so core stays offline. Worker threads re-bind via use_span_ctx.
+_span_ctx: contextvars.ContextVar = contextvars.ContextVar("span_ctx", default=None)
+
+# LLM call observer — registered by server/trace.py at startup (default no-op).
+# Invoked after each successful complete() with generation metadata so tracing
+# can create Langfuse generation spans. Never raises; wraps in try/except below.
+_llm_observer = None
+
+
+def register_llm_observer(fn) -> None:
+    """Register a callback invoked after each successful model call.
+    Signature: fn(model, cost, prompt_tokens, completion_tokens, latency_ms)."""
+    global _llm_observer
+    _llm_observer = fn
+
+
+class use_span_ctx:
+    """Re-bind span context in worker threads (mirrors use_budget / using_workspace).
+    ThreadPoolExecutor workers don't inherit ContextVars from the submitting thread —
+    orchestrator._run_delegation uses this alongside use_budget and using_workspace."""
+
+    def __init__(self, ctx):
+        self._ctx = ctx
+        self._token = None
+
+    def __enter__(self):
+        self._token = _span_ctx.set(self._ctx)
+        return self._ctx
+
+    def __exit__(self, *exc):
+        if self._token is not None:
+            _span_ctx.reset(self._token)
+        return False
+
 
 def current_budget():
     """The Budget bound to the active run (or None outside a run). Tools take a .child()
@@ -185,9 +221,7 @@ def _cost_of(resp) -> float:
 
 
 def _tokens_of(resp) -> int:
-    """Total tokens (prompt + completion) from a model response, 0 if unavailable.
-    Populated by virtually every provider — and unlike cost it's meaningful on the
-    free tier (where cost is $0), so it's the useful 'how much work' signal."""
+    """Total tokens (prompt + completion) from a model response, 0 if unavailable."""
     try:
         u = getattr(resp, "usage", None)
         if u is None:
@@ -195,6 +229,28 @@ def _tokens_of(resp) -> int:
         if isinstance(u, dict):
             return int(u.get("total_tokens") or 0)
         return int(getattr(u, "total_tokens", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _prompt_tokens(resp) -> int:
+    try:
+        u = getattr(resp, "usage", None)
+        if u is None:
+            return 0
+        return int((u.get("prompt_tokens") if isinstance(u, dict)
+                    else getattr(u, "prompt_tokens", 0)) or 0)
+    except Exception:
+        return 0
+
+
+def _completion_tokens(resp) -> int:
+    try:
+        u = getattr(resp, "usage", None)
+        if u is None:
+            return 0
+        return int((u.get("completion_tokens") if isinstance(u, dict)
+                    else getattr(u, "completion_tokens", 0)) or 0)
     except Exception:
         return 0
 
@@ -254,11 +310,19 @@ def complete(model, messages, tools=None, max_tokens=4096,
         if not getattr(resp, "choices", None):
             raise EmptyResponse(f"{model} returned no choices")
         cost = _cost_of(resp)
-        metrics.record(model, time.time() - _t0, ok=True, cost=cost)
+        _elapsed = time.time() - _t0
+        metrics.record(model, _elapsed, ok=True, cost=cost)
         if budget:
             budget.add_cost(cost)
             budget.add_tokens(_tokens_of(resp))
             budget.tick()
+        if _llm_observer:
+            try:
+                _llm_observer(model, cost,
+                              _prompt_tokens(resp), _completion_tokens(resp),
+                              int(_elapsed * 1000))
+            except Exception:
+                pass
         return resp, cost
 
     if last_exc:

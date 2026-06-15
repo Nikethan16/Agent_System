@@ -9,7 +9,7 @@ Responsibilities for one user turn:
 """
 import os
 
-from core.llm import Budget
+from core.llm import Budget, _span_ctx, use_span_ctx
 from core.tools import using_workspace
 from core.orchestrator import handle_task
 
@@ -211,10 +211,17 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
     task = text if not context else f"{context}\n\nNEW REQUEST: {text}"
 
     workspace = db.session_workspace(session_id)
-    with using_workspace(workspace):
-        final = handle_task(task, budget=budget, emit=_emit, approve=approve,
-                            plan_only=plan_first, subtasks=subtasks, review=review,
-                            parallel=parallel, stream=stream, acceptance=acceptance)
+    # Bind the session_id as the span context so the LLM observer (server/trace.py)
+    # can attribute each model call to the right Langfuse trace without core knowing
+    # anything about Langfuse. Worker threads re-bind via use_span_ctx in orchestrator.
+    _span_token = _span_ctx.set(session_id)
+    try:
+        with using_workspace(workspace):
+            final = handle_task(task, budget=budget, emit=_emit, approve=approve,
+                                plan_only=plan_first, subtasks=subtasks, review=review,
+                                parallel=parallel, stream=stream, acceptance=acceptance)
+    finally:
+        _span_ctx.reset(_span_token)
 
     db.add_message(session_id, "assistant", final or "", cost=round(budget.spent_usd, 6))
     db.touch_session(session_id)

@@ -98,6 +98,38 @@ playbooks:
       agent: doc
       goal: "Report the findings with the key numbers and how they were derived."
 
+  repo:
+    - phase: clone
+      agent: repo-engineer
+      goal: "Clone the target repository into the workspace with git_clone. Explore its structure (list_files, read_file on README, entrypoints, test config) and summarize what the repo does and how it is organized."
+      gate: "repo is cloned and structure is understood"
+    - phase: plan
+      agent: architect
+      goal: "Given the codebase understanding and the requested change, produce a concrete edit plan: which files to change, what to change, and the commands to run to verify (test runner, lint). Do NOT write code yet."
+      gate: "an edit plan with file-level specifics exists"
+    - phase: branch
+      agent: repo-engineer
+      goal: "Create a feature branch using git_checkout_branch with a short, descriptive name."
+      gate: "feature branch is checked out"
+    - phase: implement
+      agent: coder
+      goal: "Apply the edits from the plan: read each file before editing, use edit_file for precise changes, write_file only for new files. Work one logical change at a time."
+      gate: "all planned edits are applied"
+    - phase: verify
+      agent: repo-engineer
+      goal: "Run the test suite and any linting with run_bash. Fix all failures. Re-run until everything passes."
+      gate: "all tests pass"
+    - phase: push
+      agent: repo-engineer
+      goal: "Commit the changes with a descriptive message (git_commit) and push the branch (git_push)."
+      gate: "branch is pushed to remote"
+    - phase: pr
+      agent: repo-engineer
+      goal: "Open a pull request with create_pull_request: write a clear title (what + why), a description with what was changed and how it was tested, and reference any related issue."
+      gate: "PR is created"
+    - phase: finalize
+      goal: "Report the PR URL, what files changed, and the test results that confirmed the changes work."
+
   # ---- BACKUP PATH: any task type not covered above falls back to this -------
   default:
     - phase: understand

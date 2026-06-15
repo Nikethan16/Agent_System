@@ -60,6 +60,11 @@ def _resume_jobs():
     scheduler.start_scheduler()  # start firing due scheduled tasks
     from . import telegram
     telegram.start_telegram()    # mobile control via Telegram (no-op unless a token is set)
+    # Wire the LLM observer so Langfuse gets generation spans (model/cost/tokens/latency).
+    # core stays offline — it only holds a callback ref; no Langfuse import in core.
+    from . import trace as _trace
+    from core import llm as _llm
+    _llm.register_llm_observer(_trace._llm_generation_callback)
 
 
 @app.on_event("shutdown")

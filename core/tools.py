@@ -170,31 +170,63 @@ def list_files(directory: str = ".") -> str:
 
 
 def run_bash(command: str) -> str:
-    # Kill-switch for deployed environments: the cwd "sandbox" is NOT real
-    # containment (absolute paths still work), so allow operators to disable shell
-    # execution entirely. Set AGENT_DISABLE_BASH=1 in any networked deployment and
-    # run shell only inside a real container/VM.
     if os.environ.get("AGENT_DISABLE_BASH", "").strip() in ("1", "true", "yes"):
         return ("ERROR: shell execution is disabled (AGENT_DISABLE_BASH is set). "
                 "Run this app's bash tool only inside a container/VM sandbox.")
     ws = current_workspace()
     image = os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip()
+    if not image:
+        return ("ERROR: AGENT_BASH_DOCKER_IMAGE is not set. "
+                "Set it to a Docker image (e.g. python:3.11-slim) to enable safe shell execution. "
+                "The host-shell fallback is disabled — it offers no real containment.")
+
+    timeout = int(os.environ.get("AGENT_BASH_DOCKER_TIMEOUT", "120"))
+    memory  = os.environ.get("AGENT_BASH_DOCKER_MEMORY", "512m")
+    cpus    = os.environ.get("AGENT_BASH_DOCKER_CPUS", "1.0")
+    network = os.environ.get("AGENT_BASH_DOCKER_NETWORK", "none")
+    pids    = os.environ.get("AGENT_BASH_DOCKER_PIDS", "64")
+
+    import uuid as _uuid_mod
+    cid_file = os.path.join(
+        os.environ.get("TMPDIR", "/tmp"),
+        f"agent_cid_{_uuid_mod.uuid4().hex}"
+    )
+    argv = [
+        "docker", "run", "--rm",
+        "--cidfile", cid_file,
+        "--network", network,
+        "--memory", memory,
+        "--cpus", cpus,
+        "--pids-limit", pids,
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        "--read-only",
+        "--tmpfs", "/tmp:size=256m",
+        "-v", f"{ws}:/ws:rw",
+        "-w", "/ws",
+        image, "bash", "-lc", command,
+    ]
     try:
-        if image:
-            # Real sandbox (recommended for any networked host): run the command inside
-            # an ephemeral, network-less container with ONLY the workspace mounted, so it
-            # can't touch the host. Enable by setting AGENT_BASH_DOCKER_IMAGE (e.g. python:3.11-slim).
-            argv = ["docker", "run", "--rm", "--network", "none",
-                    "-v", f"{ws}:/ws", "-w", "/ws", image, "bash", "-lc", command]
-            out = subprocess.run(argv, capture_output=True, text=True, timeout=60)
-        else:
-            out = subprocess.run(command, shell=True, cwd=ws,
-                                 capture_output=True, text=True, timeout=30)
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
         return f"exit={out.returncode}\nSTDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}"
     except subprocess.TimeoutExpired:
-        return "ERROR running command: timed out"
+        try:
+            with open(cid_file) as _f:
+                cid = _f.read().strip()
+            if cid:
+                subprocess.run(["docker", "kill", cid], capture_output=True, timeout=10)
+        except Exception:
+            pass
+        return f"ERROR running command: timed out after {timeout}s"
+    except FileNotFoundError:
+        return "ERROR: docker not found — install Docker and ensure it is in PATH"
     except Exception as e:
         return f"ERROR running command: {e}"
+    finally:
+        try:
+            os.unlink(cid_file)
+        except Exception:
+            pass
 
 
 # OpenAI-format tool schemas (LiteLLM uses this format for every provider).

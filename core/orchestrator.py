@@ -23,7 +23,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 from .llm import (complete, complete_chain, Budget, BudgetExceeded,
-                  set_run_budget, use_budget)
+                  set_run_budget, use_budget, _span_ctx, use_span_ctx)
 from .registry import registry
 from .router import classify
 from . import agents as team
@@ -300,18 +300,19 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     rounds, delegations = 0, 0
 
     # delegate_parallel runs each step in a ThreadPoolExecutor worker, and worker threads
-    # do NOT inherit this thread's contextvars. Capture the run's workspace here so each
-    # parallel delegation re-binds it (and the run budget) — otherwise parallel agents
-    # would silently read/write the DEFAULT ./workspace instead of the session workspace.
+    # do NOT inherit this thread's contextvars. Capture the run's workspace, span context,
+    # and budget here so each parallel delegation re-binds all three — otherwise parallel
+    # agents would silently use the DEFAULT ./workspace and lose the trace span.
     ws_root = current_workspace()
+    span_root = _span_ctx.get()
 
     def _run_delegation(item, step):
         """Run ONE delegated step (used by both delegate and delegate_parallel).
         Returns (agent_id, result). Safe to call from worker threads — Budget and the
         Blackboard are thread-safe, team.run gives each agent its own sub-budget, and the
-        workspace + run budget are re-bound here so worker threads land in the right
-        sandbox and charge the right budget."""
-        with using_workspace(ws_root), use_budget(budget):
+        workspace, run budget, and span context are re-bound here so worker threads land
+        in the right sandbox, charge the right budget, and attribute costs to the right trace."""
+        with using_workspace(ws_root), use_budget(budget), use_span_ctx(span_root):
             agent_id = (item.get("agent") or "general").strip()
             if agent_id not in team.agents.agents:
                 agent_id = team._fallback_select(item.get("instruction", ""))

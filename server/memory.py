@@ -95,47 +95,97 @@ def remember(text: str, session_id: str = "", kind: str = "turn", scope: str = "
         s.add(Memory(session_id=session_id, kind=kind, text=text[:2000],
                      scope=scope, embedding=json.dumps(vec) if vec else ""))
         s.commit()
+    try:
+        from . import vectorstore
+        vectorstore.on_write()
+    except Exception:
+        pass
 
 
 def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str = None,
            scope_hint: str = None) -> list:
     """Top-k relevant past notes (episodic). Uses embeddings if configured, else lexical.
     `scope_hint` (e.g. 'project:<id>') gently boosts notes from the SAME project so a
-    project's own history is preferred over unrelated global notes."""
-    with DBSession(engine) as s:
-        rows = s.exec(
-            select(Memory).order_by(Memory.created_at.desc()).limit(_MAX_SCAN)
-        ).all()
-    rows = [m for m in rows
-            if m.kind == "turn" and not (exclude_session and m.session_id == exclude_session)]
-    if not rows:
-        return []
+    project's own history is preferred over unrelated global notes.
 
-    def _boost(m, sc):   # prefer same-project notes
-        return sc + (0.08 if scope_hint and m.scope == scope_hint else 0.0)
+    When an embedding model is configured, tries the NumPy vector index first (fast,
+    full-corpus search — no _MAX_SCAN ceiling). Falls back to the Python cosine loop,
+    then to lexical if nothing matches."""
+    def _boost(text_or_scope, sc):
+        return sc + (0.08 if scope_hint and text_or_scope == scope_hint else 0.0)
 
     if _embed_model():
         qv = _vec(query)
         if qv:
-            scored = []
-            for m in rows:
-                if not m.embedding:
-                    continue
-                try:
-                    sc = _cos(qv, json.loads(m.embedding))
-                except Exception:
-                    continue
-                if sc >= _SEMANTIC_THRESHOLD:        # semantic similarity threshold
-                    scored.append((_boost(m, sc), m.text))
-            if scored:
-                scored.sort(key=lambda x: -x[0])
-                return [t for _, t in scored[:k]]
-            # fall through to lexical if nothing embedded matched
+            # Fast path: NumPy vectorstore (full-corpus, no _MAX_SCAN ceiling)
+            try:
+                from . import vectorstore
+                hits = vectorstore.search(qv, k * 2, kind="turn",
+                                          threshold=_SEMANTIC_THRESHOLD)
+                if hits:
+                    # Re-apply scope boost. We need the scope for each hit;
+                    # look it up in a single batch query by text (good enough at this scale).
+                    if scope_hint:
+                        with DBSession(engine) as s:
+                            scope_map = {
+                                m.text: m.scope
+                                for m in s.exec(
+                                    select(Memory).where(Memory.kind == "turn")
+                                ).all()
+                                if m.text
+                            }
+                    else:
+                        scope_map = {}
+                    boosted = [(_boost(scope_map.get(t, ""), sc), t)
+                               for sc, t in hits]
+                    boosted.sort(key=lambda x: -x[0])
+                    return [t for _, t in boosted[:k]]
+            except Exception:
+                pass  # fall through to legacy Python loop
 
+            # Legacy Python loop (bounded by _MAX_SCAN for backward compat)
+            with DBSession(engine) as s:
+                rows = s.exec(
+                    select(Memory).order_by(Memory.created_at.desc()).limit(_MAX_SCAN)
+                ).all()
+            rows = [m for m in rows
+                    if m.kind == "turn" and not (exclude_session and m.session_id == exclude_session)]
+            if rows:
+                scored = []
+                for m in rows:
+                    if not m.embedding:
+                        continue
+                    try:
+                        sc = _cos(qv, json.loads(m.embedding))
+                    except Exception:
+                        continue
+                    if sc >= _SEMANTIC_THRESHOLD:
+                        scored.append((_boost(m.scope, sc), m.text))
+                if scored:
+                    scored.sort(key=lambda x: -x[0])
+                    return [t for _, t in scored[:k]]
+                # fall through to lexical
+            else:
+                rows = []
+        else:
+            rows = None
+    else:
+        rows = None
+
+    # Lexical fallback (offline, always available)
+    if rows is None:
+        with DBSession(engine) as s:
+            rows = s.exec(
+                select(Memory).order_by(Memory.created_at.desc()).limit(_MAX_SCAN)
+            ).all()
+        rows = [m for m in rows
+                if m.kind == "turn" and not (exclude_session and m.session_id == exclude_session)]
+    if not rows:
+        return []
     q = set(_tokens(query))
     if not q:
         return []
-    scored = [(_boost(m, s), m.text) for m in rows
+    scored = [(_boost(m.scope, s), m.text) for m in rows
               for s in [_lex(q, set(_tokens(m.text)))] if s >= min_score]
     scored.sort(key=lambda x: -x[0])
     return [t for _, t in scored[:k]]
@@ -156,6 +206,12 @@ def prune(max_turns: int = None) -> int:
             deleted += 1
         if deleted:
             s.commit()
+    if deleted:
+        try:
+            from . import vectorstore
+            vectorstore.on_write()
+        except Exception:
+            pass
     return deleted
 
 
@@ -340,7 +396,12 @@ def forget_fact(fact_id: str) -> bool:
             return False
         s.delete(row)
         s.commit()
-        return True
+    try:
+        from . import vectorstore
+        vectorstore.on_write()
+    except Exception:
+        pass
+    return True
 
 
 _FACT_SYS = (
