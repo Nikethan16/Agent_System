@@ -1,43 +1,48 @@
 # BACKLOG — what's left to do
 
-_Last updated: 2026-06-14. The prioritized list of remaining work. Nothing here is blocking —
+_Last updated: 2026-06-15. The prioritized list of remaining work. Nothing here is blocking —
 the app is complete and deployed live. Items are roughly ordered by value. See `HANDOFF.md`
 for current state and `STATUS.md` for what's already done._
 
 ---
 
-## ⭐ #1 — "Work on a repo" mode (Claude-Code-style)  — NOT BUILT
-The biggest missing capability. Goal: point the agent at a real codebase → it **clones +
-understands it first** → you ask for a refactor/fix/optimization → it edits the actual repo and
-can push the change back as a PR.
+## ✅ Recently shipped (2026-06-15) — repo mode, Docker sandbox, tracing, ANN index
+These four were built and pushed (branch `claude/serene-lamport-r1ix0k`, commit `513eb24`).
+Code is done; the items below note the **operational steps** still needed to activate them live.
 
-**What already exists:** the coder agent does explore → read → `edit_file` (surgical) → run →
-verify, sandboxed to a per-chat workspace. The *editing engine* is there.
+- **"Work on a repo" mode** — `tools/github.py` (git_clone/status/diff/log/checkout/commit/push +
+  create_pull_request via GitHub REST), a `repo-engineer` agent (`config/agents.yaml`), and a
+  `repo` playbook (clone→plan→branch→implement→verify→push→pr). PR/push are `requires_human`.
+- **Docker shell sandbox (hardened)** — `core/tools.py`: host-shell fallback removed (fails closed),
+  hardened `docker run` (cap-drop, no-new-privileges, read-only, tmpfs, pids/mem/cpu limits, timeout
+  cleanup). `run_bash` drops to RISK_WRITE when `AGENT_BASH_DOCKER_IMAGE` is set (no human click).
+- **Langfuse distributed tracing** — `server/trace.py` rewritten into a span tree (run → subagent →
+  LLM generation with model/token-split/cost/latency). Offline JSONL still always-on. core stays
+  offline via a callback hook + ContextVar in `core/llm.py`.
+- **ANN vector index** — `server/vectorstore.py` (NumPy matrix, full-corpus, no `_MAX_SCAN` ceiling);
+  `memory.recall` + `rag.retrieve` use it with graceful fallback to the Python loop / lexical.
 
-**What's missing (the glue):**
-1. **Load a repo** — UI action: paste a GitHub URL (or local path) → `git clone` into the
-   session workspace. Needs a scoped GitHub token.
-2. **"Understand first" pass** — a dedicated repo-mapping step (structure, key files,
-   conventions → a summary the agents read before changing anything); persist as project
-   knowledge / RAG.
-3. **Push back out** — branch / commit / open a PR (gh or GitHub API), gated by approval.
-4. **Safety prerequisite** — run shell inside the **Docker sandbox** (`AGENT_BASH_DOCKER_IMAGE`)
-   so clone/build/run can't touch the host. Currently `AGENT_DISABLE_BASH=1` on the server.
-
-Pairs naturally with turning on the Docker shell sandbox (below).
+**To activate live on the server (operational, not code):**
+1. Build/pull an **ARM64** sandbox image; set `AGENT_BASH_DOCKER_IMAGE` and **unset
+   `AGENT_DISABLE_BASH`** in the server `.env`. (docker-group setup per `docs/SETUP_GUIDE.md`.)
+2. Add `GITHUB_TOKEN` to the server `.env` for clone/push/PR.
+3. (Optional) add `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (+ `LANGFUSE_HOST`) and
+   `pip install langfuse` to send the span tree to the cloud.
+4. Repo mode needs network in the sandbox for clone/installs → set `AGENT_BASH_DOCKER_NETWORK=bridge`.
 
 ---
 
 ## Features not built
 - **Image generation** — code is ready; needs an `image_model:` in `config/models.yaml` + a
   matching provider key.
-- **Real ANN vector index** for memory/RAG — today embeddings are scored per-row (fine until
-  thousands of memories); a proper index speeds recall at scale.
-- **More connectors** (GitHub / Slack / DB via MCP) — the adapter (`tools/mcp.py`,
-  `config/mcp.yaml`) exists; real servers aren't wired.
-- **Cloud tracing (Langfuse)** — local JSONL traces work; cloud needs `LANGFUSE_*` keys + finishing
-  the forward stub in `server/trace.py`.
+- **GitHub via MCP (alternative PR path)** — PR creation currently uses the GitHub REST API
+  directly (self-contained, no MCP server needed). Wiring a GitHub MCP server into
+  `config/mcp.yaml` is an optional alternative if richer GitHub operations are wanted.
+- **More connectors** (Slack / DB via MCP) — the adapter (`tools/mcp.py`, `config/mcp.yaml`)
+  exists; real servers aren't wired.
 - **Browser / computer control** — intentionally skipped.
+- **sqlite-vec / FAISS true ANN** — the NumPy index is fast to millions of rows; a real
+  sub-linear ANN index is only worth it at much larger scale.
 
 ## UI / UX polish
 - **File `+/- line counts`** in the run summary (currently shows file names + tool count; line
@@ -45,9 +50,9 @@ Pairs naturally with turning on the Docker shell sandbox (below).
 - **Deep-polish the last two Settings panels** — Health and Schedules (Models/Memory/Fleet done
   2026-06-14).
 - **Mobile pass** on the new Claude UI (desktop verified; phone drawers need a look).
+- A **trace viewer** panel surfacing the new span tree (latency/token/cost per node).
 - Stream the **lead's final answer**; smarter activity-strip defaults.
-- Cleanups: remove the now-unused `web/src/components/RoadmapPanel.tsx`; optional one-click
-  "clear old chats" (the local test chats — direct / boot test / Renamed — are harmless leftovers).
+- Cleanups: remove the now-unused `web/src/components/RoadmapPanel.tsx`.
 
 ## Performance / cost
 - Add more **free NVIDIA keys** (`NVIDIA_NIM_API_KEY_1..N`) to multiply throughput.
@@ -55,17 +60,19 @@ Pairs naturally with turning on the Docker shell sandbox (below).
 - Prompt caching — deferred (low payoff on NVIDIA's free tier; the classifier cache covers repeats).
 
 ## Reliability / quality
-- Broaden tests beyond the 158-check smoke (real integration tests).
-- Apply the **untrusted-content wrapper** to *all* content sources, not just fetched web pages.
+- Broaden tests beyond the 158-check smoke (real integration tests; a repo-mode dry-run test).
+- Apply the **untrusted-content wrapper** to *all* content sources, not just fetched web pages
+  (repo-engineer prompt already treats repo content as untrusted DATA).
 
 ## Security / ops (matters most if ever exposed beyond Tailscale)
-- **Turn on the Docker shell sandbox** (`AGENT_BASH_DOCKER_IMAGE`) — also a prerequisite for repo mode.
 - **API rate-limiting** + **encrypt stored API keys** at rest.
 - **Off-site backups** (`BACKUP_UPLOAD_CMD`) so backups leave the VM.
+- Docker-group membership is root-equivalent — consider rootless Docker for the sandbox.
 
 ---
 
 ## Suggested next sequence
-1. **Docker shell sandbox** on the server (small; unlocks safe shell + repo mode).
-2. **Repo mode** (load → understand → edit → PR) — the marquee capability.
+1. **Activate repo mode + sandbox on the server** (ARM image, `GITHUB_TOKEN`, flip
+   `AGENT_DISABLE_BASH` off) and run an end-to-end repo-mode test.
+2. **Trace viewer** UI panel for the new span tree.
 3. Quick UI wins (file +/- counts, Health/Schedules polish, mobile pass).

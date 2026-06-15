@@ -21,7 +21,25 @@ deleted). For "what it can do" read `docs/CAPABILITIES.md`; for "how it works"
 - Smoke: **158/158** (`.venv\Scripts\python.exe scripts\smoke_test.py`). Local run: `.\run.ps1`
   → http://localhost:8800. Rebuild UI after frontend changes: `npm --prefix web run build`.
 
-## What this session did (2026-06-14) — the UI became a Claude.ai clone + login + deploy
+## What this session did (2026-06-15) — repo mode + Docker sandbox + tracing + ANN index
+On branch `claude/serene-lamport-r1ix0k` (commit `513eb24`, pushed). Smoke 158/158. **Code is
+done; activation needs server `.env` steps — see `docs/BACKLOG.md` "To activate live".**
+1. **"Work on a repo" mode** — new `tools/github.py` (git_clone/status/diff/log/checkout_branch/
+   commit/push + create_pull_request via GitHub REST), a `repo-engineer` agent and a `repo`
+   playbook (clone→plan→branch→implement→verify→push→pr). push/PR are `requires_human`.
+2. **Docker sandbox hardened** — `core/tools.py`: unsafe host-shell fallback **removed** (fails
+   closed when no image set); hardened `docker run` (cap-drop ALL, no-new-privileges, read-only +
+   tmpfs, pids/mem/cpu limits, cidfile cleanup on timeout). `run_bash` → RISK_WRITE (no human
+   click) when `AGENT_BASH_DOCKER_IMAGE` is set. New `AGENT_BASH_DOCKER_*` knobs.
+3. **Langfuse tracing** — `server/trace.py` rewritten into a real span tree (run → subagent →
+   LLM generation with model/token-split/cost/latency). core stays offline via a callback hook +
+   `_span_ctx` ContextVar in `core/llm.py`; `server/app.py` registers the observer at startup.
+4. **ANN vector index** — `server/vectorstore.py` (NumPy matrix, full-corpus, no `_MAX_SCAN`
+   ceiling); `memory.recall` + `rag.retrieve` use it with graceful fallback.
+> Note: `config/policy.yaml` now requires-human for any `git push` and PR creation.
+> Decision deviation to confirm: PR uses GitHub **REST API** (self-contained), not the MCP path.
+
+## What an earlier session did (2026-06-14) — the UI became a Claude.ai clone + login + deploy
 All on branch `feat/claude-ui`, **merged to `main` and deployed live**. Web build clean; smoke 158/158.
 1. **Claude-style UI rebuild** (frontend only, every feature kept wired, no backend changes):
    warm "cloud" theme + **sunburst** mark; a **centered welcome screen** (time greeting +
@@ -57,12 +75,12 @@ All on branch `feat/claude-ui`, **merged to `main` and deployed live**. Web buil
 
 ## What's LEFT
 **See `docs/BACKLOG.md` for the full, prioritized list.** Headlines:
-- **#1 wanted feature: "work on a repo" mode** (Claude-Code-style) — point it at a GitHub
-  repo → it clones + understands it → edits + opens a PR. Engine (coder + edit_file) exists;
-  needs load-repo + understand-pass + git-push glue + the Docker shell sandbox. Not built yet.
+- **Activate the 2026-06-15 features on the server** (operational, not code): build an ARM64
+  sandbox image + set `AGENT_BASH_DOCKER_IMAGE` and unset `AGENT_DISABLE_BASH`; add `GITHUB_TOKEN`;
+  optionally add `LANGFUSE_*` + `pip install langfuse`. Then run an end-to-end repo-mode test.
 - UI polish: file `+/- line counts` in the run summary; deep-polish Health/Schedules panels;
-  mobile pass on the new UI; remove unused `RoadmapPanel.tsx`.
-- Optional/needs a key: image generation, Langfuse cloud tracing, ANN vector index, more connectors.
+  mobile pass on the new UI; a **trace viewer** for the new span tree; remove unused `RoadmapPanel.tsx`.
+- Optional/needs a key: image generation, GitHub-via-MCP (alt PR path), more connectors.
 - Hardening (if exposed beyond Tailscale): API rate-limiting, encrypt stored keys, off-site backups.
 
 ## Context for the next chat (don't re-discover these)
