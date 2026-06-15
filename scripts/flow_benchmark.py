@@ -1,18 +1,20 @@
 #!/usr/bin/env python
 """
-flow_benchmark.py — measure the REAL workflow on the two scenarios that motivated
-the optimization: a greeting ("hi") and a single-file build ("build a calculator app").
+flow_benchmark.py — measure the REAL workflow on two scenarios:
+  1. "greeting" — "hi": should be tier-1, near-instant, no agent/tools.
+  2. "rest_api" — a multi-file FastAPI project with real tests run via the Docker sandbox.
+     This replaces the old "calculator" scenario and specifically exercises:
+       * multi-file writes (api.py + requirements.txt + test_api.py)
+       * run_bash to execute pytest inside the Docker sandbox
+       * the full verify loop (write → run → assert tests pass)
+     It's complex enough that it previously would have gone tier 3 (planner + delegates);
+     with the new router + single-agent loop it should stay tier 2 and finish in a handful
+     of rounds with far fewer tokens than the old 53m / 130k baseline.
 
-Runs each prompt through the actual orchestrator pipeline, captures every emitted
-event, and prints a per-scenario scorecard: routed tier + model, how many agents/
-delegations/tool-calls/fallbacks/denials happened, plus iterations, tokens, wall-clock,
-and whether the run COMPLETED (vs hit the iteration cap). This is how we turn the
-"53m / 130k tokens / cap hit" baseline into concrete after-numbers.
-
-Run on the VM (needs a provider key in .env; the Docker sandbox enables run_bash):
+Run on the VM (needs a provider key in .env; Docker sandbox must be configured):
     python scripts/flow_benchmark.py
-    python scripts/flow_benchmark.py --only calculator      # one scenario
-    python scripts/flow_benchmark.py --max-usd 0.25 --max-iter 24
+    python scripts/flow_benchmark.py --only rest_api      # one scenario
+    python scripts/flow_benchmark.py --max-usd 0.50 --max-iter 24
 """
 import os
 import sys
@@ -38,7 +40,16 @@ from core import toolbelt
 
 SCENARIOS = {
     "greeting": "hi",
-    "calculator": "build a simple calculator web app (single HTML file)",
+    "rest_api": (
+        "Build a small Python REST API using FastAPI with three endpoints: "
+        "GET /health (returns {\"status\": \"ok\"}), "
+        "POST /items with JSON body {\"name\": str} that appends to an in-memory list and returns the added item, "
+        "GET /items that returns the full list. "
+        "Write the server to api.py and a requirements.txt listing fastapi, uvicorn, and httpx. "
+        "Then write test_api.py using pytest and httpx.AsyncClient that hits all three endpoints "
+        "and asserts the correct responses. "
+        "Run pytest and confirm every test passes before finishing."
+    ),
 }
 
 
@@ -115,7 +126,7 @@ def run_scenario(name, prompt, max_usd, max_iter):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", choices=list(SCENARIOS), help="run a single scenario")
-    ap.add_argument("--max-usd", type=float, default=0.25)
+    ap.add_argument("--max-usd", type=float, default=0.50)
     ap.add_argument("--max-iter", type=int, default=24)
     args = ap.parse_args()
 
@@ -123,7 +134,7 @@ def main():
         print("  SKIP: no provider key in .env — this script makes real model calls.")
         sys.exit(2)
 
-    print("\n  Flow benchmark — real pipeline on the optimization's two scenarios")
+    print("\n  Flow benchmark — greeting (tier-1 fast path) + REST API build (full verify loop)")
     print(f"  tier1={registry.model_for_tier('tier1')}  tier2={registry.model_for_tier('tier2')}  "
           f"tier3={registry.model_for_tier('tier3')}")
     print(f"  run_bash available: {'YES (sandbox live)' if 'run_bash' in toolbelt.names() else 'NO (Docker not set)'}")
@@ -137,8 +148,9 @@ def main():
         print(f"  {r['name']:<12}{str(r['tier']):>5}{r['iterations']:>7}"
               f"{r['tokens']:>10,}{r['seconds']:>7.0f}{('Y' if r['completed'] else 'N'):>6}")
     print()
-    print("  Baseline before this work (calculator): tier 3, 20 iters (CAP HIT),")
-    print("  130,575 tokens, 53m 22s, did NOT complete. Compare above.")
+    print("  Baseline before this work (calculator, same complexity class): tier 3, 20 iters (CAP HIT),")
+    print("  130,575 tokens, 53m 22s, did NOT complete.")
+    print("  Target after optimizations: tier 2, ~5-10 iters, <15k tokens, <5 min, COMPLETED.")
 
 
 if __name__ == "__main__":
