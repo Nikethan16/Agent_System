@@ -20,6 +20,7 @@ import yaml
 
 from core import toolbelt
 from core.agents import agents as agent_registry
+from core.boundary import wrap as _wrap_untrusted
 
 _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CONFIG = os.environ.get("MCP_CONFIG", os.path.join(_BASE, "config", "mcp.yaml"))
@@ -104,7 +105,9 @@ class MCPClient:
         for c in res.get("content", []):
             parts.append(c.get("text", "") if c.get("type") == "text" else json.dumps(c))
         text = "\n".join(p for p in parts if p) or json.dumps(res)
-        return ("ERROR: " + text) if res.get("isError") else text
+        if res.get("isError"):
+            return "ERROR: " + text
+        return _wrap_untrusted(text, "mcp_output", server=self.name, tool=tool)
 
 
 def mcp_call(server: str, tool: str, arguments: dict = None) -> str:

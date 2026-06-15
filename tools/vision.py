@@ -15,6 +15,7 @@ from core import toolbelt
 from core.tools import _safe
 from core.llm import complete, Budget, current_budget
 from core.registry import registry
+from core.boundary import wrap as _wrap_untrusted
 
 
 def _vision_model() -> str:
@@ -44,7 +45,8 @@ def see_image(path: str, question: str = "Describe this image in detail.") -> st
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}]}],
             max_tokens=700, budget=b,
         )
-        return resp.choices[0].message.content or "(no description returned)"
+        desc = resp.choices[0].message.content or "(no description returned)"
+        return _wrap_untrusted(desc, "vision_analysis", path=path)
     except Exception as e:
         return (f"ERROR analyzing image (the selected vision model may not support image "
                 f"input — set VISION_MODEL): {type(e).__name__}: {e}")

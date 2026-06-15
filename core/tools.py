@@ -11,6 +11,7 @@ import contextvars
 import subprocess
 
 from . import cache
+from .boundary import wrap as _wrap_untrusted
 
 # Default sandbox root (env-configurable). Per-session code can override the root
 # for the duration of a call via using_workspace(); the containment check below is
@@ -56,7 +57,8 @@ def _safe(path: str) -> str:
 def read_file(path: str) -> str:
     try:
         with open(_safe(path)) as f:
-            return f.read()
+            content = f.read()
+        return _wrap_untrusted(content, "workspace_file", path=path)
     except Exception as e:
         return f"ERROR reading {path}: {e}"
 
@@ -96,6 +98,7 @@ def parse_document(path: str) -> str:
                     out = f.read(20000)
         except Exception as e2:
             return f"ERROR parsing {path}: {e}; fallback failed: {e2}"
+    out = _wrap_untrusted(out, "document_content", path=path)
     if ckey:
         _pc.put(ckey, out)
     return out
@@ -208,7 +211,11 @@ def run_bash(command: str) -> str:
     ]
     try:
         out = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-        return f"exit={out.returncode}\nSTDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}"
+        # stdout/stderr are program output from the container — untrusted DATA.
+        body = _wrap_untrusted(
+            f"STDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}",
+            "command_output", command=command[:120])
+        return f"exit={out.returncode}\n{body}"
     except subprocess.TimeoutExpired:
         try:
             with open(cid_file) as _f:
