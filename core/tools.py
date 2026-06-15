@@ -169,6 +169,21 @@ def list_files(directory: str = ".") -> str:
         return f"ERROR listing {directory}: {e}"
 
 
+# Cap each bash stream so verbose output (pip install, pytest -v) can't balloon the
+# agent's message history. Keep the HEAD and TAIL — the head shows what started, the
+# tail shows the result/error summary, which is what the model needs to act on.
+_BASH_OUT_CAP = int(os.environ.get("AGENT_BASH_OUTPUT_CAP", "4000"))
+
+
+def _clip(s: str) -> str:
+    s = s or ""
+    if len(s) <= _BASH_OUT_CAP:
+        return s
+    head = _BASH_OUT_CAP // 2
+    tail = _BASH_OUT_CAP - head
+    return (f"{s[:head]}\n... [{len(s) - _BASH_OUT_CAP} chars truncated] ...\n{s[-tail:]}")
+
+
 def run_bash(command: str) -> str:
     if os.environ.get("AGENT_DISABLE_BASH", "").strip() in ("1", "true", "yes"):
         return ("ERROR: shell execution is disabled (AGENT_DISABLE_BASH is set). "
@@ -208,7 +223,8 @@ def run_bash(command: str) -> str:
     ]
     try:
         out = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-        return f"exit={out.returncode}\nSTDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}"
+        return (f"exit={out.returncode}\n"
+                f"STDOUT:\n{_clip(out.stdout)}\nSTDERR:\n{_clip(out.stderr)}")
     except subprocess.TimeoutExpired:
         try:
             with open(cid_file) as _f:
