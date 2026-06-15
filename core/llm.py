@@ -13,6 +13,7 @@ import os
 import time
 import threading
 import contextvars
+import concurrent.futures as _futures
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
@@ -64,6 +65,50 @@ def _trip_breaker(model: str) -> None:
 def _reset_breaker(model: str) -> None:
     with _BREAKER_LOCK:
         _BREAKER.pop(model, None)
+
+
+# Hard wall-clock timeout. litellm's own `timeout=` is NOT reliably enforced for
+# every provider (a slow NVIDIA NIM call was observed running ~139s despite
+# timeout=45s and returning successfully — so no exception was ever raised and the
+# circuit breaker could not trip). We enforce the bound OURSELVES: run the provider
+# call on a worker and stop waiting after `timeout`, raising a litellm Timeout the
+# fallback chain treats as fallbackable (trips the breaker, advances to the next
+# model). The abandoned worker keeps running until the HTTP call returns on its own,
+# but the run is no longer blocked. Toggle off with AGENT_HARD_TIMEOUT=0.
+_HARD_TIMEOUT = os.environ.get("AGENT_HARD_TIMEOUT", "1").strip().lower() not in ("0", "false", "no")
+_LLM_EXEC = _futures.ThreadPoolExecutor(
+    max_workers=int(os.environ.get("AGENT_LLM_WORKERS", "16")), thread_name_prefix="llm")
+
+
+def _timeout_exc(timeout):
+    """A litellm.Timeout if this version exposes a constructible one, else a builtin
+    TimeoutError. Either is caught as fallbackable by complete_chain."""
+    T = getattr(litellm, "Timeout", None)
+    if isinstance(T, type):
+        try:
+            return T(message=f"hard wall-clock timeout after {timeout}s",
+                     model="", llm_provider="")
+        except Exception:
+            try:
+                return T(f"hard wall-clock timeout after {timeout}s")
+            except Exception:
+                pass
+    return TimeoutError(f"hard wall-clock timeout after {timeout}s")
+
+
+def _bounded_completion(kwargs):
+    """litellm.completion bounded by a hard wall-clock timeout we enforce ourselves."""
+    if not _HARD_TIMEOUT:
+        return litellm.completion(**kwargs)
+    timeout = kwargs.get("timeout") or _TIMEOUT
+    fut = _LLM_EXEC.submit(litellm.completion, **kwargs)
+    try:
+        # Give the worker a small grace beyond litellm's own timeout, so when litellm
+        # DOES honor it we surface its richer error rather than our generic one.
+        return fut.result(timeout=timeout + 5)
+    except _futures.TimeoutError:
+        fut.cancel()
+        raise _timeout_exc(timeout)
 
 
 def _exc(*names):
@@ -317,7 +362,7 @@ def complete(model, messages, tools=None, max_tokens=4096,
             kwargs["api_key"] = key.value
         _t0 = time.time()
         try:
-            resp = litellm.completion(**kwargs)
+            resp = _bounded_completion(kwargs)
         except _RATE_LIMIT as e:                 # this key is throttled — cool it, rotate
             last_exc = e
             if pool and key:
