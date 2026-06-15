@@ -1,109 +1,63 @@
 # HANDOFF — read this first
 
-_Last updated: 2026-06-14. The single entry point for the next chat (the prior chat may be
-deleted). For "what it can do" read `docs/CAPABILITIES.md`; for "how it works"
-`docs/PROJECT_OVERVIEW.md`; durable rules are in `CLAUDE.md`; **remaining work is in
-`docs/BACKLOG.md`**._
+_The single entry point for a new chat. **Current state + next tasks live here**; durable
+rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
+For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## TL;DR — the project is LIVE in production
-- **Deployed and running 24/7** on an **Oracle Always-Free ARM VM** (Ubuntu 24.04, 2 OCPU /
-  12 GB, at `/home/ubuntu/agent_system`). Runs as a **systemd service `agentcore`** on
-  `0.0.0.0:8800`.
-- **Reached privately via Tailscale** at `http://100.89.151.102:8800` (no public exposure of
-  the app port). Public IP `140.245.226.147` is only for SSH. SSH key:
-  `C:\Users\gaura\Downloads\oracle keys\ssh-key-2026-06-14.key`, user `ubuntu`.
-- **CI/CD**: every `git push` to `main` auto-deploys via a **self-hosted GitHub Actions
-  runner** on the VM (`.github/workflows/deploy.yml`: git reset → pip → npm build → restart).
-  The server pulls privately via an **SSH deploy key** (remote is `git@github.com:...`).
-- **Email + password login is ACTIVE** (creds in the server `.env`:
-  `AGENT_LOGIN_EMAIL` / `AGENT_LOGIN_PASSWORD`). **Telegram bot** runs on the server.
-- **Nightly backups** via cron (`scripts/backup.py --keep 14`).
-- Smoke: **158/158** (`.venv\Scripts\python.exe scripts\smoke_test.py`). Local run: `.\run.ps1`
-  → http://localhost:8800. Rebuild UI after frontend changes: `npm --prefix web run build`.
+## Current state — LIVE in production
+- **Deployed 24/7** on an **Oracle Always-Free ARM VM** (Ubuntu 24.04, 2 OCPU / 12 GB, at
+  `/home/ubuntu/agent_system`) as a **systemd service `agentcore`** on `0.0.0.0:8800`.
+- **Private access via Tailscale** at `http://100.89.151.102:8800` (app port not public;
+  public IP `140.245.226.147` is SSH only). SSH: user `ubuntu`, key in the owner's
+  `oracle keys` folder.
+- **CI/CD**: every push to `main` auto-deploys via a **self-hosted GitHub Actions runner**
+  on the VM (`.github/workflows/deploy.yml`: reset → pip → npm build → restart). Server
+  pulls privately via an SSH deploy key (remote is `git@github.com:...`).
+- **Email+password login is ACTIVE**; **Telegram bot** runs on the server; **nightly
+  backups** via cron (`scripts/backup.py --keep 14`).
+- **Run/test:** local run `.\run.ps1` → http://localhost:8800. Smoke **158/158**
+  (`.venv\Scripts\python.exe scripts\smoke_test.py`). Rebuild UI after frontend changes:
+  `npm --prefix web run build`.
 
-## What this session did (2026-06-15) — repo mode + Docker sandbox + tracing + ANN index
-On branch `claude/serene-lamport-r1ix0k` (commit `513eb24`, pushed). Smoke 158/158. **Code is
-done; activation needs server `.env` steps — see `docs/BACKLOG.md` "To activate live".**
-1. **"Work on a repo" mode** — new `tools/github.py` (git_clone/status/diff/log/checkout_branch/
-   commit/push + create_pull_request via GitHub REST), a `repo-engineer` agent and a `repo`
-   playbook (clone→plan→branch→implement→verify→push→pr). push/PR are `requires_human`.
-2. **Docker sandbox hardened** — `core/tools.py`: unsafe host-shell fallback **removed** (fails
-   closed when no image set); hardened `docker run` (cap-drop ALL, no-new-privileges, read-only +
-   tmpfs, pids/mem/cpu limits, cidfile cleanup on timeout). `run_bash` → RISK_WRITE (no human
-   click) when `AGENT_BASH_DOCKER_IMAGE` is set. New `AGENT_BASH_DOCKER_*` knobs.
-3. **Langfuse tracing** — `server/trace.py` rewritten into a real span tree (run → subagent →
-   LLM generation with model/token-split/cost/latency). core stays offline via a callback hook +
-   `_span_ctx` ContextVar in `core/llm.py`; `server/app.py` registers the observer at startup.
-4. **ANN vector index** — `server/vectorstore.py` (NumPy matrix, full-corpus, no `_MAX_SCAN`
-   ceiling); `memory.recall` + `rag.retrieve` use it with graceful fallback.
-> Note: `config/policy.yaml` now requires-human for any `git push` and PR creation.
-> Decision deviation to confirm: PR uses GitHub **REST API** (self-contained), not the MCP path.
+## Last session (2026-06-15) — repo mode + Docker sandbox + tracing + ANN index
+Branch `claude/serene-lamport-r1ix0k`. Code done + pushed; smoke 158/158.
+1. **"Work on a repo" mode** — `tools/github.py` (git clone/status/diff/log/checkout/commit/
+   push + create_pull_request via GitHub REST), a `repo-engineer` agent, a `repo` playbook.
+   push/PR are `requires_human`. _Deviation to confirm:_ PR uses GitHub **REST API** (self-
+   contained), not the originally-agreed MCP path.
+2. **Docker sandbox hardened** — `core/tools.py`: host-shell fallback removed (fails closed);
+   hardened `docker run`. `run_bash` → RISK_WRITE (no human click) when `AGENT_BASH_DOCKER_IMAGE` set.
+3. **Langfuse span-tree tracing** — `server/trace.py` rewrite; core stays offline via a
+   callback hook + `_span_ctx` ContextVar in `core/llm.py`.
+4. **ANN vector index** — `server/vectorstore.py` (NumPy, full-corpus); `memory.recall` +
+   `rag.retrieve` use it with graceful fallback.
+> Also: docs flow minimized — one living HANDOFF, git log as changelog, STATUS frozen, CLAUDE de-bloated.
 
-## What an earlier session did (2026-06-14) — the UI became a Claude.ai clone + login + deploy
-All on branch `feat/claude-ui`, **merged to `main` and deployed live**. Web build clean; smoke 158/158.
-1. **Claude-style UI rebuild** (frontend only, every feature kept wired, no backend changes):
-   warm "cloud" theme + **sunburst** mark; a **centered welcome screen** (time greeting +
-   composer + example chips); Claude-style **composer** (big rounded card, auto-grow, circular
-   send) and **messages** (plain serif assistant prose, soft user cards); **slim header**;
-   **collapsible artifacts panel** (auto-opens on first file); light + dark.
-   Components: `web/src/components/{Sunburst,Login,CommandPalette,Toasts}.tsx` (new) +
-   reworked `App,Chat,Composer,Sidebar,RightPanel,SettingsModal,ModelRail,MemoryPanel,FleetPanel`.
-2. **Email + password login** — `Login.tsx` gates the SPA; `server/api/auth_routes.py`
-   (`/api/login`, `/api/auth/config` public; `/api/me` gated) + helpers in `server/auth.py`.
-   Login exchanges credentials for the existing auth token. **Account menu** (avatar + email +
-   Settings / theme / Log out) replaced the old model readout bottom-left.
-3. **Run summary** under each response (Claude Code-style): **time · tokens · cost · tools ·
-   files edited**, plus copy / regenerate / 👍👎 **always visible**. Token tracking added to
-   `core/llm.py` (`Budget.tokens` + every model-call path); `run_complete` emits `tokens`+`iterations`.
-4. **Settings → 5 tabs** (General · Limits & cost · Models & keys [Tiers/Keys/Health subtabs +
-   Model Lab] · Memory · Advanced [security + schedules]); Roadmap tab dropped. Panels polished.
-5. **⌘K command palette** (run actions / jump to chats) + a **toast** system (errors / limits).
-6. **Run Options popover** restructured (sections + toggle switches + grouped limits/acceptance).
+## Next tasks (immediate — full list in `docs/BACKLOG.md`)
+1. **Activate the 2026-06-15 features on the server** (operational, not code): build an ARM64
+   sandbox image + set `AGENT_BASH_DOCKER_IMAGE`, unset `AGENT_DISABLE_BASH`; add `GITHUB_TOKEN`;
+   set `AGENT_BASH_DOCKER_NETWORK=bridge` for clone/installs; optional `LANGFUSE_*` + `pip install
+   langfuse`. Then run an end-to-end repo-mode test.
+2. **Trace-viewer UI panel** for the new span tree.
+3. **UI polish**: file +/- line counts in run summaries; Health/Schedules panels; mobile pass.
 
-## Earlier milestones (condensed — full detail in STATUS changelog)
-- **Hosting (2026-06-14):** stood up the Oracle VM, Tailscale, self-hosted-runner CI/CD,
-  systemd service, deploy key, nightly backups. See `docs/SETUP_GUIDE.md` for the full walkthrough.
-- **Recommended-features pass (2026-06-13):** tool-result cache + per-call metrics + Model
-  Health; unattended runs (persistent approvals, Telegram `/yes`); test-first coding + acceptance
-  rubric; image/PDF artifact preview.
-- **Audit-fix pass (2026-06-13):** fixed 6 real bugs (429-backoff crash, parallel-delegation
-  workspace contextvar, tool calls bypassing budget, missing `/file/raw`, classifier/dispatcher
-  fallback chains, routing on raw request).
-- **Platform optimization (2026-06-13):** multi-key pool, fallback chains, NVIDIA NIM fleet,
-  resumable Project State, scheduler, Telegram, parallel sub-agents, RAG/doc-parser, vision.
-- **2026-06-07:** Tavily web search, semantic memory (Gemini embeddings), first UI declutter.
-
-## What's LEFT
-**See `docs/BACKLOG.md` for the full, prioritized list.** Headlines:
-- **Activate the 2026-06-15 features on the server** (operational, not code): build an ARM64
-  sandbox image + set `AGENT_BASH_DOCKER_IMAGE` and unset `AGENT_DISABLE_BASH`; add `GITHUB_TOKEN`;
-  optionally add `LANGFUSE_*` + `pip install langfuse`. Then run an end-to-end repo-mode test.
-- UI polish: file `+/- line counts` in the run summary; deep-polish Health/Schedules panels;
-  mobile pass on the new UI; a **trace viewer** for the new span tree; remove unused `RoadmapPanel.tsx`.
-- Optional/needs a key: image generation, GitHub-via-MCP (alt PR path), more connectors.
-- Hardening (if exposed beyond Tailscale): API rate-limiting, encrypt stored keys, off-site backups.
-
-## Context for the next chat (don't re-discover these)
+## Context for the next chat (don't re-discover)
 - **`.env` (local + server, gitignored)** has working keys: `GEMINI_API_KEY`,
   `NVIDIA_NIM_API_KEY`, `SEARCH_API_KEY` (Tavily), `EMBED_MODEL=gemini/gemini-embedding-001`.
-  The **server** `.env` also has `AGENT_AUTH_TOKEN`, `AGENT_LOGIN_EMAIL`, `AGENT_LOGIN_PASSWORD`,
+  Server `.env` also has `AGENT_AUTH_TOKEN`, `AGENT_LOGIN_EMAIL/_PASSWORD`,
   `AGENT_DISABLE_BASH=1`, `AGENT_DAILY_USD_CAP=2.0`. ANTHROPIC/OPENAI/DEEPSEEK/OPENROUTER are placeholders.
-- **Login behavior:** the SPA shows the Sign-in screen unless `AGENT_LOGIN_*` is unset (then it
-  skips login). A saved token in the browser auto-signs-you-in (that's correct) — to see the
-  login screen, use the account menu → Log out, or an incognito window.
-- **Python venv is `.venv`** — run as `.venv\Scripts\python.exe …` (absolute path if cwd drifts).
-- **GitHub:** repo is **github.com/Nikethan16/Agent_System** (private). Repo-local commit identity
-  `Nikethan <nikethan160902@gmail.com>` (don't touch global git). `gh` CLI is **not** installed.
+- **Python venv is `.venv`** — run as `.venv\Scripts\python.exe …`.
+- **GitHub:** repo is **github.com/Nikethan16/Agent_System** (private). Repo-local commit
+  identity `Nikethan <nikethan160902@gmail.com>` (don't touch global git). `gh` CLI not installed.
 - **Owner's git prefs:** **no** Claude co-author trailer; split work into logical, version-wise commits.
-- **Deploying a change:** commit → push to `main` → the runner auto-deploys (~2-3 min, watch the
-  Actions tab). Server `.env` is **not** in git — env changes are done on the server over SSH.
-- **A safety classifier blocks writing secrets to the production server via the agent's own
-  shell** — server `.env` credential edits must be done by the owner (SSH/nano), not automated.
-- **Respect `CLAUDE.md` invariants:** no hardcoded model names (use the registry); every model
-  call via `core/llm.py` under a Budget; tools sandboxed to the session workspace.
+- **Deploying:** commit → push to `main` → runner auto-deploys (~2-3 min). Server `.env` is
+  **not** in git; a safety classifier blocks the agent writing server secrets — env edits are
+  done by the owner over SSH.
+- **Invariants (`CLAUDE.md`):** no hardcoded model names (use the registry); every model call
+  via `core/llm.py` under a Budget; tools sandboxed to the session workspace.
 
-## How to resume
-1. `cd C:\Project\agent_system && claude` (auto-loads `CLAUDE.md`).
-2. Read `docs/CAPABILITIES.md` → this file → `docs/BACKLOG.md` (what's left) → `STATUS.md` (detail).
-3. After any change: `.venv\Scripts\python.exe scripts\smoke_test.py` (keep 158/158), rebuild the
-   UI if the frontend changed, and add a `STATUS.md` changelog line.
+## Doc workflow (keep it minimal)
+**At session end only** (owner is wrapping up / moving to a new chat): (1) commit everything
+(message = changelog), (2) update this file's _Current state_ + _Last session_ (trim older to
+1-2 entries) + _Next tasks_. Touch `docs/BACKLOG.md` only if priorities shifted. Nothing else
+— `STATUS.md` is frozen; `CLAUDE.md` changes only on invariant/architecture changes.

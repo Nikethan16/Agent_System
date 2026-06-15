@@ -1,8 +1,10 @@
 # AGENT // CORE — Project Tracker
 
-_Last updated: 2026-06-07 (project paused)_
+> **⚠️ FROZEN — historical snapshot, no longer maintained.** Current state and next tasks
+> live in **`HANDOFF.md`**; change history is in **`git log`**; remaining work is in
+> **`docs/BACKLOG.md`**. This file is kept only as a reference and to preserve inbound links.
 
-The single source of truth for **where we are** and **what's left**. Companion docs:
+The (historical) source of truth for **where we are** and **what's left**. Companion docs:
 [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) (what it does), [`docs/PROJECT_OVERVIEW.md`](docs/PROJECT_OVERVIEW.md) (how it works),
 [`docs/PLACEHOLDERS.md`](docs/PLACEHOLDERS.md) (inputs you provide),
 [`docs/COMPETITIVE.md`](docs/COMPETITIVE.md) (peer-tool research).
