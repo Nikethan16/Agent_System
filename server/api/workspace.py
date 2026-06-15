@@ -105,23 +105,48 @@ async def upload(session_id: str, file: UploadFile = File(...)):
     return {"path": rel, "name": safe_name}
 
 
-@router.get("/{session_id}/changes")
-def changes(session_id: str):
-    """Files changed since the last checkpoint (the pre-last-turn snapshot)."""
+def _line_counts(before: str, after: str) -> tuple:
+    """(added, removed) line counts between two text blobs, from a unified diff.
+    Counts content lines only (skips the +++/--- file headers)."""
+    added = removed = 0
+    for line in difflib.unified_diff(before.splitlines(), after.splitlines(),
+                                     lineterm=""):
+        if line.startswith("+") and not line.startswith("+++"):
+            added += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            removed += 1
+    return added, removed
+
+
+def compute_changes(session_id: str) -> list:
+    """Files changed since the last checkpoint (the pre-last-turn snapshot), each
+    with status + added/removed line counts. Reused by the run_complete event."""
     cp = db.latest_checkpoint_dir(session_id)
     ws = db.session_workspace(session_id)
     out = []
     if not cp:
-        return {"changes": out}
+        return out
     cur, old = set(_relfiles(ws)), set(_relfiles(cp))
     for p in sorted(cur | old):
+        before = _read(os.path.join(cp, p)) if p in old else ""
+        after = _read(os.path.join(ws, p)) if p in cur else ""
         if p not in old:
-            out.append({"path": p, "status": "added"})
+            status = "added"
         elif p not in cur:
-            out.append({"path": p, "status": "deleted"})
-        elif _read(os.path.join(cp, p)) != _read(os.path.join(ws, p)):
-            out.append({"path": p, "status": "modified"})
-    return {"changes": out}
+            status = "deleted"
+        elif before != after:
+            status = "modified"
+        else:
+            continue
+        added, removed = _line_counts(before, after)
+        out.append({"path": p, "status": status, "added": added, "removed": removed})
+    return out
+
+
+@router.get("/{session_id}/changes")
+def changes(session_id: str):
+    """Files changed since the last checkpoint (the pre-last-turn snapshot)."""
+    return {"changes": compute_changes(session_id)}
 
 
 def _safe_join(root: str, path: str) -> str:
