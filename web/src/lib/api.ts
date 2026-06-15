@@ -128,6 +128,9 @@ export const api = {
   addCatalogModel: (model: any) => POST("/api/models/catalog", { models: [model] }),
   removeCatalogModel: (id: string) => DELETE("/api/models/catalog/" + id),
 
+  // run trace: reconstructed span tree (subagents/tools/cost) from the JSONL log
+  traces: (id: string) => GET(`/api/traces/${id}`),
+
   // model health: per-key usage + per-model call metrics + cache hit-rates
   fleetHealth: () => GET("/api/fleet/health"),
   resetHealth: () => POST("/api/fleet/health/reset", {}),

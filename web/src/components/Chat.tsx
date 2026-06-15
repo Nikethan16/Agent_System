@@ -210,12 +210,18 @@ function ResponseFooter({ m, last }: { m: Msg; last?: boolean }) {
   const btn = "p-1.5 rounded-md text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg transition";
 
   const tools = m.events.filter((e) => e.type === "tool");
-  const fileSet = new Set<string>();
-  for (const e of tools) {
-    if (["write_file", "edit_file", "create_file"].includes(e.name) && e.args?.path) fileSet.add(e.args.path);
-  }
-  const files = [...fileSet];
   const meta = m.meta;
+  // Prefer backend-computed per-file +/- line counts; fall back to tool-event paths
+  // (older messages predate the run_complete `files` payload).
+  const fileChanges = meta?.files && meta.files.length
+    ? meta.files
+    : (() => {
+        const set = new Set<string>();
+        for (const e of tools) {
+          if (["write_file", "edit_file", "create_file"].includes(e.name) && e.args?.path) set.add(e.args.path);
+        }
+        return [...set].map((path) => ({ path, status: "", added: 0, removed: 0 }));
+      })();
   const dur = fmtDur(meta?.durationMs);
 
   const stats: string[] = [];
@@ -226,7 +232,7 @@ function ResponseFooter({ m, last }: { m: Msg; last?: boolean }) {
 
   return (
     <div className="mt-2.5 space-y-1.5">
-      {(stats.length > 0 || files.length > 0) && (
+      {(stats.length > 0 || fileChanges.length > 0) && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-light-muted">
           {stats.length > 0 && (
             <span className="inline-flex items-center gap-1.5">
@@ -234,10 +240,17 @@ function ResponseFooter({ m, last }: { m: Msg; last?: boolean }) {
               {stats.join(" · ")}
             </span>
           )}
-          {files.map((f) => (
-            <span key={f} className="inline-flex items-center gap-1">
+          {fileChanges.map((f) => (
+            <span key={f.path} className="inline-flex items-center gap-1">
               <span className="material-symbols-outlined text-[13px]">draft</span>
-              <code className="font-code text-[10px] bg-surface-container dark:bg-dark-bg rounded px-1 py-0.5">{f}</code>
+              <code className="font-code text-[10px] bg-surface-container dark:bg-dark-bg rounded px-1 py-0.5">{f.path}</code>
+              {(f.added > 0 || f.removed > 0) && (
+                <span className="font-code text-[10px]">
+                  {f.added > 0 && <span className="text-emerald-500">+{f.added}</span>}
+                  {f.added > 0 && f.removed > 0 && " "}
+                  {f.removed > 0 && <span className="text-red-500">−{f.removed}</span>}
+                </span>
+              )}
             </span>
           ))}
         </div>
