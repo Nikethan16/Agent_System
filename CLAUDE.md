@@ -3,11 +3,14 @@
 Context for Claude Code. Read the README.md for the full picture; this file is
 the durable rules + roadmap you should hold every session.
 
-> **NEW CHAT? START HERE (project paused 2026-06-07):** read `HANDOFF.md` (current
-> state + what changed last + context for you), then `docs/CAPABILITIES.md` (what the
-> app can do), then `docs/PROJECT_OVERVIEW.md` (the complete account of how every
-> feature works). Runs at http://localhost:8800. Web search + semantic memory are now
-> live; the UI was decluttered (composer Run-options popover + 5-tab Settings).
+> **NEW CHAT? START HERE (LIVE in production as of 2026-06-14):** read `HANDOFF.md`
+> (current state + context), then `docs/CAPABILITIES.md` (what it does),
+> `docs/PROJECT_OVERVIEW.md` (how it works), and **`docs/BACKLOG.md` (what's left)**.
+> The app is **deployed 24/7 on an Oracle Always-Free VM**, reached privately via Tailscale,
+> with **push-to-main CI/CD** (self-hosted runner) — see `docs/SETUP_GUIDE.md`. The web UI
+> was rebuilt as a **Claude.ai clone** with an **email+password login**, per-response **run
+> summaries** (time/tokens/cost/tools/files), a **5-tab Settings**, and a ⌘K command palette.
+> Local run: `.\run.ps1` → http://localhost:8800. Web search + semantic memory are live.
 
 ## What this is
 A provider-agnostic multi-agent core. A task is classified into a difficulty
@@ -104,7 +107,10 @@ manager agent AND a human. **Permission modes** (per run, set in the UI / `/mode
 
 **Network exposure (added after a security review):** every REST router + the WS are
 gated by `server/auth.py` — if `AGENT_AUTH_TOKEN` is set it's required, otherwise the API
-answers loopback only (so it can't be deployed wide-open by accident). Plus: SSRF guard in
+answers loopback only (so it can't be deployed wide-open by accident). On top of the token,
+an **optional email+password login** (`server/api/auth_routes.py`, active when
+`AGENT_LOGIN_EMAIL`+`AGENT_LOGIN_PASSWORD` are set) gates the SPA and exchanges credentials for
+that token (`/api/login` + `/api/auth/config` public; `/api/me` gated). Plus: SSRF guard in
 `tools/web.py`, UUID id-validation (`db.safe_id`) before any filesystem join, server-side
 budget ceilings + a global **daily spend cap** (`server/spend.py`, `AGENT_DAILY_USD_CAP`),
 `run_bash` is `requires_human` with an `AGENT_DISABLE_BASH` kill-switch, and the SVG

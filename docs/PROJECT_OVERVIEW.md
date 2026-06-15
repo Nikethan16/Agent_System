@@ -6,7 +6,10 @@ it top to bottom and understand **what the app is, how it's architected, and exa
 every feature is implemented** (with the real files and mechanisms). If this is the only
 file you read, you will still understand the system._
 
-_Last updated: 2026-06-03 · Runs locally at http://localhost:8800 · see "LATEST ADDITIONS" at the bottom_
+_Last updated: 2026-06-14 · **LIVE in production** on an Oracle Always-Free VM (private via
+Tailscale, push-to-main CI/CD) · the web UI is a **Claude.ai clone** with an **email+password
+login**, run summaries, and a ⌘K palette · Runs locally at http://localhost:8800 · see
+`HANDOFF.md` for current state and `docs/BACKLOG.md` for what's left_
 
 > Shorter companions: `CLAUDE.md` (rules, auto-loaded every chat), `STATUS.md` (checkbox
 > tracker + changelog), `docs/PLACEHOLDERS.md` (keys you provide), `docs/COMPETITIVE.md`

@@ -1,10 +1,16 @@
 # AGENT // CORE — What This Application Can Do
 
-_Last updated: 2026-06-07. A plain-language catalogue of everything the app is capable of
+_Last updated: 2026-06-14. A plain-language catalogue of everything the app is capable of
 today, what's working right now vs. what needs a key, and its current limits. If you're
 picking this project up fresh (or it's a new chat with no memory), read this for "what it
 does", then `HANDOFF.md` for "current state + what's next", then `docs/PROJECT_OVERVIEW.md`
 for "how it works under the hood"._
+
+> **Now live (2026-06-14):** deployed 24/7 on an Oracle Always-Free VM, reached privately via
+> Tailscale, with push-to-main CI/CD. The UI was rebuilt as a **Claude.ai clone** with an
+> **email+password login**, an account menu, per-response **run summaries**
+> (time/tokens/cost/tools/files edited), a **5-tab Settings**, and a ⌘K command palette.
+> Telegram phone control is live. See `docs/SETUP_GUIDE.md` (hosting) and `docs/BACKLOG.md` (what's left).
 
 ---
 
