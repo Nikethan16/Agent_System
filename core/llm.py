@@ -111,6 +111,46 @@ def _bounded_completion(kwargs):
         raise _timeout_exc(timeout)
 
 
+def _iter_stream_bounded(kwargs, timeout=None):
+    """Iterate a streaming completion with a hard per-chunk wall-clock bound.
+
+    The same litellm-timeout-not-honored problem applies to streaming: a provider can
+    stall before the first token (or mid-stream) with no error raised. The blocking
+    provider reads run on a worker thread and are handed back through a queue; if no
+    chunk arrives within `timeout`, we abandon and raise a fallbackable Timeout (the
+    agent loop then falls back to the bounded non-streaming path). Chunks are YIELDED to
+    the calling thread, so on_token/emit side effects stay on the original thread."""
+    timeout = timeout or _TIMEOUT
+    if not _HARD_TIMEOUT:
+        for ch in litellm.completion(**kwargs):
+            yield ch
+        return
+    import queue as _queue
+    q: _queue.Queue = _queue.Queue()
+    _DONE = object()
+
+    def _producer():
+        try:
+            for ch in litellm.completion(**kwargs):
+                q.put((ch, None))
+        except Exception as e:          # surface to the consumer to raise in-thread
+            q.put((None, e))
+        finally:
+            q.put((_DONE, None))
+
+    _LLM_EXEC.submit(_producer)
+    while True:
+        try:
+            item, err = q.get(timeout=timeout + 5)
+        except _queue.Empty:
+            raise _timeout_exc(timeout)
+        if err is not None:
+            raise err
+        if item is _DONE:
+            return
+        yield item
+
+
 def _exc(*names):
     """Build a tuple of litellm exception classes that exist in this version
     (defensive: class names vary slightly across litellm majors)."""
@@ -479,11 +519,12 @@ def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
     """
     if budget:
         budget.check()
-    resp = litellm.completion(
+    _kw = dict(
         model=model, messages=messages, max_tokens=max_tokens,
         temperature=temperature, stream=True, timeout=_TIMEOUT,
         stream_options={"include_usage": True}, api_key=_key_for(model),
     )
+    resp = _iter_stream_bounded(_kw)
     pieces, cost, tokens = [], 0.0, 0
     for chunk in resp:
         try:
@@ -556,7 +597,7 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
-    resp = litellm.completion(**kwargs)
+    resp = _iter_stream_bounded(kwargs)
 
     content, tcs, cost, tokens = [], {}, 0.0, 0
     for chunk in resp:

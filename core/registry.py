@@ -97,10 +97,21 @@ class ModelRegistry:
         context window among AVAILABLE models (so we never overflow whatever the router
         picks), at ~60%, minus headroom for the answer + tool schemas. This is what makes
         history adaptive: a 128K+ fleet gets tens of thousands of tokens of context, not
-        an arbitrary 12 messages — and a tiny local model automatically gets less."""
+        an arbitrary 12 messages — and a tiny local model automatically gets less.
+
+        Capped by AGENT_MAX_CONTEXT_TOKENS (default 24000): on a 128K/1M fleet the 60%
+        figure is ~70K+ tokens of verbatim history re-sent EVERY round, which is costly
+        with little marginal benefit (cross-session memory recall already supplies older
+        facts). The cap keeps plenty of recent history while cutting input cost; raise it
+        for very long-context workflows."""
         wins = [self.context_window_for(m["id"]) for m in self.catalog() if self._available(m)]
         floor = min(wins) if wins else self.context_window_for("")
-        return max(4000, int(floor * 0.6) - 8192)
+        budget = max(4000, int(floor * 0.6) - 8192)
+        try:
+            cap = int(os.environ.get("AGENT_MAX_CONTEXT_TOKENS", "24000"))
+        except (TypeError, ValueError):
+            cap = 24000
+        return min(budget, cap) if cap > 0 else budget
 
     def classifier_tier(self) -> str:
         return self.cfg["defaults"]["classifier_tier"]

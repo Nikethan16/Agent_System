@@ -45,10 +45,22 @@ _REVIEW_TASK_TYPES = {"coding", "writing", "data", "math"}
 
 
 def _auto_review(tier, task_type) -> bool:
-    """Decide whether to run the critic when review == 'auto' (the default)."""
+    """Decide whether to run the critic when review == 'auto' (the default).
+
+    Tier 3 always gets QA. For tier-2 substantive work we mirror Claude Code: when the
+    agent can EXECUTE its work to self-verify (the run_bash sandbox is available), trust
+    its in-loop verification (it's instructed to run code/tests and report how) instead
+    of paying for a redundant full critic pass. When execution ISN'T available, the
+    critic earns its cost by inspecting what couldn't be run. AGENT_ALWAYS_REVIEW=1
+    forces QA on regardless."""
     if tier >= 3:
         return True
-    return tier >= 2 and (task_type in _REVIEW_TASK_TYPES)
+    if not (tier >= 2 and task_type in _REVIEW_TASK_TYPES):
+        return False
+    if os.environ.get("AGENT_ALWAYS_REVIEW", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    # Execution available -> agent self-verifies; skip the redundant critic.
+    return "run_bash" not in toolbelt.names()
 
 
 # ---- Trivial chit-chat fast-path -------------------------------------------
