@@ -8,6 +8,7 @@ When the agent loop escalates a risky tool, this broker:
      answer (Layer 4).
 The worker runs in a thread; we bridge to the async WebSocket with an Event.
 """
+import os
 import json
 import uuid
 import threading

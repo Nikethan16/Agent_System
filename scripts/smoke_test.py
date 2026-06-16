@@ -78,7 +78,7 @@ def fake(**kw):
     if "task router" in sysm:
         tier = 3 if "build" in user.lower() else 1
         return _Resp('{"tier": %d, "task_type":"coding","requires_web":false,"reason":"x"}' % tier)
-    if "lead engineer coordinating" in sysm:      # the master loop
+    if "lead engineer" in sysm or "work like claude" in sysm:      # the master loop
         _MASTER["n"] += 1
         if _MASTER["n"] == 1:
             return _ToolResp("Planning.", [("write_todos", '{"todos":[{"text":"write code","status":"pending"}]}')])
@@ -553,7 +553,7 @@ def _fake_parallel(**kw):
     sysm = next((m.get("content", "") for m in msgs if m.get("role") == "system"), "").lower()
     if "task router" in sysm:
         return _Resp('{"tier":3,"task_type":"coding","requires_web":false,"reason":"x"}')
-    if "lead engineer coordinating" in sysm:
+    if "lead engineer" in sysm or "work like claude" in sysm:
         _pm["n"] += 1
         if _pm["n"] == 1:
             return _ToolResp("plan", [("write_todos", '{"todos":[{"text":"two files","status":"pending"}]}')])
