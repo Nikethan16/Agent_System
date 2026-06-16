@@ -19,50 +19,62 @@ For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OV
   pytest tests/ -v`). Smoke **158/158** (`scripts\smoke_test.py`). Rebuild UI after frontend
   changes: `npm --prefix web run build`.
 
-## Last session (2026-06-15) — security hardening, trace viewer, E2E tests
+## Last session (2026-06-16) — reliability + cost overhaul, verify sandbox, CI green
 
-1. **Trace-viewer UI** — `server/api/traces.py` (new REST endpoint), `server/trace.py` (two
-   new helpers: `load_trace` + `build_tree`), `web/src/components/TracesPanel.tsx` (new),
-   `RightPanel.tsx` updated with Trace tab. Span tree: agent → tool hierarchy with cost/tokens/
-   duration chips, collapsible.
-2. **File +/− line counts** in run summaries — `server/api/workspace.py` (`_line_counts`,
-   `compute_changes`); `server/api/ws.py` (`run_complete` carries `files: [{path, status,
-   added, removed}]`); `web/src/components/Chat.tsx` `ResponseFooter` renders `file.py +42 −8`.
-3. **Streamed the LEAD's final answer** token-by-token — `core/llm.py` new
-   `stream_complete_chain`; `core/orchestrator.py` `_master_loop(stream=)` uses it, emitting
-   `agent_token` events; intermediate thoughts clear the live bubble with a `done` event.
-4. **Untrusted-content boundary** — new `core/boundary.py` `wrap()` helper applied to all 9
-   external input sources (git output, workspace files, bash output, file uploads, memory
-   notes, RAG chunks, MCP output, vision output, document parse).
-5. **Security bugs fixed in `tools/github.py`** (found by new tests): token visible in output
-   when git echoed it; directory sanitizer allowed `..` traversal. Both patched.
-6. **55-case pytest suite** wired into CI — `tests/test_github.py` (35 cases for all git
-   tools), `tests/test_trace.py` (10), `tests/test_workspace.py` (10). `ci.yml` updated.
-7. **`scripts/test_repo_mode.py`** — live E2E smoke script (clone → edit → commit → push →
-   PR) for manual verification with a real `GITHUB_TOKEN`.
-8. Removed dead `web/src/components/RoadmapPanel.tsx`.
-9. **`docs/SERVER_ACTIVATION.md`** — owner runbook for activating Docker sandbox + repo mode
-   on the server.
+Replicated the Claude Code workflow and fixed the root causes of multi-minute hangs and the
+53m/130k-token runaway run. All merged to `main` (PR #1), **CI green 158/158**.
+
+1. **Hard wall-clock timeout on every model call** (`core/llm.py`) — litellm's own `timeout=`
+   was NOT reliably honored (a NIM call ran ~139s despite `timeout=45` and returned OK, so no
+   error → breaker never tripped). Now each `completion` runs on a worker bounded by us; a
+   stall raises a fallbackable `Timeout`. Toggle `AGENT_HARD_TIMEOUT=0`.
+2. **Circuit breaker** (`core/llm.py` `_BREAKER`) — a failed model is skipped for
+   `AGENT_BREAKER_COOLDOWN`s (60) so later steps don't re-pay the timeout each time.
+3. **Bounded streaming** (`core/llm.py` `_iter_stream_bounded`) — same gap closed for the
+   stream path via a per-chunk queue watchdog; stall falls back to the bounded non-stream path.
+4. **Smarter critic gating** (`core/orchestrator.py` `_auto_review`) — tier-2 build work skips
+   the redundant critic when the Docker sandbox is live (agent self-verifies in-loop); critic
+   still runs when no sandbox. Tier 3 always reviewed. `AGENT_ALWAYS_REVIEW=1` forces it on.
+5. **Capped context tokens** (`core/registry.py` `context_budget`) — was ~70K/round on a 128K+
+   fleet; capped at `AGENT_MAX_CONTEXT_TOKENS` (24000). Set 0 to disable.
+6. **Preloaded verify image** — `docker/verify.Dockerfile` + `docker/build-verify-image.sh`
+   bake python+node+pytest+common deps so the verify loop runs a suite OFFLINE with
+   `--network none` (no egress). VM now runs `AGENT_BASH_DOCKER_IMAGE=agent-verify:latest`.
+7. **Other fixes** — tier recalibration (single-file work → tier 2 not 3), greeting→Gemini
+   fast-path (dodges NIM rate-limit), denial-spin guard, `run_bash` output clipped
+   (`AGENT_BASH_OUTPUT_CAP`), `deepseek-v4-pro` demoted to fallback, coder won't spin on
+   impossible installs, `scripts/flow_benchmark.py` for before/after numbers.
+8. **5 latent bugs on `main` fixed** (surfaced by CI as each crash cleared): `tool_calls`
+   NameError in the master loop (+ stream dict vs object normalization), stale `edit_file`
+   replace_all test (read_file now wraps), `run_bash` unregistered → policy-gate crash (now
+   always registered, CRITICAL+human when no Docker), missing `os` import in `approvals.py`,
+   stale MASTER_SYS / deepseek-primary test assertions.
 
 ## Next tasks (immediate — full list in `docs/BACKLOG.md`)
-1. **Activate on the server** *(SSH, ~5 min)* — add `GITHUB_TOKEN` to server `.env`; set
-   `AGENT_BASH_DOCKER_IMAGE=agent-sandbox:arm64` and `AGENT_BASH_DOCKER_NETWORK=bridge`;
-   unset `AGENT_DISABLE_BASH`. Then run `python scripts/test_repo_mode.py --repo
-   nikethan16/agent_system` to confirm end-to-end repo mode works live.
-2. **Off-site backups** *(one line, SSH)* — set `BACKUP_UPLOAD_CMD` in server `.env` so
+1. **Validate the perf fixes** *(VM, pending — the one thing not yet confirmed)* — run
+   `python3 scripts/flow_benchmark.py` and compare to the 53m/130k-token baseline (greeting
+   should be ~1-2s; the REST-API build should finish under cap with no rate-limit cascade).
+2. **Add 3 NVIDIA NIM keys** *(UI Settings or server `.env`: `NVIDIA_NIM_API_KEY_1..3`)* →
+   ~160 RPM pooled, removes the rate-limit contention that dominated the slow runs.
+3. **Activate repo mode on the server** *(SSH, ~5 min)* — add `GITHUB_TOKEN` to server `.env`;
+   run `python scripts/test_repo_mode.py --repo nikethan16/agent_system` to confirm E2E.
+4. **Off-site backups** *(one line, SSH)* — set `BACKUP_UPLOAD_CMD` in server `.env` so
    nightly backups leave the VM (rclone/s3/rsync to a second location).
-3. **Mobile responsive pass** — Claude-style UI verified on desktop; phone drawers/panels need
+5. **Mobile responsive pass** — Claude-style UI verified on desktop; phone drawers/panels need
    a look and CSS tweaks.
-4. **API rate-limiting** — not blocking while behind Tailscale; worth adding before any wider
+6. **API rate-limiting** — not blocking while behind Tailscale; worth adding before any wider
    exposure (`slowapi` or a simple token bucket on `/api/`).
+7. *(minor)* bump CI actions off deprecated Node-20 (`actions/checkout@v4`, `setup-python@v5`).
 
 ## Context for the next chat (don't re-discover)
 - **`.env` (local + server, gitignored)** has working keys: `GEMINI_API_KEY`,
   `NVIDIA_NIM_API_KEY`, `SEARCH_API_KEY` (Tavily), `EMBED_MODEL=gemini/gemini-embedding-001`.
   Server `.env` also has `AGENT_AUTH_TOKEN`, `AGENT_LOGIN_EMAIL/_PASSWORD`,
-  `AGENT_DISABLE_BASH=1`, `AGENT_DAILY_USD_CAP=2.0`. ANTHROPIC/OPENAI/DEEPSEEK/OPENROUTER are placeholders.
-- **Docker image `agent-sandbox:arm64`** is built and on the server (confirmed 2026-06-15);
-  just needs the env var flip to activate.
+  `AGENT_DAILY_USD_CAP=2.0`. ANTHROPIC/OPENAI/DEEPSEEK/OPENROUTER are placeholders.
+- **Shell sandbox is now ACTIVE on the VM** (2026-06-16): `AGENT_DISABLE_BASH` removed and
+  `AGENT_BASH_DOCKER_IMAGE=agent-verify:latest` (built via `docker/build-verify-image.sh`;
+  python+node+pytest+common deps, runs `--network none`). The older `agent-sandbox:arm64`
+  image also exists. For repo mode add `GITHUB_TOKEN`; `bridge` network only for fresh installs.
 - **Python venv is `.venv`** — run as `.venv\Scripts\python.exe …`.
 - **GitHub:** repo is **github.com/Nikethan16/Agent_System** (private). Repo-local commit
   identity `Nikethan <nikethan160902@gmail.com>` (don't touch global git). `gh` CLI not installed.

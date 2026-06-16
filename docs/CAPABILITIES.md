@@ -123,8 +123,12 @@ Needs `GITHUB_TOKEN` in `.env`.
 ### 17. Run shell commands in a hardened Docker sandbox
 When `AGENT_BASH_DOCKER_IMAGE` is set, every `run_bash` call runs inside an **ephemeral
 container** (cap-drop ALL, no-new-privileges, read-only filesystem + tmpfs, PID/memory/CPU
-limits, killed on timeout) — no access to the host system. Without the image set, bash is
-blocked entirely (fails closed). Tunable via `AGENT_BASH_DOCKER_TIMEOUT/MEMORY/CPUS/NETWORK/PIDS`.
+limits, killed on timeout) — no access to the host system. Without the image set, `run_bash`
+is still registered but gated as **CRITICAL + requires-human** (so it can never auto-execute).
+Tunable via `AGENT_BASH_DOCKER_TIMEOUT/MEMORY/CPUS/NETWORK/PIDS`. A **preloaded verify image**
+(`docker/verify.Dockerfile` → `docker/build-verify-image.sh` → `agent-verify:latest`) bakes in
+python+node+pytest+common deps so the agent's verify loop runs a real test suite **offline**
+with `--network none` (no egress); `bridge` is an opt-in only for fresh installs.
 
 ### 18. Live trace viewer
 The **Trace** tab in the right panel renders the span tree for every run: agent nodes,
@@ -149,6 +153,21 @@ Episodic memory and RAG retrieval now use a lazy in-memory **unit-normalized Num
 for vectorized cosine search over the full corpus — no `_MAX_SCAN` ceiling. Invalidated
 automatically on every memory write. Falls back to the Python cosine loop, then to lexical
 search if NumPy is absent. Tunable via `MEMORY_VECTOR_BACKEND` (auto | numpy | none).
+
+### 22. Stays fast & cheap under flaky providers (reliability layer)
+Models on free tiers stall and rate-limit; this layer keeps a run from hanging or overspending:
+- **Hard wall-clock timeout** on every model call (we enforce it ourselves — litellm's own
+  `timeout=` isn't reliably honored), so a stuck provider fails over in seconds, not minutes.
+- **Circuit breaker** skips a model that just failed for a cooldown window, so later steps
+  don't re-pay the timeout; the last model in a chain is always attempted.
+- **Bounded streaming** applies the same per-chunk watchdog to the token-stream path.
+- **Smarter critic gating** — skips the redundant QA pass on tier-2 build work when the
+  sandbox lets the agent self-verify (Claude-Code style); still runs it when it can't.
+- **Capped context tokens** (`AGENT_MAX_CONTEXT_TOKENS`, default 24K) so long chats don't
+  re-send tens of thousands of history tokens each round.
+- **Cost-sensitive routing** — single-file work routes to tier 2 (not 3), greetings take a
+  one-call fast-path on an uncontended model, `run_bash` output is clipped, flaky models are
+  demoted. `scripts/flow_benchmark.py` measures the before/after on real scenarios.
 
 ---
 
