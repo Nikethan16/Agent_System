@@ -395,10 +395,19 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
         if not msg_tool_calls:
             return msg_content or _finalize_from_board(board, task, budget, emit, stream)
 
-        for tc in tool_calls:
-            name = tc.function.name
+        for tc in msg_tool_calls:
+            # Tool calls come as objects (non-stream) or dicts (stream path) — normalize.
+            if isinstance(tc, dict):
+                fn = tc.get("function") or {}
+                name = fn.get("name") or ""
+                raw_args = fn.get("arguments")
+                tc_id = tc.get("id")
+            else:
+                name = tc.function.name
+                raw_args = tc.function.arguments
+                tc_id = tc.id
             try:
-                args = json.loads(tc.function.arguments or "{}")
+                args = json.loads(raw_args or "{}")
             except json.JSONDecodeError:
                 args = {}
 
@@ -432,7 +441,7 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
             else:
                 result = _run_one_tool(name, args, "lead", approve, emit)
 
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": str(result)})
+            messages.append({"role": "tool", "tool_call_id": tc_id, "content": str(result)})
 
         rounds += 1
         # Claude-style reminder injection: keep the live plan in front of the model.

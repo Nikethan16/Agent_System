@@ -135,7 +135,10 @@ with _T.using_workspace(tempfile.mkdtemp()):
     _T.write_file("d.py", "x\nx\n")
     check("edit_file refuses an ambiguous match", "unique" in _T.edit_file("d.py", "x", "y").lower())
     _T.edit_file("d.py", "x", "y", replace_all=True)
-    check("edit_file replace_all replaces every occurrence", _T.read_file("d.py").count("y") == 2)
+    # Read the RAW file off disk: read_file now wraps content in an untrusted-data
+    # boundary (whose note text contains 'y's), so counting via read_file is unreliable.
+    _draw = open(os.path.join(_T.current_workspace(), "d.py"), encoding="utf-8").read()
+    check("edit_file replace_all replaces every occurrence", _draw == "y\ny\n")
     check("edit_file errors when file is missing", _T.edit_file("missing.py", "a", "b").startswith("ERROR"))
 from core import agents as _team
 check("edit_file granted to the coder agent", "edit_file" in _team.agents.get("coder").tools)
