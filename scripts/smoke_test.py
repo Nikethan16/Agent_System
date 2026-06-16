@@ -249,8 +249,8 @@ _os.environ["NVIDIA_NIM_API_KEY"] = "smoke-nvidia-key"   # make NVIDIA models "a
 try:
     _chain = _reg.model_chain("tier3", task_type="reasoning")
     check("model_chain returns an ordered fallback list", isinstance(_chain, list) and len(_chain) >= 2)
-    check("model_chain routing: reasoning primary = deepseek-v4-pro",
-          _chain[0] == "nvidia_nim/deepseek-ai/deepseek-v4-pro")
+    check("model_chain routing: reasoning primary = nemotron-super",
+          _chain[0] == "nvidia_nim/nvidia/nemotron-3-super-120b-a12b")
     check("model_chain routing: coding primary = glm-5.1",
           _reg.model_chain("tier2", task_type="coding")[0] == "nvidia_nim/z-ai/glm-5.1")
     check("model_chain has no duplicates", len(_chain) == len(set(_chain)))
@@ -289,8 +289,8 @@ for _role in ("architect", "data-analyst", "code-reviewer", "fast-coder"):
           _role in _team4.agents.agents and _role in [a.id for a in _team4.agents.catalog()])
 _os.environ["NVIDIA_NIM_API_KEY"] = "smoke-nvidia-key"
 try:
-    check("routing: planning primary = deepseek-v4-pro",
-          _reg.model_chain("tier3", "planning")[0] == "nvidia_nim/deepseek-ai/deepseek-v4-pro")
+    check("routing: planning primary = nemotron-super",
+          _reg.model_chain("tier3", "planning")[0] == "nvidia_nim/nvidia/nemotron-3-super-120b-a12b")
     check("routing: data primary = qwen3.5-122b",
           _reg.model_chain("tier2", "data")[0] == "nvidia_nim/qwen/qwen3.5-122b-a10b")
 finally:

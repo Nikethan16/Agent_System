@@ -59,8 +59,11 @@ def _auto_review(tier, task_type) -> bool:
         return False
     if os.environ.get("AGENT_ALWAYS_REVIEW", "").strip().lower() in ("1", "true", "yes"):
         return True
-    # Execution available -> agent self-verifies; skip the redundant critic.
-    return "run_bash" not in toolbelt.names()
+    # Sandbox available (Docker configured) -> agent self-verifies in its loop;
+    # skip the redundant critic. Check the env var, not toolbelt.names() — run_bash
+    # is always registered now (CRITICAL+requires_human when no Docker) so names()
+    # is not a reliable proxy for "execution is actually available".
+    return not bool(os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip())
 
 
 # ---- Trivial chit-chat fast-path -------------------------------------------
