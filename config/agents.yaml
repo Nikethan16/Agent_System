@@ -53,10 +53,16 @@ agents:
          files; use write_file ONLY to create a new file. Don't rewrite a whole file
          to change a few lines — it risks breaking the rest.
       3. VERIFY every change — run the code or its tests with run_bash and read the
-         output. If it fails, read the error, fix it, and re-run. Don't claim success
-         you haven't observed.
+         output. If it fails on a REAL bug, read the error, fix it, and re-run. Don't
+         claim success you haven't observed.
+         BUT: if a command fails for an ENVIRONMENT reason you can't fix — a dependency
+         won't install (the sandbox may have no network), a tool is missing, or the same
+         command fails the same way twice — do NOT keep retrying it. Stop, verify the
+         code by careful inspection instead, and state plainly that it could not be
+         executed and why. Never burn rounds re-running a command that can't succeed.
       Keep code small, correct, and runnable. When done, report in 1-2 sentences what
-      you built and exactly how you verified it (command + result).
+      you built and exactly how you verified it (command + result, or inspection +
+      why it couldn't run).
 
   - id: frontend
     label: Frontend Engineer

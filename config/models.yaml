@@ -65,15 +65,24 @@ worker_tier: tier2
 # fallbacks after these, and skips any model whose key isn't set — so listing a few
 # is enough. (This is what the Settings "Routing & fallback" editor will edit.)
 routing:
-  reasoning: ["nvidia_nim/deepseek-ai/deepseek-v4-pro",
-              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
-              "nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b"]
-  coding:    ["nvidia_nim/z-ai/glm-5.1",
-              "nvidia_nim/deepseek-ai/deepseek-v4-pro",
-              "nvidia_nim/deepseek-ai/deepseek-v4-flash"]
-  research:  ["nvidia_nim/qwen/qwen3.5-122b-a10b",
-              "nvidia_nim/deepseek-ai/deepseek-v4-pro",
+  # NOTE: deepseek-v4-pro was unreliable on the NIM free tier (frequent ~45s
+  # timeouts in live runs), so it is DEMOTED to a deeper fallback in every chain
+  # rather than leading. The faster, reliable NIM models lead each chain. Re-promote
+  # it (move to front + drop its catalog cost) if/when NIM serves it dependably.
+  # chat: trivial greetings/short replies lead with GEMINI flash-lite — it's fast and
+  # NOT subject to the NIM free-tier 40-RPM contention that made "hi" take ~139s.
+  chat:      ["gemini/gemini-2.5-flash-lite",
+              "nvidia_nim/deepseek-ai/deepseek-v4-flash",
               "nvidia_nim/z-ai/glm-5.1"]
+  reasoning: ["nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+              "nvidia_nim/minimaxai/minimax-m3",
+              "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
+  coding:    ["nvidia_nim/z-ai/glm-5.1",
+              "nvidia_nim/deepseek-ai/deepseek-v4-flash",
+              "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
+  research:  ["nvidia_nim/qwen/qwen3.5-122b-a10b",
+              "nvidia_nim/z-ai/glm-5.1",
+              "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
   general:   ["nvidia_nim/deepseek-ai/deepseek-v4-flash",
               "nvidia_nim/meta/llama-4-maverick-17b-128e-instruct",
               "nvidia_nim/z-ai/glm-5.1"]
@@ -81,9 +90,9 @@ routing:
               "nvidia_nim/meta/llama-4-maverick-17b-128e-instruct"]
   classify:  ["gemini/gemini-2.5-flash-lite",
               "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b"]
-  planning:  ["nvidia_nim/deepseek-ai/deepseek-v4-pro",
-              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
-              "nvidia_nim/minimaxai/minimax-m3"]
+  planning:  ["nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+              "nvidia_nim/minimaxai/minimax-m3",
+              "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
   data:      ["nvidia_nim/qwen/qwen3.5-122b-a10b",
               "nvidia_nim/z-ai/glm-5.1",
               "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
@@ -116,12 +125,16 @@ catalog:
   # =========================================================================
 
   # --- Orchestrator / LEAD (reasoning, planning, agent loops) ---
+  # cost demoted 0 -> 4: it was the cost-first DEFAULT pick (cheapest + first in
+  # catalog) for every bare tier lookup, but it times out frequently on the NIM
+  # free tier. Demoting keeps it usable as a fallback without it poisoning the
+  # default/greeting path. Drop back to 0 to restore it as the primary.
   - id: "nvidia_nim/deepseek-ai/deepseek-v4-pro"
     provider: "nvidia_nim"
     requires_env: "NVIDIA_NIM_API_KEY"
     free: true
     open_source: false          # open-weight status disputed — verify before self-host
-    cost: 0
+    cost: 4
     tier_hint: 3
     good_for: [reasoning, planning, agents, hard, math]
 

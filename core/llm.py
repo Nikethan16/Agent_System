@@ -13,6 +13,7 @@ import os
 import time
 import threading
 import contextvars
+import concurrent.futures as _futures
 from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
@@ -36,10 +37,118 @@ litellm.num_retries = 0
 
 # Hard per-call wall-clock timeout (seconds). Bounds a cold-start/stuck provider so
 # it fails fast and the fallback chain can move on, instead of freezing the run.
-_TIMEOUT = float(os.environ.get("AGENT_LLM_TIMEOUT", "90"))
+_TIMEOUT = float(os.environ.get("AGENT_LLM_TIMEOUT", "45"))
 # How many keys to try for ONE model before giving up on it (then the chain falls
 # back to the next model). At least a couple even with a single key (brief backoff).
 _KEY_ATTEMPTS = int(os.environ.get("AGENT_KEY_ATTEMPTS", "4"))
+
+# Circuit breaker: once a model fails (timeout / 5xx / rate-limit-exhausted), mark it
+# "open" for _BREAKER_COOLDOWN seconds so every later call in the same run (and
+# concurrent runs) skips it immediately instead of waiting _TIMEOUT each time.
+# This is the fix for multi-minute hangs caused by a dead primary being retried on
+# every step. The last model in the chain is NEVER skipped (always a live attempt).
+_BREAKER: dict[str, float] = {}        # model_id -> open_until epoch
+_BREAKER_LOCK = threading.Lock()
+_BREAKER_COOLDOWN = float(os.environ.get("AGENT_BREAKER_COOLDOWN", "60"))
+
+
+def _breaker_open(model: str) -> bool:
+    with _BREAKER_LOCK:
+        return time.time() < _BREAKER.get(model, 0)
+
+
+def _trip_breaker(model: str) -> None:
+    with _BREAKER_LOCK:
+        _BREAKER[model] = time.time() + _BREAKER_COOLDOWN
+
+
+def _reset_breaker(model: str) -> None:
+    with _BREAKER_LOCK:
+        _BREAKER.pop(model, None)
+
+
+# Hard wall-clock timeout. litellm's own `timeout=` is NOT reliably enforced for
+# every provider (a slow NVIDIA NIM call was observed running ~139s despite
+# timeout=45s and returning successfully — so no exception was ever raised and the
+# circuit breaker could not trip). We enforce the bound OURSELVES: run the provider
+# call on a worker and stop waiting after `timeout`, raising a litellm Timeout the
+# fallback chain treats as fallbackable (trips the breaker, advances to the next
+# model). The abandoned worker keeps running until the HTTP call returns on its own,
+# but the run is no longer blocked. Toggle off with AGENT_HARD_TIMEOUT=0.
+_HARD_TIMEOUT = os.environ.get("AGENT_HARD_TIMEOUT", "1").strip().lower() not in ("0", "false", "no")
+_LLM_EXEC = _futures.ThreadPoolExecutor(
+    max_workers=int(os.environ.get("AGENT_LLM_WORKERS", "16")), thread_name_prefix="llm")
+
+
+def _timeout_exc(timeout):
+    """A litellm.Timeout if this version exposes a constructible one, else a builtin
+    TimeoutError. Either is caught as fallbackable by complete_chain."""
+    T = getattr(litellm, "Timeout", None)
+    if isinstance(T, type):
+        try:
+            return T(message=f"hard wall-clock timeout after {timeout}s",
+                     model="", llm_provider="")
+        except Exception:
+            try:
+                return T(f"hard wall-clock timeout after {timeout}s")
+            except Exception:
+                pass
+    return TimeoutError(f"hard wall-clock timeout after {timeout}s")
+
+
+def _bounded_completion(kwargs):
+    """litellm.completion bounded by a hard wall-clock timeout we enforce ourselves."""
+    if not _HARD_TIMEOUT:
+        return litellm.completion(**kwargs)
+    timeout = kwargs.get("timeout") or _TIMEOUT
+    fut = _LLM_EXEC.submit(litellm.completion, **kwargs)
+    try:
+        # Give the worker a small grace beyond litellm's own timeout, so when litellm
+        # DOES honor it we surface its richer error rather than our generic one.
+        return fut.result(timeout=timeout + 5)
+    except _futures.TimeoutError:
+        fut.cancel()
+        raise _timeout_exc(timeout)
+
+
+def _iter_stream_bounded(kwargs, timeout=None):
+    """Iterate a streaming completion with a hard per-chunk wall-clock bound.
+
+    The same litellm-timeout-not-honored problem applies to streaming: a provider can
+    stall before the first token (or mid-stream) with no error raised. The blocking
+    provider reads run on a worker thread and are handed back through a queue; if no
+    chunk arrives within `timeout`, we abandon and raise a fallbackable Timeout (the
+    agent loop then falls back to the bounded non-streaming path). Chunks are YIELDED to
+    the calling thread, so on_token/emit side effects stay on the original thread."""
+    timeout = timeout or _TIMEOUT
+    if not _HARD_TIMEOUT:
+        for ch in litellm.completion(**kwargs):
+            yield ch
+        return
+    import queue as _queue
+    q: _queue.Queue = _queue.Queue()
+    _DONE = object()
+
+    def _producer():
+        try:
+            for ch in litellm.completion(**kwargs):
+                q.put((ch, None))
+        except Exception as e:          # surface to the consumer to raise in-thread
+            q.put((None, e))
+        finally:
+            q.put((_DONE, None))
+
+    _LLM_EXEC.submit(_producer)
+    while True:
+        try:
+            item, err = q.get(timeout=timeout + 5)
+        except _queue.Empty:
+            raise _timeout_exc(timeout)
+        if err is not None:
+            raise err
+        if item is _DONE:
+            return
+        yield item
 
 
 def _exc(*names):
@@ -293,7 +402,7 @@ def complete(model, messages, tools=None, max_tokens=4096,
             kwargs["api_key"] = key.value
         _t0 = time.time()
         try:
-            resp = litellm.completion(**kwargs)
+            resp = _bounded_completion(kwargs)
         except _RATE_LIMIT as e:                 # this key is throttled — cool it, rotate
             last_exc = e
             if pool and key:
@@ -347,15 +456,28 @@ def complete_chain(models, messages, tools=None, max_tokens=4096, budget: Budget
         raise ValueError("complete_chain: empty model list")
     last_exc = None
     for i, model in enumerate(chain):
+        # Circuit breaker: skip a recently-failed model unless it's the last option.
+        # Never skip the last fallback — we always make a live attempt.
+        if _breaker_open(model) and i < len(chain) - 1:
+            nxt = chain[i + 1]
+            if on_fallback:
+                try:
+                    on_fallback(model, nxt, "circuit-breaker: skipped (recent failure)")
+                except Exception:
+                    pass
+            continue
         try:
-            return complete(model, messages, tools=tools, max_tokens=max_tokens,
+            resp = complete(model, messages, tools=tools, max_tokens=max_tokens,
                             budget=budget, temperature=temperature, timeout=timeout)
+            _reset_breaker(model)             # success — clear any open breaker
+            return resp
         except BudgetExceeded:
             raise                                  # hard cap — do not fall back
         except _BUG:
             raise                                  # our bug — surface it, don't mask
         except Exception as e:                     # rate-limit-exhausted / timeout / 5xx / empty
             last_exc = e
+            _trip_breaker(model)              # trip the breaker so later calls skip it
             nxt = chain[i + 1] if i + 1 < len(chain) else None
             metrics.record(model, 0.0, ok=False, fallback=bool(nxt), error=type(e).__name__)
             if nxt and on_fallback:
@@ -397,11 +519,12 @@ def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
     """
     if budget:
         budget.check()
-    resp = litellm.completion(
+    _kw = dict(
         model=model, messages=messages, max_tokens=max_tokens,
         temperature=temperature, stream=True, timeout=_TIMEOUT,
         stream_options={"include_usage": True}, api_key=_key_for(model),
     )
+    resp = _iter_stream_bounded(_kw)
     pieces, cost, tokens = [], 0.0, 0
     for chunk in resp:
         try:
@@ -474,7 +597,7 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
-    resp = litellm.completion(**kwargs)
+    resp = _iter_stream_bounded(kwargs)
 
     content, tcs, cost, tokens = [], {}, 0.0, 0
     for chunk in resp:

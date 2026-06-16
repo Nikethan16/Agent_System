@@ -172,6 +172,21 @@ def list_files(directory: str = ".") -> str:
         return f"ERROR listing {directory}: {e}"
 
 
+# Cap each bash stream so verbose output (pip install, pytest -v) can't balloon the
+# agent's message history. Keep the HEAD and TAIL — the head shows what started, the
+# tail shows the result/error summary, which is what the model needs to act on.
+_BASH_OUT_CAP = int(os.environ.get("AGENT_BASH_OUTPUT_CAP", "4000"))
+
+
+def _clip(s: str) -> str:
+    s = s or ""
+    if len(s) <= _BASH_OUT_CAP:
+        return s
+    head = _BASH_OUT_CAP // 2
+    tail = _BASH_OUT_CAP - head
+    return (f"{s[:head]}\n... [{len(s) - _BASH_OUT_CAP} chars truncated] ...\n{s[-tail:]}")
+
+
 def run_bash(command: str) -> str:
     if os.environ.get("AGENT_DISABLE_BASH", "").strip() in ("1", "true", "yes"):
         return ("ERROR: shell execution is disabled (AGENT_DISABLE_BASH is set). "
@@ -211,9 +226,10 @@ def run_bash(command: str) -> str:
     ]
     try:
         out = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-        # stdout/stderr are program output from the container — untrusted DATA.
+        # stdout/stderr are program output from the container — untrusted DATA, and
+        # potentially huge, so clip each stream before wrapping it in the boundary.
         body = _wrap_untrusted(
-            f"STDOUT:\n{out.stdout}\nSTDERR:\n{out.stderr}",
+            f"STDOUT:\n{_clip(out.stdout)}\nSTDERR:\n{_clip(out.stderr)}",
             "command_output", command=command[:120])
         return f"exit={out.returncode}\n{body}"
     except subprocess.TimeoutExpired:

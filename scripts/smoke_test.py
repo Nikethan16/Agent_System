@@ -78,7 +78,7 @@ def fake(**kw):
     if "task router" in sysm:
         tier = 3 if "build" in user.lower() else 1
         return _Resp('{"tier": %d, "task_type":"coding","requires_web":false,"reason":"x"}' % tier)
-    if "lead engineer coordinating" in sysm:      # the master loop
+    if "lead engineer" in sysm or "work like claude" in sysm:      # the master loop
         _MASTER["n"] += 1
         if _MASTER["n"] == 1:
             return _ToolResp("Planning.", [("write_todos", '{"todos":[{"text":"write code","status":"pending"}]}')])
@@ -135,7 +135,10 @@ with _T.using_workspace(tempfile.mkdtemp()):
     _T.write_file("d.py", "x\nx\n")
     check("edit_file refuses an ambiguous match", "unique" in _T.edit_file("d.py", "x", "y").lower())
     _T.edit_file("d.py", "x", "y", replace_all=True)
-    check("edit_file replace_all replaces every occurrence", _T.read_file("d.py").count("y") == 2)
+    # Read the RAW file off disk: read_file now wraps content in an untrusted-data
+    # boundary (whose note text contains 'y's), so counting via read_file is unreliable.
+    _draw = open(os.path.join(_T.current_workspace(), "d.py"), encoding="utf-8").read()
+    check("edit_file replace_all replaces every occurrence", _draw == "y\ny\n")
     check("edit_file errors when file is missing", _T.edit_file("missing.py", "a", "b").startswith("ERROR"))
 from core import agents as _team
 check("edit_file granted to the coder agent", "edit_file" in _team.agents.get("coder").tools)
@@ -246,8 +249,8 @@ _os.environ["NVIDIA_NIM_API_KEY"] = "smoke-nvidia-key"   # make NVIDIA models "a
 try:
     _chain = _reg.model_chain("tier3", task_type="reasoning")
     check("model_chain returns an ordered fallback list", isinstance(_chain, list) and len(_chain) >= 2)
-    check("model_chain routing: reasoning primary = deepseek-v4-pro",
-          _chain[0] == "nvidia_nim/deepseek-ai/deepseek-v4-pro")
+    check("model_chain routing: reasoning primary = nemotron-super",
+          _chain[0] == "nvidia_nim/nvidia/nemotron-3-super-120b-a12b")
     check("model_chain routing: coding primary = glm-5.1",
           _reg.model_chain("tier2", task_type="coding")[0] == "nvidia_nim/z-ai/glm-5.1")
     check("model_chain has no duplicates", len(_chain) == len(set(_chain)))
@@ -286,8 +289,8 @@ for _role in ("architect", "data-analyst", "code-reviewer", "fast-coder"):
           _role in _team4.agents.agents and _role in [a.id for a in _team4.agents.catalog()])
 _os.environ["NVIDIA_NIM_API_KEY"] = "smoke-nvidia-key"
 try:
-    check("routing: planning primary = deepseek-v4-pro",
-          _reg.model_chain("tier3", "planning")[0] == "nvidia_nim/deepseek-ai/deepseek-v4-pro")
+    check("routing: planning primary = nemotron-super",
+          _reg.model_chain("tier3", "planning")[0] == "nvidia_nim/nvidia/nemotron-3-super-120b-a12b")
     check("routing: data primary = qwen3.5-122b",
           _reg.model_chain("tier2", "data")[0] == "nvidia_nim/qwen/qwen3.5-122b-a10b")
 finally:
@@ -550,7 +553,7 @@ def _fake_parallel(**kw):
     sysm = next((m.get("content", "") for m in msgs if m.get("role") == "system"), "").lower()
     if "task router" in sysm:
         return _Resp('{"tier":3,"task_type":"coding","requires_web":false,"reason":"x"}')
-    if "lead engineer coordinating" in sysm:
+    if "lead engineer" in sysm or "work like claude" in sysm:
         _pm["n"] += 1
         if _pm["n"] == 1:
             return _ToolResp("plan", [("write_todos", '{"todos":[{"text":"two files","status":"pending"}]}')])

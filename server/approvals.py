@@ -8,6 +8,7 @@ When the agent loop escalates a risky tool, this broker:
      answer (Layer 4).
 The worker runs in a thread; we bridge to the async WebSocket with an Event.
 """
+import os
 import json
 import uuid
 import threading
@@ -37,30 +38,47 @@ def resolve(req_id: str, allowed: bool, reason: str = "", decided_by: str = "use
     return broker.resolve(req_id, allowed, reason, decided_by=decided_by)
 
 
+# Hard timeout for the manager review LLM call. Short so it never blocks the
+# critical path for long; infra failures are flagged as transient (not genuine denials).
+_MANAGER_REVIEW_TIMEOUT = float(os.environ.get("AGENT_MANAGER_TIMEOUT", "15"))
+
+
 def _manager_review(tool, args, task_context, budget):
-    """Layer 3 — the security-manager agent gives a binary approve/deny + reason."""
+    """Layer 3 — the security-manager agent gives a binary approve/deny + reason.
+
+    Uses a cheap tier-1 chain with a hard 15s timeout — security triage is a quick
+    binary judgment, not a reasoning task. Infra failures (timeout, rate-limit) are
+    flagged with an '[infra]' prefix so the caller knows it's transient, not a genuine
+    policy decision, and the agent doesn't spin retrying an unchangeable outcome.
+    """
     mgr = agent_registry.get("security-manager")
     if mgr is None:
         return True, "no manager configured"
-    model = registry.model_for_tier(mgr.tier)
+    # Use cheap + fast tier-1 chain — security triage doesn't need a frontier model.
+    from core.llm import complete_chain as _chain
+    chain = registry.model_chain("tier1", task_type="classify")
     prompt = (
         f"TASK CONTEXT:\n{task_context or '(none)'}\n\n"
-        f"PROPOSED ACTION:\n  tool: {tool.name} (risk={tool.risk})\n  args: {json.dumps(args, default=str)}\n\n"
-        "Approve only if this is justified, scoped, and acceptable."
+        f"PROPOSED ACTION:\n  tool: {tool.name} (risk={tool.risk})\n"
+        f"  args: {json.dumps(args, default=str)}\n\n"
+        'Approve only if justified, scoped, and acceptable. Output ONLY JSON: '
+        '{"approve": true|false, "reason": "<=20 words"}'
     )
     try:
-        resp, _ = complete(
-            model,
+        resp, _ = _chain(
+            chain,
             [{"role": "system", "content": mgr.prompt},
              {"role": "user", "content": prompt}],
-            max_tokens=150, budget=budget, temperature=0,
+            max_tokens=80, budget=budget, temperature=0,
+            timeout=_MANAGER_REVIEW_TIMEOUT,
         )
         txt = (resp.choices[0].message.content or "").strip()
         data = json.loads(txt[txt.find("{"): txt.rfind("}") + 1])
         return bool(data.get("approve")), data.get("reason", "")
     except Exception as e:
-        # Fail closed: if the manager can't decide, don't auto-allow critical work.
-        return False, f"manager review failed: {type(e).__name__}"
+        # Infra failure (timeout, rate-limit) — fail closed but flag as transient so
+        # the agent knows a retry won't change the outcome and stops spinning.
+        return False, f"[infra] manager unavailable: {type(e).__name__}"
 
 
 class ApprovalBroker:
@@ -87,18 +105,25 @@ class ApprovalBroker:
         if self.mode == "trusted":
             return True, "trusted mode (auto-approved)"
 
-        # Layer 3: manager agent
-        m_ok, m_reason = _manager_review(tool, args, self.task_context, self.budget)
-        self.emit({"type": "manager_review", "tool": tool.name,
-                   "approved": m_ok, "reason": m_reason})
-        if not m_ok:
-            return False, f"manager denied: {m_reason}"
+        # Layer 3: manager agent — consulted ONLY for genuinely critical/irreversible
+        # actions (decision.requires_human) in auto mode. Regular write-risk escalations
+        # are decided by the deterministic policy gate (Layer 2) that already ran; no
+        # second model needed on the hot path. Careful mode reviews everything.
+        needs_manager = self.mode == "careful" or decision.requires_human
+        if needs_manager:
+            m_ok, m_reason = _manager_review(tool, args, self.task_context, self.budget)
+            self.emit({"type": "manager_review", "tool": tool.name,
+                       "approved": m_ok, "reason": m_reason})
+            if not m_ok:
+                return False, f"manager denied: {m_reason}"
+        else:
+            m_reason = "auto-approved (policy gate passed)"
 
         # Layer 4: human — always in careful mode, else only when policy requires it
         if self.mode == "careful" or decision.requires_human:
             return self._ask_human(tool, args, decision, m_reason)
 
-        return True, f"manager approved: {m_reason}"
+        return True, m_reason
 
     def _ask_human(self, tool, args, decision, manager_reason):
         req_id = uuid.uuid4().hex

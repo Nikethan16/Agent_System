@@ -111,12 +111,25 @@ register_fn(
 )
 import os as _os
 _docker_configured = bool(_os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip())
-register_fn(
-    "run_bash", lambda command: run_bash(command),
-    _obj({"command": {"type": "string"}}, ["command"]),
-    "Run a shell command in the sandboxed Docker workspace (tests, builds, executing code).",
-    # Sandboxed (Docker) → RISK_WRITE so auto/trusted modes skip the human-click loop.
-    # Unsandboxed → RISK_CRITICAL + requires_human (the safe default when no image is set).
-    RISK_WRITE if _docker_configured else RISK_CRITICAL,
-    requires_human=not _docker_configured,
-)
+if _docker_configured:
+    # Docker sandbox configured: sandboxed (RISK_WRITE), auto-approved in auto/trusted mode.
+    register_fn(
+        "run_bash", lambda command: run_bash(command),
+        _obj({"command": {"type": "string"}}, ["command"]),
+        "Run a shell command in the sandboxed Docker workspace (tests, builds, executing code).",
+        RISK_WRITE,
+        requires_human=False,
+    )
+else:
+    # Docker NOT configured: register run_bash as CRITICAL + requires_human so every call
+    # goes through human approval rather than auto-executing. The function returns an
+    # informative error; the human gate prevents silent spin-loops. Once
+    # AGENT_BASH_DOCKER_IMAGE is set and the server restarts, the tool upgrades to RISK_WRITE.
+    # Always registered (never None) so the policy gate and toolbelt tests work correctly.
+    register_fn(
+        "run_bash", lambda command: run_bash(command),
+        _obj({"command": {"type": "string"}}, ["command"]),
+        "Run a shell command (requires Docker sandbox — set AGENT_BASH_DOCKER_IMAGE to enable).",
+        RISK_CRITICAL,
+        requires_human=True,
+    )
