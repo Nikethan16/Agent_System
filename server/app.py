@@ -13,7 +13,7 @@ from fastapi import FastAPI, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import db, jobs, scheduler
+from . import db, jobs, scheduler, ratelimit
 from .auth import require_auth
 from .api import sessions, workspace, models, ws
 from .api import jobs as jobs_api
@@ -29,6 +29,23 @@ from .api import auth_routes
 import tools  # noqa: F401  (registers web_search/web_fetch/generate_image/mcp_call)
 
 app = FastAPI(title="Agent Core")
+
+
+@app.middleware("http")
+async def _rate_limit(request: Request, call_next):
+    # General per-IP request cap on every /api/* call (server/ratelimit.py). Fails
+    # open on misconfiguration; the WebSocket has its own connection-level auth and
+    # isn't a repeatable-request vector the same way, so it's left uncapped here.
+    if request.url.path.startswith("/api/"):
+        ip = ratelimit.client_ip(request)
+        if not ratelimit.allow_request(ip):
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Slow down."},
+                headers={"Retry-After": "60"},
+            )
+    return await call_next(request)
+
 
 # Every REST router is gated by require_auth (loopback-only until AGENT_AUTH_TOKEN
 # is set). The WebSocket is gated separately inside ws.py (it can't use Depends the
