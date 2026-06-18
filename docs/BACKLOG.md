@@ -1,10 +1,55 @@
 # BACKLOG — what's left to do
 
-_Last updated: 2026-06-15. The prioritized list of remaining work. Nothing here is blocking —
+_Last updated: 2026-06-18. The prioritized list of remaining work. Nothing here is blocking —
 the app is complete and deployed live. Items are roughly ordered by value. See `HANDOFF.md`
 for current state and `STATUS.md` for what's already done._
 
 ---
+
+## 🔎 Orchestration issues found via live trace analysis (2026-06-18, observed only — not yet fixed)
+Found by running `scripts/inspect_run.py` against a real multi-turn session and reading the
+full event timeline + generated workspace files. The owner asked to observe real runs across
+varying task complexity before deciding what to fix — **none of these have been touched**.
+Re-run `inspect_run.py` on more sessions for more evidence before prioritizing.
+
+1. **Garbled/leaked special-token tool-call output shown as the final answer** — raw model
+   tokens like `<｜DSML｜tool_calls>` and `<tool_call><function=run_bash>` (including a
+   hallucinated nonexistent tool `run_shell`) were emitted directly as the user-facing `final`
+   message, twice in one session, instead of being parsed/retried.
+2. **Tier-3 research delegation death-spirals on the iteration cap** — both a subagent and the
+   LEAD hit `MAX_MASTER_ROUNDS`/iteration cap (20) on a research task and returned the raw,
+   unresolved subtask text as `final` instead of a synthesized answer or an explicit failure.
+3. **LEAD re-plans the identical generic template repeatedly before acting** — observed 7
+   re-plans (~320+s) on a tier-3 build task before any tool use, all producing the same plan.
+4. **Tier/agent cost mismatch** — tier-1-classified tasks were executed by `general`/`research`
+   specialists that are themselves configured at tier 2 (`config/agents.yaml`), undermining the
+   cost-tier separation; the LLM-based specialist dispatcher (`core/agents.py:select_agent`)
+   failed in this run and fell back to keyword matching.
+5. **`research-report` skill over-triggers on trivial factual questions** — e.g. "capital of
+   France" produced a full report-format answer in ~87s instead of a one-line fact.
+6. **One shared workspace per chat session causes file collisions** — `session_workspace()`
+   gives standalone chats one folder regardless of how many unrelated things get built in that
+   chat; a Todo API + a URL shortener + benchmark project files ended up mixed in the same
+   folder and confused later turns referencing "the project."
+7. **`run_bash` / `write_file` path conventions disagree** — the Docker sandbox's in-container
+   view (e.g. `/ws` owned by uid 1001) and the host-side `write_file` path expectations
+   disagree, causing a hard "escapes workspace" block on a legitimate edit attempt.
+
+Also unresolved (lower priority, separate from the above): session
+`6dc676e500a541e9b966849004545c70` has **zero trace events** — not yet investigated whether it
+never ran or traces failed to write.
+
+---
+
+## ✅ Recently shipped (2026-06-18) — public exposure via Tailscale Funnel + rate limiting
+- **`scripts/inspect_run.py`** (PR #3) — read-only run diagnostics (timeline, span-tree,
+  workspace files, last message). This is what surfaced the issues listed above.
+- **`server/ratelimit.py`** (PR #4) — per-IP sliding-window request cap on every `/api/*` call
+  + login brute-force lockout on `/api/login`, both fail-open on misconfig. Wired into
+  `server/app.py` (middleware) and `server/api/auth_routes.py`.
+- **Public HTTPS URL via Tailscale Funnel** — `https://agentcore.tail1d9a60.ts.net`, free, no
+  domain purchased. VM hostname renamed to `agentcore` for a cleaner URL. The app is reachable
+  from any device now, gated by the email+password login (+ the rate limiting above).
 
 ## ✅ Recently shipped (2026-06-15) — repo mode, Docker sandbox, tracing, ANN index
 These four were built and pushed (branch `claude/serene-lamport-r1ix0k`, commit `513eb24`).
@@ -56,16 +101,19 @@ Code is done; the items below note the **operational steps** still needed to act
 ## Reliability / quality
 - Broaden integration tests further (more edge cases; multi-agent flow tests).
 
-## Security / ops (matters most if ever exposed beyond Tailscale)
-- **API rate-limiting** + **encrypt stored API keys** at rest.
+## Security / ops (the app is now public — see HANDOFF.md "Security follow-ups")
+- **Encrypt stored API keys** at rest — matters more now that the app is internet-reachable.
+- Consider rotating/strengthening `AGENT_LOGIN_PASSWORD`; watch `journalctl -u agentcore` for
+  repeated 401/429s on `/api/login` as a sign of scanning/brute-force attempts.
 - **Off-site backups** (`BACKUP_UPLOAD_CMD`) so backups leave the VM.
 - Docker-group membership is root-equivalent — consider rootless Docker for the sandbox.
 
 ---
 
 ## Suggested next sequence
-1. **Activate repo mode + sandbox on the server** (`GITHUB_TOKEN`, flip `AGENT_DISABLE_BASH`
+1. **Decide which orchestration issues to fix** (list above) — owner is reviewing real-run
+   evidence before prioritizing.
+2. **Activate repo mode + sandbox on the server** (`GITHUB_TOKEN`, flip `AGENT_DISABLE_BASH`
    off, set `AGENT_BASH_DOCKER_IMAGE`/`NETWORK`) and run `scripts/test_repo_mode.py`.
-2. **Off-site backups** — set `BACKUP_UPLOAD_CMD` in server `.env`.
-3. **Mobile pass** — CSS tweaks for phone drawers.
-4. **API rate-limiting** before any wider exposure.
+3. **Off-site backups** — set `BACKUP_UPLOAD_CMD` in server `.env`.
+4. **Mobile pass** — CSS tweaks for phone drawers.
