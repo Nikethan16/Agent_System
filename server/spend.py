@@ -7,7 +7,7 @@ AGENT_DAILY_USD_CAP in .env; 0 / unset = unlimited (default, so behaviour is unc
 until you opt in). Spend is recorded per UTC day in SQLite and resets at midnight UTC.
 """
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from sqlmodel import SQLModel, Field, Session as DBSession, select
 
@@ -78,3 +78,46 @@ def status() -> dict:
         "cap": DAILY_CAP if DAILY_CAP > 0 else None,
         "remaining": round(max(0.0, DAILY_CAP - spent), 6) if DAILY_CAP > 0 else None,
     }
+
+
+# ---- analytics for the Usage/Cost dashboard --------------------------------
+def history(days: int = 14) -> list:
+    """Daily spend totals for the last `days` UTC days (oldest first), with missing
+    days filled as 0 so the series is continuous for charting."""
+    days = max(1, min(int(days or 14), 90))
+    base = datetime.now(timezone.utc).date()
+    cutoff = (base - timedelta(days=days - 1)).isoformat()
+    with DBSession(engine) as s:
+        rows = s.exec(select(Spend).where(Spend.day >= cutoff)).all()
+    by_day: dict = {}
+    for r in rows:
+        by_day[r.day] = by_day.get(r.day, 0.0) + r.usd
+    return [{"day": (base - timedelta(days=i)).isoformat(),
+             "usd": round(by_day.get((base - timedelta(days=i)).isoformat(), 0.0), 6)}
+            for i in range(days - 1, -1, -1)]
+
+
+def all_time_total() -> float:
+    with DBSession(engine) as s:
+        rows = s.exec(select(Spend)).all()
+    return round(sum(r.usd for r in rows), 6)
+
+
+def by_project_all() -> dict:
+    """Cumulative spend per project_id (excludes standalone chats)."""
+    with DBSession(engine) as s:
+        rows = s.exec(select(Spend).where(Spend.project_id != "")).all()
+    agg: dict = {}
+    for r in rows:
+        agg[r.project_id] = agg.get(r.project_id, 0.0) + r.usd
+    return {k: round(v, 6) for k, v in agg.items()}
+
+
+def overview(days: int = 14) -> dict:
+    """Everything the Usage/Cost dashboard needs in one call (project NAMES are
+    joined in the API layer, which owns the projects table)."""
+    ov = status()
+    ov["all_time"] = all_time_total()
+    ov["history"] = history(days)
+    ov["by_project"] = by_project_all()
+    return ov

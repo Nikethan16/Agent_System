@@ -112,6 +112,24 @@ def spend_status():
     return spend.status()
 
 
+@app.get("/api/spend/overview", dependencies=_auth)
+def spend_overview():
+    """Cost dashboard feed: today vs cap, all-time total, a daily-spend series, and
+    per-project spend (names + caps joined here, where the projects table lives)."""
+    from . import spend, projects
+    ov = spend.overview()
+    plist = projects.list_all()
+    names = {p["id"]: p.get("name", p["id"][:8]) for p in plist}
+    caps = {p["id"]: float(p.get("budget_usd", 0.0) or 0.0) for p in plist}
+    by_project = ov.pop("by_project", {})
+    ov["projects"] = sorted(
+        ({"project_id": pid, "name": names.get(pid, pid[:8]), "spent": usd,
+          "cap": caps.get(pid) if caps.get(pid, 0) > 0 else None}
+         for pid, usd in by_project.items()),
+        key=lambda x: -x["spent"])[:12]
+    return ov
+
+
 # ---- serve the built React app (web/dist) if present ------------------------
 _DIST = os.path.join(os.path.dirname(__file__), "..", "web", "dist")
 
