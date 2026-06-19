@@ -16,8 +16,85 @@ import re
 import json
 
 from .llm import complete, complete_chain, stream_complete_tools, Budget, BudgetExceeded
+from .registry import registry
 from . import toolbelt
 from . import policy
+
+# --- within-run context compaction (phase 2 — root fix for orchestration #2) -
+# A long task's message history grows until it hits the iteration/context cap and
+# returns raw text. Instead, when the running history gets large we summarize the
+# OLDER middle turns into one note and keep the system prompt + recent turns. We
+# never split an assistant's tool_calls from its tool results (that would make the
+# message list invalid for the provider). Best-effort: a compaction failure never
+# breaks the run. Toggle with AGENT_COMPACT=0.
+_COMPACT_KEEP = int(os.environ.get("AGENT_COMPACT_KEEP", "6"))      # recent msgs kept verbatim
+_COMPACT_RATIO = float(os.environ.get("AGENT_COMPACT_RATIO", "0.8"))  # of the context budget
+
+
+def _approx_tokens(messages) -> int:
+    total = 0
+    for m in messages:
+        c = m.get("content")
+        total += len(c) if isinstance(c, str) else (len(str(c)) if c else 0)
+        if m.get("tool_calls"):
+            total += len(str(m["tool_calls"]))
+    return total // 4
+
+
+def _compact_messages(messages, budget=None, emit=None, label="agent"):
+    """Summarize older turns when the history is large; keep system + recent turns.
+    Returns the (possibly) shortened message list. Never raises."""
+    if os.environ.get("AGENT_COMPACT", "").strip().lower() in ("0", "false", "no"):
+        return messages
+    try:
+        budget_tokens = registry.context_budget()
+    except Exception:
+        budget_tokens = 24000
+    if not budget_tokens or budget_tokens <= 0:
+        return messages
+    threshold = int(budget_tokens * _COMPACT_RATIO)
+    if _approx_tokens(messages) <= threshold or len(messages) <= _COMPACT_KEEP + 2:
+        return messages
+
+    head = messages[:1]                       # the system prompt
+    keep_from = max(1, len(messages) - _COMPACT_KEEP)
+    # The kept tail must NOT start on a 'tool' message (it has to follow its
+    # assistant's tool_calls) — advance until it starts on a non-tool message.
+    while keep_from < len(messages) and messages[keep_from].get("role") == "tool":
+        keep_from += 1
+    middle, tail = messages[1:keep_from], messages[keep_from:]
+    if not middle:
+        return messages
+
+    lines = []
+    for m in middle:
+        content = m.get("content") or ""
+        if m.get("tool_calls"):
+            names = ", ".join(tc.get("function", {}).get("name", "")
+                              for tc in m["tool_calls"] if isinstance(tc, dict))
+            content = f"{content} [called: {names}]"
+        lines.append(f"{m.get('role', '?')}: {str(content)[:1000]}")
+    convo = "\n".join(lines)[:12000]
+    try:
+        model = registry.model_for_tier("tier1")
+        resp, _ = complete(
+            model,
+            [{"role": "system", "content":
+              "Summarize this agent work-log compactly. PRESERVE: files created/edited, "
+              "key decisions, tool results that matter, errors hit, and what REMAINS to do. "
+              "Drop chit-chat. Output a tight summary, no preamble."},
+             {"role": "user", "content": convo}],
+            max_tokens=600, budget=budget, temperature=0.2)
+        summary = (resp.choices[0].message.content or "").strip()
+    except Exception:
+        return messages          # budget/provider issue — leave history as-is
+    if not summary:
+        return messages
+    if emit:
+        emit({"type": "thought", "agent": label,
+              "text": "(compacted earlier context to stay within the window)"})
+    return head + [{"role": "user",
+                    "content": "[Summary of earlier work in this task]\n" + summary}] + tail
 
 # --- leaked-tool-call detection (orchestration issue #1) --------------------
 # Cheap models (DeepSeek/Qwen seen in live traces) sometimes emit a tool call as
@@ -110,6 +187,8 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
         # so the model MUST produce a final answer. Prevents weaker models spinning.
         force_final = rounds >= MAX_TOOL_ROUNDS or loop_break
         active_tools = None if force_final else (schemas or None)
+        # Compact older turns if the history has grown large (root fix for #2).
+        messages = _compact_messages(messages, budget=budget, emit=emit, label=label)
         if force_final and not nudged:
             messages.append({"role": "user",
                              "content": "Enough tool use — give me your final answer now."})

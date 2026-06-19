@@ -30,7 +30,7 @@ from . import agents as team
 from . import toolbelt
 from . import skills as skill_lib
 from . import playbooks as playbook_lib
-from .agent import _run_one_tool, _looks_like_raw_toolcall
+from .agent import _run_one_tool, _looks_like_raw_toolcall, _compact_messages
 from .blackboard import Blackboard
 from .tools import current_workspace, using_workspace
 
@@ -362,6 +362,8 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     while True:
         force_final = rounds >= MAX_MASTER_ROUNDS
         active_tools = None if force_final else schemas
+        # Compact older turns when the lead's history grows large (root fix for #2).
+        messages = _compact_messages(messages, budget=budget, emit=emit, label="lead")
         max_tok = registry.max_tokens_for_tier("tier3")
         try:
             if stream:
