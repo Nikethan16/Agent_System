@@ -69,18 +69,55 @@ _STORE = os.path.join(
 )
 
 
+# Encryption at rest: when AGENT_SECRET_KEY is set, the UI-managed key store is
+# Fernet-encrypted on disk (derive a Fernet key from the secret via SHA-256).
+# Backward-compatible: a legacy plaintext store still loads, and is re-encrypted on
+# the next save. If the store is encrypted but no/!wrong secret is available, it
+# reads as empty (env-var keys keep working) rather than crashing.
+def _fernet():
+    secret = (os.environ.get("AGENT_SECRET_KEY") or "").strip()
+    if not secret:
+        return None
+    try:
+        import base64
+        import hashlib
+        from cryptography.fernet import Fernet
+        return Fernet(base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest()))
+    except Exception:
+        return None
+
+
 def _load_store() -> dict:
     try:
         with open(_STORE, encoding="utf-8") as f:
-            return json.load(f) or {}
+            content = f.read()
     except Exception:
         return {}
+    try:
+        obj = json.loads(content) if content.strip() else {}
+    except Exception:
+        return {}
+    if isinstance(obj, dict) and obj.get("_enc"):
+        fer = _fernet()
+        if not fer:
+            return {}                      # encrypted but unreadable -> env keys still work
+        try:
+            return json.loads(fer.decrypt(str(obj.get("data", "")).encode()).decode()) or {}
+        except Exception:
+            return {}
+    return obj or {}
 
 
 def _save_store(d: dict) -> None:
     os.makedirs(os.path.dirname(_STORE), exist_ok=True)
+    fer = _fernet()
+    if fer:
+        token = fer.encrypt(json.dumps(d).encode()).decode()
+        payload = json.dumps({"_enc": 1, "data": token})
+    else:
+        payload = json.dumps(d)
     with open(_STORE, "w", encoding="utf-8") as f:
-        json.dump(d, f)
+        f.write(payload)
 
 
 def _discover_keys(base_env: str, provider: str = "") -> list:
