@@ -55,13 +55,66 @@ def _safe(path: str) -> str:
     return full
 
 
-def read_file(path: str) -> str:
+# Read caps (design inspired by OpenCode tool/read.ts — see THIRD_PARTY.md).
+# Keep a single big read from blowing the agent's context window; line numbers
+# make the snippets an agent later passes to edit_file far easier to produce.
+_READ_MAX_LINES = int(os.environ.get("AGENT_READ_MAX_LINES", "2000"))
+_READ_MAX_BYTES = int(os.environ.get("AGENT_READ_MAX_BYTES", str(50 * 1024)))
+_READ_MAX_LINE = 2000   # truncate any single very-long line
+
+
+def read_file(path: str, offset: int = 1, limit: int = None) -> str:
+    """Read a file from the workspace, returning numbered lines.
+
+    offset: 1-indexed first line to show (default 1). limit: max lines to return
+    (default/cap 2000). Output is capped at ~50KB and individual lines at 2000
+    chars; a footer says how to page (offset=N) when there's more. Reading a large
+    file in chunks keeps the agent's context lean."""
     try:
-        with open(_safe(path)) as f:
-            content = f.read()
-        return _wrap_untrusted(content, "workspace_file", path=path)
+        full = _safe(path)
+    except ValueError as e:
+        return f"ERROR: {e}"
+    try:
+        with open(full, encoding="utf-8", errors="replace") as f:
+            all_lines = f.read().splitlines()
     except Exception as e:
         return f"ERROR reading {path}: {e}"
+
+    total = len(all_lines)
+    try:
+        offset = max(1, int(offset))
+    except (TypeError, ValueError):
+        offset = 1
+    try:
+        limit = _READ_MAX_LINES if limit is None else max(1, int(limit))
+    except (TypeError, ValueError):
+        limit = _READ_MAX_LINES
+    limit = min(limit, _READ_MAX_LINES)
+
+    start = offset - 1
+    window = all_lines[start:start + limit]
+    out, used, byte_cut = [], 0, False
+    for i, ln in enumerate(window):
+        if len(ln) > _READ_MAX_LINE:
+            ln = ln[:_READ_MAX_LINE] + " …[line truncated]"
+        numbered = f"{start + i + 1}: {ln}"
+        size = len(numbered.encode("utf-8")) + 1
+        if used + size > _READ_MAX_BYTES and out:
+            byte_cut = True
+            break
+        out.append(numbered)
+        used += size
+
+    last = start + len(out)
+    body = "\n".join(out)
+    if total == 0:
+        footer = "\n\n(Empty file.)"
+    elif byte_cut or last < total:
+        footer = (f"\n\n(Showing lines {offset}-{last} of {total}. "
+                  f"Use offset={last + 1} to continue.)")
+    else:
+        footer = f"\n\n(End of file — {total} lines.)"
+    return _wrap_untrusted(body + footer, "workspace_file", path=path)
 
 
 def parse_document(path: str) -> str:

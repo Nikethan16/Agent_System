@@ -76,9 +76,14 @@ def _obj(props, required=None):
 from .tools import read_file, write_file, edit_file, list_files, run_bash, parse_document  # noqa: E402
 
 register_fn(
-    "read_file", lambda path: read_file(path),
-    _obj({"path": {"type": "string"}}, ["path"]),
-    "Read the full contents of a file in the workspace.", RISK_SAFE,
+    "read_file", lambda path, offset=1, limit=None: read_file(path, offset, limit),
+    _obj({"path": {"type": "string"},
+          "offset": {"type": "integer", "description": "1-indexed first line to read (default 1)"},
+          "limit": {"type": "integer", "description": "max lines to return (default/cap 2000)"}},
+         ["path"]),
+    "Read a file in the workspace as numbered lines. Large files are capped (~2000 lines / "
+    "50KB); use offset/limit to page through the rest (the footer tells you the next offset).",
+    RISK_SAFE,
 )
 register_fn(
     "parse_document", lambda path: parse_document(path),
