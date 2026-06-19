@@ -19,7 +19,7 @@ export default function Sidebar({ open = false, onClose, email = "", onOpenSetti
     : sessions;
 
   return (
-    <aside className={`fixed left-0 top-0 h-screen w-sidebar-width flex flex-col bg-claude-sidebar dark:bg-claude-sidebar-dark py-4 z-40 transition-transform duration-200 md:translate-x-0 ${open ? "translate-x-0" : "-translate-x-full"}`}>
+    <aside className={`fixed left-0 top-0 h-screen w-sidebar-width max-w-[85vw] flex flex-col bg-claude-sidebar dark:bg-claude-sidebar-dark py-4 z-40 transition-transform duration-200 md:translate-x-0 md:max-w-none ${open ? "translate-x-0" : "-translate-x-full"}`}>
       <div className="px-4 mb-5 flex items-center gap-2.5">
         <Sunburst size={26} />
         <h1 className="font-headline text-[15px] font-semibold tracking-tight leading-none">AGENT <span className="text-accent-terracotta">//</span> CORE</h1>
