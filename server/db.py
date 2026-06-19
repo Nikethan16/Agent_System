@@ -110,6 +110,8 @@ def _migrate():
             ("updated_at", "TEXT DEFAULT ''"),  # facts/summaries change over time
         ],
         "session": [("project_id", "TEXT DEFAULT ''"), ("starred", "INTEGER DEFAULT 0")],
+        "spend": [("project_id", "TEXT DEFAULT ''")],
+        "project": [("budget_usd", "REAL DEFAULT 0")],
     }
     with engine.begin() as conn:
         for table, cols in wanted.items():

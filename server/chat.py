@@ -134,6 +134,18 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
 
     sess = db.get_session(session_id) or {}
     project_id = sess.get("project_id") or ""
+
+    # Per-project budget (a cumulative cap scoped to one project, above the daily cap).
+    if project_id:
+        _pcap = projects.budget_of(project_id)
+        if spend.project_over_cap(project_id, _pcap):
+            msg = (f"Project budget reached (${spend.spent_by_project(project_id):.2f} of "
+                   f"${_pcap:.2f}). Raise it in the project settings to continue.")
+            _emit({"type": "error", "text": msg})
+            db.add_message(session_id, "assistant", msg)
+            _emit({"type": "final", "text": msg, "cost": 0})
+            return msg
+
     # Continuity scope: a project shares state across ALL its chats; a standalone chat
     # keeps its own. This is what lets a NEW chat resume an ongoing project's roadmap.
     scope = f"project:{project_id}" if project_id else f"session:{session_id}"
@@ -245,7 +257,7 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
 
     db.add_message(session_id, "assistant", final or "", cost=round(budget.spent_usd, 6))
     db.touch_session(session_id)
-    spend.record(budget.spent_usd)   # count this turn toward the daily cap
+    spend.record(budget.spent_usd, project_id=project_id)   # daily cap + per-project
 
     # ---- update memory (the WRITE path) — skip pure plan previews -----------
     if not plan_first:

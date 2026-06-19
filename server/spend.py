@@ -20,6 +20,7 @@ class Spend(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
     day: str = Field(default="", index=True)   # UTC date, e.g. "2026-06-03"
     usd: float = 0.0
+    project_id: str = Field(default="", index=True)   # "" = standalone chat (no project)
     created_at: str = Field(default_factory=_now)
 
 
@@ -33,12 +34,37 @@ def spent_today() -> float:
     return round(sum(r.usd for r in rows), 6)
 
 
-def record(usd: float) -> None:
+def record(usd: float, project_id: str = "") -> None:
     if not usd or usd <= 0:
         return
     with DBSession(engine) as s:
-        s.add(Spend(day=_today(), usd=float(usd)))
+        s.add(Spend(day=_today(), usd=float(usd), project_id=project_id or ""))
         s.commit()
+
+
+def spent_by_project(project_id: str) -> float:
+    """Cumulative (all-time) spend attributed to a project."""
+    if not project_id:
+        return 0.0
+    with DBSession(engine) as s:
+        rows = s.exec(select(Spend).where(Spend.project_id == project_id)).all()
+    return round(sum(r.usd for r in rows), 6)
+
+
+def project_over_cap(project_id: str, cap: float) -> bool:
+    """True if a project has a positive budget cap and has reached it."""
+    return bool(project_id) and cap and cap > 0 and spent_by_project(project_id) >= cap
+
+
+def project_status(project_id: str, cap: float = 0.0) -> dict:
+    spent = spent_by_project(project_id)
+    cap = cap if cap and cap > 0 else None
+    return {
+        "project_id": project_id,
+        "spent": spent,
+        "cap": cap,
+        "remaining": round(max(0.0, cap - spent), 6) if cap else None,
+    }
 
 
 def over_cap() -> bool:
