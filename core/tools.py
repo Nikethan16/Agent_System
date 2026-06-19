@@ -174,13 +174,45 @@ def parse_document(path: str) -> str:
     return out
 
 
+# ---- post-edit syntax verifier (phase 2 — the realistic, SAFE stand-in for LSP) ---
+# After a write/edit, do an IN-PROCESS syntax check of common code/config files and
+# surface a warning so a cheap model fixes a broken file immediately instead of
+# discovering it rounds later. Pure stdlib/offline (compile()/json/yaml) — NO
+# subprocess, NO network, so core stays offline + sandboxed. Richer language checks
+# (tsc/node/ruff) belong in the Docker run_bash loop, not here. Toggle with
+# AGENT_POSTEDIT_VERIFY=0.
+def _postedit_warning(path: str, content: str) -> str:
+    if os.environ.get("AGENT_POSTEDIT_VERIFY", "").strip().lower() in ("0", "false", "no"):
+        return ""
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        if ext == ".py":
+            compile(content, os.path.basename(path), "exec")
+        elif ext == ".json":
+            if content.strip():
+                import json as _json
+                _json.loads(content)
+        elif ext in (".yaml", ".yml"):
+            import yaml as _yaml
+            _yaml.safe_load(content)
+        else:
+            return ""
+    except SyntaxError as e:
+        return (f"\n\n⚠️ SYNTAX CHECK FAILED: {path} line {e.lineno}: {e.msg}. "
+                "The file you just wrote is broken — fix it before continuing.")
+    except Exception as e:
+        return (f"\n\n⚠️ SYNTAX CHECK FAILED: {path} did not parse "
+                f"({type(e).__name__}: {str(e)[:120]}). Fix it before continuing.")
+    return ""
+
+
 def write_file(path: str, content: str) -> str:
     try:
         full = _safe(path)
         os.makedirs(os.path.dirname(full), exist_ok=True)
         with open(full, "w") as f:
             f.write(content)
-        return f"Wrote {len(content)} chars to {path}"
+        return f"Wrote {len(content)} chars to {path}" + _postedit_warning(path, content)
     except Exception as e:
         return f"ERROR writing {path}: {e}"
 
@@ -407,7 +439,8 @@ def edit_file(path: str, old_string: str, new_string: str = "",
         return f"ERROR writing {path}: {e}"
     n = count if replace_all else 1
     diff = _short_diff(before, after)
-    return f"Edited {path}: replaced {n} occurrence(s)." + (f"\n{diff}" if diff else "")
+    out = f"Edited {path}: replaced {n} occurrence(s)." + (f"\n{diff}" if diff else "")
+    return out + _postedit_warning(path, after)
 
 
 def list_files(directory: str = ".") -> str:
