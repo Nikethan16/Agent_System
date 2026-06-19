@@ -58,6 +58,37 @@ def names() -> list:
     return list(_REGISTRY)
 
 
+def validate_args(tool: "Tool", args) -> Optional[str]:
+    """Return None if `args` satisfy the tool's JSON schema, else a short error.
+
+    Lenient on scalar type drift (a model sending a number as "4" is fine) but
+    STRICT on the two failure modes that actually break a tool call: a missing
+    required argument, and a structurally-wrong container (object/array/string
+    confusion). On failure the agent loop feeds the error back so the model
+    re-issues the call — instead of executing with broken args. Design inspired
+    by OpenCode's pre-execution arg validation (see THIRD_PARTY.md)."""
+    if not isinstance(args, dict):
+        return "arguments must be a JSON object"
+    params = (tool.schema.get("function", {}) or {}).get("parameters", {}) or {}
+    props = params.get("properties", {}) or {}
+    required = params.get("required", []) or []
+    missing = [k for k in required if k not in args or args[k] is None]
+    if missing:
+        return f"missing required argument(s): {', '.join(missing)}"
+    for k, v in args.items():
+        spec = props.get(k)
+        if not spec:
+            continue
+        t = spec.get("type")
+        if t == "string" and isinstance(v, (dict, list)):
+            return f"argument '{k}' should be a string, got {type(v).__name__}"
+        if t == "array" and not isinstance(v, list):
+            return f"argument '{k}' should be an array"
+        if t == "object" and not isinstance(v, dict):
+            return f"argument '{k}' should be an object"
+    return None
+
+
 def schemas_for(tool_names) -> list:
     """OpenAI tool schemas for the given names (silently skips unknown names)."""
     out = []

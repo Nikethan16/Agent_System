@@ -176,6 +176,15 @@ def _run_one_tool(name, args, label, approve, emit):
     if tool is None:
         return f"ERROR: unknown tool {name}"
 
+    # Validate arguments against the tool's schema BEFORE the gate or execution.
+    # A malformed call is fed back so the model re-issues it (the single biggest
+    # reliability lever for cheap models) — it never reaches the policy gate, so
+    # validation can only reject, never bypass security.
+    arg_err = toolbelt.validate_args(tool, args)
+    if arg_err:
+        return (f"INVALID_ARGS for {name}: {arg_err}. Re-issue the call with arguments "
+                "that match the tool's schema.")
+
     decision = policy.evaluate(tool, args)
 
     if decision.action == "block":
