@@ -12,11 +12,37 @@ normalizes) and still budget-capped. The security gate is deterministic
 no UI or provider code enters core.
 """
 import os
+import re
 import json
 
 from .llm import complete, complete_chain, stream_complete_tools, Budget, BudgetExceeded
 from . import toolbelt
 from . import policy
+
+# --- leaked-tool-call detection (orchestration issue #1) --------------------
+# Cheap models (DeepSeek/Qwen seen in live traces) sometimes emit a tool call as
+# PLAIN TEXT instead of a structured tool_call — e.g. "<｜DSML｜tool_calls>" or
+# "<tool_call><function=run_bash>". That raw markup must never be surfaced as the
+# user-facing final answer. Mirrors OpenCode routing malformed calls to `invalid`.
+#
+# Vendor "special tokens" use full-width pipes + 'tool_calls' and never occur in
+# legitimate prose -> conclusive. A generic <tool_call>/<function=> tag counts
+# ONLY when the message STARTS with it (the model is emitting a call), so a normal
+# answer that merely quotes such syntax (in a sentence or a code block) passes
+# through untouched.
+_RAW_TOOLCALL_SPECIAL = re.compile(r"<｜[^｜>]*tool[_ ]?calls?[^｜>]*｜?>|<｜DSML｜>")
+
+
+def _looks_like_raw_toolcall(text: str) -> bool:
+    """True when `text` is a model EMITTING a tool call as content (must not be
+    shown as a final answer). The caller must already have confirmed there are NO
+    structured tool_calls on the message."""
+    if not text:
+        return False
+    if _RAW_TOOLCALL_SPECIAL.search(text):
+        return True
+    head = text.lstrip()[:40].lower()
+    return head.startswith(("<tool_call", "<function=", "<｜"))
 
 # After this many tool-using rounds, force a final (no-tools) answer so a weaker
 # model can't spin on tool calls forever. Raised from 8 so real coding work
@@ -75,6 +101,7 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
 
     rounds = 0
     nudged = False
+    raw_repaired = False   # one-shot guard for leaked-raw-tool-call repair (#1)
     seen_calls = {}        # tool-call signature -> count (stuck/loop detection, G4)
     denied_sigs = {}       # tool-call signature -> denial reason (denial-spin guard)
     loop_break = False
@@ -126,6 +153,17 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
 
         tool_calls = getattr(msg, "tool_calls", None)
         if not tool_calls:
+            # #1: the model emitted raw tool-call markup as the answer — don't surface
+            # it. Re-prompt once for a clean answer / proper call (OpenCode `invalid`).
+            if _looks_like_raw_toolcall(msg.content) and not raw_repaired and not force_final:
+                raw_repaired = True
+                _emit({"type": "retry", "agent": label,
+                       "reason": "model emitted a raw tool call as text"})
+                messages.append({"role": "user", "content":
+                    "Your last message contained raw tool-call markup, not a real tool "
+                    "call or a clean answer. If you need a tool, issue it properly; "
+                    "otherwise reply with the final answer containing NO tool-call syntax."})
+                continue
             _emit({"type": "done", "agent": label, "text": msg.content or ""})
             return msg.content or ""
 

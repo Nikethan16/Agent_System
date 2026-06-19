@@ -30,7 +30,7 @@ from . import agents as team
 from . import toolbelt
 from . import skills as skill_lib
 from . import playbooks as playbook_lib
-from .agent import _run_one_tool
+from .agent import _run_one_tool, _looks_like_raw_toolcall
 from .blackboard import Blackboard
 from .tools import current_workspace, using_workspace
 
@@ -316,6 +316,7 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     board = Blackboard()
     schemas = _master_tool_schemas()
     rounds, delegations = 0, 0
+    raw_repaired = False   # one-shot guard: lead leaked a raw tool call (#1)
 
     # delegate_parallel runs each step in a ThreadPoolExecutor worker, and worker threads
     # do NOT inherit this thread's contextvars. Capture the run's workspace, span context,
@@ -397,6 +398,21 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
                 _emit({"type": "thought", "agent": "lead", "text": msg_content})
 
         if not msg_tool_calls:
+            # #1: never surface raw tool-call markup as the final answer. Re-prompt
+            # once for a clean answer; if it persists, synthesize from the blackboard.
+            if _looks_like_raw_toolcall(msg_content) and not force_final:
+                _emit({"type": "retry", "agent": "lead",
+                       "reason": "lead emitted a raw tool call as text"})
+                if not raw_repaired:
+                    raw_repaired = True
+                    messages.append({"role": "user", "content":
+                        "Your last message contained raw tool-call markup, not a real tool "
+                        "call or a clean answer. Issue a proper tool call, or give the final "
+                        "answer with NO tool-call syntax."})
+                    rounds += 1
+                    continue
+                return _finalize_from_board(board, task, budget, emit, stream) or (
+                    "(The model emitted malformed tool-call output; please retry.)")
             return msg_content or _finalize_from_board(board, task, budget, emit, stream)
 
         for tc in msg_tool_calls:
