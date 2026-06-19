@@ -181,3 +181,11 @@ container sandbox for `run_bash`, the Langfuse forward stub, and multi-user acco
 (intentionally out of scope). Optional capabilities that need your keys are in
 `docs/PLACEHOLDERS.md`.
 ```
+
+## Attribution
+
+The coding engine's fuzzy `edit_file` matching, `read_file` paging, `grep`/`glob` tools, and
+tool-argument validation are our own Python implementations whose **design was studied from**
+the MIT-licensed [OpenCode](https://github.com/sst/opencode) (Copyright © 2025 opencode). We
+copied no source — see [`THIRD_PARTY.md`](THIRD_PARTY.md) for what is derived vs. inspired.
+There is **no OpenCode runtime dependency**.
