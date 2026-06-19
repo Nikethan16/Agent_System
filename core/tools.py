@@ -6,6 +6,7 @@ touch the rest of the disk. For real production, run run_bash inside a
 container/VM, not just a chroot-style path check.
 """
 import os
+import re
 import difflib
 import contextvars
 import subprocess
@@ -125,11 +126,175 @@ def _short_diff(before: str, after: str, max_lines: int = 40) -> str:
     return "\n".join(body)
 
 
+# ---------------------------------------------------------------------------
+# Fuzzy edit-matching cascade.
+#
+# DERIVED FROM OpenCode (https://github.com/sst/opencode, MIT, Copyright (c)
+# 2025 opencode): packages/opencode/src/tool/edit.ts. This is a Python
+# reimplementation of their idea — try progressively looser but BOUNDED match
+# strategies so a model's near-miss snippet (off by whitespace/indentation)
+# still lands, while refusing to GUESS when no confident, unique match exists.
+# See THIRD_PARTY.md.
+#
+# We keep 5 of OpenCode's 9 strategies. Dropped (with reason): escape-normalized
+# (rare, risky), trimmed-boundary (subsumed by line-trimmed), context-aware
+# (overlaps block-anchor at a looser 0.50 threshold = more guessing), and
+# multi-occurrence (only serves replace_all, handled by our exact path). We also
+# raise the block-anchor similarity threshold from OpenCode's 0.65 to 0.85.
+# ---------------------------------------------------------------------------
+
+_BLOCK_ANCHOR_THRESHOLD = 0.85   # min middle-line similarity for a block-anchor match
+
+
+def _ratio(a: str, b: str) -> float:
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _exact_replacer(content, old):
+    """Strategy 1 — the literal snippet."""
+    if old in content:
+        yield old
+
+
+def _line_trimmed_replacer(content, old):
+    """Strategy 2 — match a run of lines ignoring each line's leading/trailing
+    whitespace (handles a model that re-indented or trimmed the snippet)."""
+    c_lines = content.split("\n")
+    o_lines = old.split("\n")
+    if o_lines and o_lines[-1] == "":
+        o_lines = o_lines[:-1]
+    if not o_lines:
+        return
+    o_trim = [ln.strip() for ln in o_lines]
+    # precompute character offsets of each content line
+    offsets, pos = [], 0
+    for ln in c_lines:
+        offsets.append(pos)
+        pos += len(ln) + 1
+    for i in range(len(c_lines) - len(o_lines) + 1):
+        if all(c_lines[i + j].strip() == o_trim[j] for j in range(len(o_lines))):
+            start = offsets[i]
+            end = offsets[i + len(o_lines) - 1] + len(c_lines[i + len(o_lines) - 1])
+            yield content[start:end]
+
+
+def _whitespace_normalized_replacer(content, old):
+    """Strategy 3 — match where runs of whitespace differ (e.g. tabs vs spaces,
+    a double space vs single). Build a regex: every whitespace run in old becomes
+    \\s+, everything else literal."""
+    stripped = old.strip()
+    if not stripped:
+        return
+    # Split on whitespace runs, escape each literal token, rejoin with \s+ so any
+    # run of whitespace in the file matches (tabs vs spaces, single vs double).
+    tokens = [t for t in re.split(r"\s+", stripped) if t]
+    if not tokens:
+        return
+    pattern = r"\s+".join(re.escape(t) for t in tokens)
+    try:
+        for m in re.finditer(pattern, content):
+            yield m.group(0)
+    except re.error:
+        return
+
+
+def _indentation_flexible_replacer(content, old):
+    """Strategy 4 — strip the common leading indentation from the snippet and
+    match lines ignoring leading indentation only (preserves internal spacing)."""
+    o_lines = old.split("\n")
+    if o_lines and o_lines[-1] == "":
+        o_lines = o_lines[:-1]
+    if not o_lines:
+        return
+    o_noindent = [ln.lstrip() for ln in o_lines]
+    c_lines = content.split("\n")
+    offsets, pos = [], 0
+    for ln in c_lines:
+        offsets.append(pos)
+        pos += len(ln) + 1
+    for i in range(len(c_lines) - len(o_lines) + 1):
+        if all(c_lines[i + j].lstrip() == o_noindent[j] for j in range(len(o_lines))):
+            start = offsets[i]
+            end = offsets[i + len(o_lines) - 1] + len(c_lines[i + len(o_lines) - 1])
+            yield content[start:end]
+
+
+def _block_anchor_replacer(content, old):
+    """Strategy 5 — for a 3+ line block, anchor on the first and last lines
+    (trimmed) and accept a window only if the MIDDLE lines are >= 0.85 similar.
+    Refuses to guess below the threshold (no yield)."""
+    o_lines = [ln for ln in old.split("\n")]
+    if o_lines and o_lines[-1] == "":
+        o_lines = o_lines[:-1]
+    if len(o_lines) < 3:
+        return
+    first, last = o_lines[0].strip(), o_lines[-1].strip()
+    block_len = len(o_lines)
+    c_lines = content.split("\n")
+    offsets, pos = [], 0
+    for ln in c_lines:
+        offsets.append(pos)
+        pos += len(ln) + 1
+    o_middle = "\n".join(o_lines[1:-1])
+    for i in range(len(c_lines) - block_len + 1):
+        if c_lines[i].strip() != first or c_lines[i + block_len - 1].strip() != last:
+            continue
+        c_middle = "\n".join(c_lines[i + 1:i + block_len - 1])
+        if _ratio(o_middle, c_middle) >= _BLOCK_ANCHOR_THRESHOLD:
+            start = offsets[i]
+            end = offsets[i + block_len - 1] + len(c_lines[i + block_len - 1])
+            yield content[start:end]
+
+
+_REPLACERS = (
+    _exact_replacer,
+    _line_trimmed_replacer,
+    _whitespace_normalized_replacer,
+    _indentation_flexible_replacer,
+    _block_anchor_replacer,
+)
+
+
+def _is_disproportionate(candidate: str, old: str) -> bool:
+    """Reject a match whose span is much larger than the snippet — a sign the
+    fuzzy matcher latched onto the wrong (too-broad) region."""
+    o_lines = old.split("\n")
+    c_lines = candidate.split("\n")
+    if len(c_lines) >= max(len(o_lines) + 3, len(o_lines) * 2):
+        return True
+    if len(o_lines) == 1:
+        return False
+    return len(candidate.strip()) > max(len(old.strip()) + 500, len(old.strip()) * 4)
+
+
+def _find_match(content: str, old: str, replace_all: bool):
+    """Run the cascade. Returns (candidate, count) for the first strategy that
+    yields a usable match, or ('AMBIGUOUS', n) when a strategy matched but in
+    multiple places (and not replace_all), or (None, 0) when nothing matched."""
+    saw_ambiguous = 0
+    for replacer in _REPLACERS:
+        for candidate in replacer(content, old):
+            if not candidate or candidate not in content:
+                continue
+            if _is_disproportionate(candidate, old):
+                continue
+            count = content.count(candidate)
+            if count == 1 or replace_all:
+                return candidate, count
+            # matched in >1 place and not replace_all -> ambiguous; keep looking
+            saw_ambiguous = max(saw_ambiguous, count)
+    if saw_ambiguous:
+        return "AMBIGUOUS", saw_ambiguous
+    return None, 0
+
+
 def edit_file(path: str, old_string: str, new_string: str = "",
               replace_all: bool = False) -> str:
-    """Surgically replace an exact snippet in an existing file (prefer this over a
-    full-file overwrite). old_string must match EXACTLY (incl. whitespace) and be
-    unique unless replace_all=True. Returns a small diff so the change is verifiable."""
+    """Surgically replace a snippet in an existing file (prefer this over a full
+    overwrite). old_string should match the file; if it isn't byte-identical a
+    bounded fuzzy cascade (whitespace/indentation tolerant) still locates it.
+    The edit is REFUSED — never guessed — when no confident, unique match exists.
+    Returns a small diff so the change is verifiable."""
     try:
         full = _safe(path)
     except ValueError as e:
@@ -140,24 +305,35 @@ def edit_file(path: str, old_string: str, new_string: str = "",
     if not os.path.isfile(full):
         return f"ERROR editing {path}: file not found (create it with write_file first)."
     try:
-        with open(full, encoding="utf-8", errors="replace") as f:
-            before = f.read()
+        # newline="" so we see the TRUE on-disk line endings (no translation),
+        # letting us restore them after editing.
+        with open(full, encoding="utf-8", errors="replace", newline="") as f:
+            raw = f.read()
     except Exception as e:
         return f"ERROR reading {path}: {e}"
-    count = before.count(old_string)
-    if count == 0:
-        return (f"ERROR: old_string not found in {path}. Read the file first and copy the "
-                "exact text to replace (including indentation/whitespace).")
-    if count > 1 and not replace_all:
-        return (f"ERROR: old_string appears {count} times in {path}; it must be unique. "
-                "Include more surrounding context to target one spot, or set replace_all=true.")
-    after = (before.replace(old_string, new_string) if replace_all
-             else before.replace(old_string, new_string, 1))
+
+    # Normalize line endings for matching; restore the file's original ending on write.
+    ending = "\r\n" if "\r\n" in raw else "\n"
+    before = raw.replace("\r\n", "\n")
+    old_n = old_string.replace("\r\n", "\n")
+    new_n = new_string.replace("\r\n", "\n")
+
+    candidate, count = _find_match(before, old_n, replace_all)
+    if candidate is None:
+        return (f"ERROR: old_string not found in {path} (tried exact + whitespace/indentation "
+                "tolerant matching). Read the file again and copy the exact current text to "
+                "replace, including surrounding context.")
+    if candidate == "AMBIGUOUS":
+        return (f"ERROR: the snippet matches {count} places in {path}; it must be unique. "
+                "Include more surrounding lines to target one spot, or set replace_all=true.")
+
+    after = (before.replace(candidate, new_n) if replace_all
+             else before.replace(candidate, new_n, 1))
     if after == before:
-        return f"No change: new_string is identical to old_string in {path}."
+        return f"No change: new_string is identical to the matched text in {path}."
     try:
-        with open(full, "w", encoding="utf-8") as f:
-            f.write(after)
+        with open(full, "w", encoding="utf-8", newline="") as f:
+            f.write(after.replace("\n", ending) if ending == "\r\n" else after)
     except Exception as e:
         return f"ERROR writing {path}: {e}"
     n = count if replace_all else 1
