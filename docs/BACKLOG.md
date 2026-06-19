@@ -103,6 +103,32 @@ Code is done; the items below note the **operational steps** still needed to act
 
 ---
 
+## Post-build audit (2026-06-20) — findings & status
+A full subsystem review (core loops, tools, server/data, model layer). **Implemented**
+(branch `claude/phase2-and-hardening`): SQL aggregation for all spend analytics (were per-turn
+full scans), missing migration indexes, scope-filtered fact/rule queries, O(catalog) context
+budget, parallel-delegation exception isolation, resilient compaction (fallback chain),
+near-cap-nudge priority, keystore data-loss guards (refuse-overwrite + atomic write + warnings),
+`acquire()` never serving disabled keys, and grep/glob symlink containment.
+
+**Deferred (tracked recommendations — deliberately NOT changed to avoid regressing tuned
+reliability paths):**
+- **Circuit breaker sensitivity** (`core/llm.py`): a single transient (incl. a benign
+  `EmptyResponse` from a free-tier filter) trips a model fleet-wide for the cooldown. Consider
+  trip-after-N-consecutive-failures and not tripping on `EmptyResponse`. Also record
+  breaker-skips in `metrics` (currently undercounted). Low risk but touches the hang-fix path.
+- **Abandoned hard-timeout futures** (`core/llm.py`): a stuck provider call keeps running on a
+  worker after we stop waiting; under sustained provider stalls the 16-worker pool could
+  saturate. Consider passing the timeout into the HTTP client and/or bounding the queue.
+- **Streaming/image/embed key handling** (`core/llm.py`): these paths don't rotate/penalize keys
+  on error, and `generate_image` ignores the encrypted key store (uses env only). Matters once
+  image-gen is enabled.
+- **`read_file` loads the whole file then slices** — fine for workspace-sized files; stream-and-
+  stop only if very large files become common.
+- **Spend rollup table** — only needed past ~1M Spend rows (years of 24/7 use); add
+  `SpendDaily` + `spend.prune()` then.
+- **`AGENT_SECRET_KEY` must be high-entropy** (no KDF stretching) — documented in PLACEHOLDERS.
+
 ## Features not built
 - **Image generation** — code is ready; needs an `image_model:` in `config/models.yaml` + a
   matching provider key.

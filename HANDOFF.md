@@ -24,9 +24,10 @@ For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OV
 - **Email+password login is ACTIVE** (now the only thing standing between the public URL and
   the app — see "Security follow-ups" below); **Telegram bot** runs on the server; **nightly
   backups** via cron (`scripts/backup.py --keep 14`).
-- **Run/test:** local run `.\run.ps1` → http://localhost:8800. **134/134 pytest** (`python -m
-  pytest tests/ -v`; `pytest` lives in `.venv`). Smoke **171/171** (`scripts\smoke_test.py`).
-  Rebuild UI after frontend changes: `npm --prefix web run build`.
+- **Run/test:** local run `.\run.ps1` → http://localhost:8800. **136 pytest pass (+2 skipped:
+  symlink tests need OS symlink perm)** (`python -m pytest tests/ -v`; `pytest` lives in
+  `.venv`). Smoke **171/171** (`scripts\smoke_test.py`). Rebuild UI after frontend changes:
+  `npm --prefix web run build`.
 - **Diagnostics**: `python3 scripts/inspect_run.py --list` / `<session_id>` — read-only dump
   of a run's full event timeline, span-tree (cost/tokens/duration), generated workspace files,
   and last stored message. Use this whenever asked "what did a run actually do."
@@ -47,6 +48,13 @@ Not merged; no PR yet. Builds on `claude/coding-engine-port`.
    phones; verified 320/375px via the preview tools, no console errors).
 6. **Usage & Cost dashboard:** new Settings tab (today vs cap, all-time, 14-day spend bars,
    per-project table) backed by `spend.overview()` + `GET /api/spend/overview`; verified live.
+7. **Post-build audit + optimizations** (3 commits): subsystem review (core loops/tools/server/
+   model layer) → fixed per-turn full-table scans (spend now SQL-aggregated; facts/rules
+   scope-filtered in SQL; `context_budget` O(catalog)), missing migration indexes,
+   parallel-delegation exception isolation, resilient compaction (fallback chain), keystore
+   data-loss guards (refuse-overwrite + atomic write), and grep/glob symlink containment.
+   **Deferred (tracked in BACKLOG "Post-build audit"):** circuit-breaker sensitivity tuning,
+   abandoned-timeout-future bounding — left as-is to avoid regressing the documented hang fixes.
 5. **New optional env vars:** `AGENT_SECRET_KEY` (key encryption), `AGENT_COMPACT`/`AGENT_COMPACT_RATIO`/
    `AGENT_COMPACT_KEEP` (compaction), `AGENT_POSTEDIT_VERIFY` (syntax verifier). All default-safe.
 
