@@ -47,3 +47,25 @@ def test_wrong_secret_reads_empty_not_crash(store, monkeypatch):
     keypool._save_store({"gemini": ["k1234567"]})
     monkeypatch.setenv("AGENT_SECRET_KEY", "wrong-secret")
     assert keypool._load_store() == {}      # unreadable, but no crash
+
+
+def test_refuse_overwrite_when_locked(store, monkeypatch):
+    # Save under one secret, then rotate: the store is now undecryptable, so a save
+    # must REFUSE rather than silently destroy the prior keys.
+    monkeypatch.setenv("AGENT_SECRET_KEY", "original")
+    keypool._save_store({"gemini": ["origkey123"]})
+    monkeypatch.setenv("AGENT_SECRET_KEY", "rotated")
+    assert keypool._store_locked() is True
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError):
+        keypool._save_store({"gemini": ["newkey456"]})
+    # restoring the original secret makes it readable again (data intact)
+    monkeypatch.setenv("AGENT_SECRET_KEY", "original")
+    assert keypool._load_store() == {"gemini": ["origkey123"]}
+
+
+def test_atomic_write_leaves_no_tmp(store, monkeypatch):
+    monkeypatch.delenv("AGENT_SECRET_KEY", raising=False)
+    keypool._save_store({"openrouter": ["abcdef12"]})
+    assert not os.path.exists(store + ".tmp")
+    assert keypool._load_store() == {"openrouter": ["abcdef12"]}

@@ -58,3 +58,31 @@ def test_glob_no_match(ws):
 def test_grep_sandboxed(ws):
     out = tools.grep("x", path="../../../etc")
     assert out.startswith("ERROR")
+
+
+def test_grep_skips_symlink_escaping_workspace(ws, tmp_path):
+    # A secret file OUTSIDE the workspace, and a symlink to it INSIDE — grep must not
+    # read through the symlink (the realpath containment guard).
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOPSECRET_NEEDLE\n")
+    link = os.path.join(ws, "link.txt")
+    try:
+        os.symlink(str(secret), link)
+    except (OSError, NotImplementedError):
+        import pytest
+        pytest.skip("symlinks not permitted on this platform/run")
+    out = tools.grep("TOPSECRET_NEEDLE")
+    assert "TOPSECRET_NEEDLE" not in out   # the symlinked-out file was skipped
+
+
+def test_glob_skips_symlink_escaping_workspace(ws, tmp_path):
+    outside = tmp_path / "outside.py"
+    outside.write_text("x = 1\n")
+    link = os.path.join(ws, "linked.py")
+    try:
+        os.symlink(str(outside), link)
+    except (OSError, NotImplementedError):
+        import pytest
+        pytest.skip("symlinks not permitted on this platform/run")
+    out = tools.glob("**/*.py")
+    assert "linked.py" not in out

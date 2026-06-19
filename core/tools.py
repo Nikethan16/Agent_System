@@ -488,6 +488,19 @@ _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", ".skills", ".mypy_
               "dist", "build", ".pytest_cache"}
 
 
+def _within_root(path: str, root: str) -> bool:
+    """True if `path` (after resolving symlinks) is inside `root`. Used by grep/glob
+    so a symlink in the workspace pointing outside can't be read — the file-read tools
+    go through _safe(), but the search tools open paths discovered by walking, so they
+    re-check containment against the REAL path here."""
+    try:
+        rp = os.path.realpath(path)
+        rr = os.path.realpath(root)
+        return rp == rr or rp.startswith(rr + os.sep)
+    except OSError:
+        return False
+
+
 def grep(pattern: str, include: str = None, path: str = ".") -> str:
     """Search file CONTENTS for a regex across the workspace. Returns up to 100
     `relpath:lineno: line` matches. `include` is an optional filename glob
@@ -508,6 +521,8 @@ def grep(pattern: str, include: str = None, path: str = ".") -> str:
             if include and not fnmatch.fnmatch(fn, include):
                 continue
             fpath = os.path.join(dirpath, fn)
+            if not _within_root(fpath, base):
+                continue                 # a symlink pointing outside the workspace — skip
             rel = os.path.relpath(fpath, base).replace(os.sep, "/")
             try:
                 with open(fpath, encoding="utf-8", errors="ignore") as f:
@@ -541,7 +556,8 @@ def glob(pattern: str, path: str = ".") -> str:
     base = current_workspace()
     try:
         matches = [p for p in Path(root).glob(pattern)
-                   if p.is_file() and not any(part in _SKIP_DIRS for part in p.parts)]
+                   if p.is_file() and not any(part in _SKIP_DIRS for part in p.parts)
+                   and _within_root(str(p), base)]
     except (ValueError, OSError) as e:
         return f"ERROR: invalid glob pattern: {e}"
 

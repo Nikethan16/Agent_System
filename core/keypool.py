@@ -17,8 +17,11 @@ free account's key as NVIDIA_NIM_API_KEY_2 and throughput scales automatically.
 import os
 import json
 import time
+import logging
 import threading
 from collections import deque
+
+log = logging.getLogger(__name__)
 
 # provider (the prefix LiteLLM resolves) -> the base env var holding its key.
 _PROVIDER_ENV = {
@@ -87,6 +90,31 @@ def _fernet():
         return None
 
 
+def _store_locked() -> bool:
+    """True if the store on disk is encrypted but we CAN'T decrypt it (missing/rotated
+    AGENT_SECRET_KEY). In that case we must refuse to overwrite it — otherwise the next
+    add/remove key would silently destroy the previously-stored keys."""
+    try:
+        with open(_STORE, encoding="utf-8") as f:
+            content = f.read()
+    except Exception:
+        return False
+    try:
+        obj = json.loads(content) if content.strip() else {}
+    except Exception:
+        return False
+    if isinstance(obj, dict) and obj.get("_enc"):
+        fer = _fernet()
+        if not fer:
+            return True
+        try:
+            fer.decrypt(str(obj.get("data", "")).encode())
+            return False
+        except Exception:
+            return True
+    return False
+
+
 def _load_store() -> dict:
     try:
         with open(_STORE, encoding="utf-8") as f:
@@ -96,19 +124,31 @@ def _load_store() -> dict:
     try:
         obj = json.loads(content) if content.strip() else {}
     except Exception:
+        log.warning("key store at %s is corrupt JSON — ignoring it (env keys still work)", _STORE)
         return {}
     if isinstance(obj, dict) and obj.get("_enc"):
         fer = _fernet()
         if not fer:
+            log.warning("key store is encrypted but AGENT_SECRET_KEY is not set — "
+                        "UI-managed keys are unavailable (env keys still work).")
             return {}                      # encrypted but unreadable -> env keys still work
         try:
             return json.loads(fer.decrypt(str(obj.get("data", "")).encode()).decode()) or {}
         except Exception:
+            log.warning("key store could not be decrypted with the current AGENT_SECRET_KEY "
+                        "(rotated/wrong secret?) — UI-managed keys are unavailable.")
             return {}
     return obj or {}
 
 
 def _save_store(d: dict) -> None:
+    # Refuse to clobber an encrypted store we can't read — overwriting it would
+    # permanently destroy the keys encrypted under the previous secret.
+    if _store_locked():
+        raise RuntimeError(
+            "Refusing to overwrite the encrypted key store: it can't be decrypted with the "
+            "current AGENT_SECRET_KEY. Restore the original secret, or delete data/keys.json "
+            "to start fresh.")
     os.makedirs(os.path.dirname(_STORE), exist_ok=True)
     fer = _fernet()
     if fer:
@@ -116,8 +156,11 @@ def _save_store(d: dict) -> None:
         payload = json.dumps({"_enc": 1, "data": token})
     else:
         payload = json.dumps(d)
-    with open(_STORE, "w", encoding="utf-8") as f:
+    # Atomic write: a crash mid-write must not corrupt (and thus lose) the store.
+    tmp = _STORE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         f.write(payload)
+    os.replace(tmp, _STORE)
 
 
 def _discover_keys(base_env: str, provider: str = "") -> list:
@@ -218,7 +261,9 @@ class KeyPool:
                     wait = nxt - now
             if time.time() >= deadline:
                 with self.lock:                                    # give up waiting; use least-loaded
-                    pool = [k for k in self.keys if k.enabled] or self.keys
+                    pool = [k for k in self.keys if k.enabled]
+                    if not pool:
+                        return None        # all keys disabled (e.g. auth-failed) — never serve a dead key
                     best = min(pool, key=lambda k: self._usage(k, time.time()))
                     best.hits.append(time.time())
                     return best

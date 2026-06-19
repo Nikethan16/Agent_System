@@ -45,7 +45,7 @@ class KeyIn(BaseModel):
 def add_key(body: KeyIn):
     try:
         keypool.add_key(body.provider, body.key)
-    except ValueError as e:
+    except (ValueError, RuntimeError) as e:
         raise HTTPException(400, str(e))
     return _keys_view()
 
