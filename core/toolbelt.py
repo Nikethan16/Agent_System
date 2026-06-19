@@ -73,7 +73,8 @@ def _obj(props, required=None):
 
 
 # ---- built-in OFFLINE sandboxed tools (file/shell) --------------------------
-from .tools import read_file, write_file, edit_file, list_files, run_bash, parse_document  # noqa: E402
+from .tools import (read_file, write_file, edit_file, list_files, run_bash,  # noqa: E402
+                    parse_document, grep, glob)
 
 register_fn(
     "read_file", lambda path, offset=1, limit=None: read_file(path, offset, limit),
@@ -95,6 +96,23 @@ register_fn(
     "list_files", lambda directory=".": list_files(directory),
     _obj({"directory": {"type": "string"}}),
     "List files in a workspace directory (default: root).", RISK_SAFE,
+)
+register_fn(
+    "grep", lambda pattern, include=None, path=".": grep(pattern, include, path),
+    _obj({"pattern": {"type": "string", "description": "regex to search file contents for"},
+          "include": {"type": "string", "description": "optional filename glob, e.g. '*.py'"},
+          "path": {"type": "string", "description": "subdirectory to search (default: root)"}},
+         ["pattern"]),
+    "Search file CONTENTS across the workspace for a regex (returns relpath:line: match, "
+    "capped at 100). Use this to FIND code instead of reading whole files.", RISK_SAFE,
+)
+register_fn(
+    "glob", lambda pattern, path=".": glob(pattern, path),
+    _obj({"pattern": {"type": "string", "description": "glob, e.g. '**/*.py' or 'src/*.ts'"},
+          "path": {"type": "string", "description": "subdirectory to search (default: root)"}},
+         ["pattern"]),
+    "Find files by name/glob pattern across the workspace (newest first, capped at 100).",
+    RISK_SAFE,
 )
 register_fn(
     "write_file", lambda path, content: write_file(path, content),

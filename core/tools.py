@@ -7,9 +7,11 @@ container/VM, not just a chroot-style path check.
 """
 import os
 import re
+import fnmatch
 import difflib
 import contextvars
 import subprocess
+from pathlib import Path
 
 from . import cache
 from .boundary import wrap as _wrap_untrusted
@@ -401,6 +403,89 @@ def list_files(directory: str = ".") -> str:
         return f"ERROR listing {directory}: {e}"
 
 
+# ---- code search (grep / glob) ---------------------------------------------
+# Design inspired by OpenCode's grep/glob tools (which shell to ripgrep); ours is
+# pure-Python and confined to the workspace via _safe(), so it adds no dependency
+# and can't read outside the sandbox. Lets an agent FIND code instead of listing +
+# reading whole files (cheaper + far less context). See THIRD_PARTY.md.
+_SEARCH_CAP = 100
+_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", ".skills", ".mypy_cache",
+              "dist", "build", ".pytest_cache"}
+
+
+def grep(pattern: str, include: str = None, path: str = ".") -> str:
+    """Search file CONTENTS for a regex across the workspace. Returns up to 100
+    `relpath:lineno: line` matches. `include` is an optional filename glob
+    (e.g. '*.py'); `path` scopes the search to a subdirectory."""
+    try:
+        root = _safe(path)
+    except ValueError as e:
+        return f"ERROR: {e}"
+    try:
+        rx = re.compile(pattern)
+    except re.error as e:
+        return f"ERROR: invalid regex: {e}"
+    base = current_workspace()
+    results, truncated = [], False
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        for fn in sorted(filenames):
+            if include and not fnmatch.fnmatch(fn, include):
+                continue
+            fpath = os.path.join(dirpath, fn)
+            rel = os.path.relpath(fpath, base).replace(os.sep, "/")
+            try:
+                with open(fpath, encoding="utf-8", errors="ignore") as f:
+                    for lineno, line in enumerate(f, 1):
+                        if rx.search(line):
+                            results.append(f"{rel}:{lineno}: {line.rstrip()[:300]}")
+                            if len(results) >= _SEARCH_CAP:
+                                truncated = True
+                                break
+            except (OSError, UnicodeDecodeError):
+                continue
+            if truncated:
+                break
+        if truncated:
+            break
+    if not results:
+        return f"No matches for /{pattern}/" + (f" in {include}" if include else "")
+    out = "\n".join(results)
+    if truncated:
+        out += f"\n... (capped at {_SEARCH_CAP} matches — narrow the pattern or path)"
+    return out
+
+
+def glob(pattern: str, path: str = ".") -> str:
+    """Find files by glob pattern (e.g. '**/*.py', 'src/*.ts'), newest first.
+    Returns up to 100 workspace-relative paths. `path` scopes to a subdirectory."""
+    try:
+        root = _safe(path)
+    except ValueError as e:
+        return f"ERROR: {e}"
+    base = current_workspace()
+    try:
+        matches = [p for p in Path(root).glob(pattern)
+                   if p.is_file() and not any(part in _SKIP_DIRS for part in p.parts)]
+    except (ValueError, OSError) as e:
+        return f"ERROR: invalid glob pattern: {e}"
+
+    def _mtime(p):
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+    matches.sort(key=_mtime, reverse=True)
+    truncated = len(matches) > _SEARCH_CAP
+    rels = [os.path.relpath(str(p), base).replace(os.sep, "/") for p in matches[:_SEARCH_CAP]]
+    if not rels:
+        return f"No files match {pattern}"
+    out = "\n".join(rels)
+    if truncated:
+        out += f"\n... (capped at {_SEARCH_CAP} — narrow the pattern)"
+    return out
+
+
 # Cap each bash stream so verbose output (pip install, pytest -v) can't balloon the
 # agent's message history. Keep the HEAD and TAIL — the head shows what started, the
 # tail shows the result/error summary, which is what the model needs to act on.
@@ -541,5 +626,7 @@ TOOL_FUNCTIONS = {
     "write_file": write_file,
     "edit_file": edit_file,
     "list_files": list_files,
+    "grep": grep,
+    "glob": glob,
     "run_bash": run_bash,
 }

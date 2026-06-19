@@ -266,7 +266,8 @@ def _master_tool_schemas():
                                                "constraints, acceptance check)."},
                 "skill": {"type": "string"}}, "required": ["agent", "instruction"]}}}, ["tasks"])}},
     ]
-    return meta + toolbelt.schemas_for(["read_file", "list_files", "write_file", "edit_file", "run_bash"])
+    return meta + toolbelt.schemas_for(["read_file", "list_files", "grep", "glob",
+                                        "write_file", "edit_file", "run_bash"])
 
 
 def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_type=None,
