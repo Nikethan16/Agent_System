@@ -24,7 +24,7 @@ For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OV
 - **Email+password login is ACTIVE** (now the only thing standing between the public URL and
   the app — see "Security follow-ups" below); **Telegram bot** runs on the server; **nightly
   backups** via cron (`scripts/backup.py --keep 14`).
-- **Run/test:** local run `.\run.ps1` → http://localhost:8800. **130/130 pytest** (`python -m
+- **Run/test:** local run `.\run.ps1` → http://localhost:8800. **134/134 pytest** (`python -m
   pytest tests/ -v`; `pytest` lives in `.venv`). Smoke **171/171** (`scripts\smoke_test.py`).
   Rebuild UI after frontend changes: `npm --prefix web run build`.
 - **Diagnostics**: `python3 scripts/inspect_run.py --list` / `<session_id>` — read-only dump
@@ -45,6 +45,8 @@ Not merged; no PR yet. Builds on `claude/coding-engine-port`.
    project; `GET /api/projects/{id}/spend`. Additive migrations (spend.project_id, project.budget_usd).
 4. **UI:** mobile **drawer overflow fix** (sidebar/artifacts panel no longer overflow narrow
    phones; verified 320/375px via the preview tools, no console errors).
+6. **Usage & Cost dashboard:** new Settings tab (today vs cap, all-time, 14-day spend bars,
+   per-project table) backed by `spend.overview()` + `GET /api/spend/overview`; verified live.
 5. **New optional env vars:** `AGENT_SECRET_KEY` (key encryption), `AGENT_COMPACT`/`AGENT_COMPACT_RATIO`/
    `AGENT_COMPACT_KEEP` (compaction), `AGENT_POSTEDIT_VERIFY` (syntax verifier). All default-safe.
 

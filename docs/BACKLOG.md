@@ -123,7 +123,8 @@ Code is done; the items below note the **operational steps** still needed to act
 ## Performance / cost
 - Add more **free NVIDIA keys** (`NVIDIA_NIM_API_KEY_1..N`) to multiply throughput.
 - ✅ **Per-project budgets** — cumulative cap per project (`budget_usd`), enforced + tracked;
-  `GET /api/projects/{id}/spend`. Remaining: a richer spend *dashboard* UI.
+  `GET /api/projects/{id}/spend`. ✅ **Spend dashboard UI** — Settings → **Usage & cost** tab
+  (today vs cap, all-time, 14-day bar chart, per-project table) via `GET /api/spend/overview`.
 - Prompt caching — deferred (low payoff on NVIDIA's free tier; the classifier cache covers repeats).
 
 ## Reliability / quality
