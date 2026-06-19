@@ -24,6 +24,12 @@ os.makedirs(WORKSPACE, exist_ok=True)
 
 _ws_override = contextvars.ContextVar("workspace_root", default=None)
 
+# The host workspace is mounted at this path INSIDE the Docker bash sandbox (see
+# run_bash). A model that ran commands in the container sees files under /ws and may
+# then pass an absolute "/ws/foo" path to write_file/edit_file; _safe maps that back
+# to a workspace-relative path instead of rejecting it (orchestration issue #7).
+_CONTAINER_WS = "/ws"
+
 
 def current_workspace() -> str:
     """The active sandbox root: a per-call override if set, else the default."""
@@ -49,9 +55,17 @@ class using_workspace:
 
 
 def _safe(path: str) -> str:
-    """Resolve a path and refuse anything that escapes the (current) workspace."""
+    """Resolve a path and refuse anything that escapes the (current) workspace.
+
+    Maps the Docker sandbox mount prefix (/ws) to a workspace-relative path first,
+    so a path the model used inside run_bash doesn't trip a false 'escapes
+    workspace' on a later write_file/edit_file (orchestration issue #7). The
+    containment guarantee is unchanged — only this prefix is normalized."""
     root = current_workspace()
-    full = os.path.abspath(os.path.join(root, path))
+    p = path or ""
+    if p == _CONTAINER_WS or p.startswith(_CONTAINER_WS + "/"):
+        p = p[len(_CONTAINER_WS):].lstrip("/")
+    full = os.path.abspath(os.path.join(root, p))
     if not (full == root or full.startswith(root + os.sep)):
         raise ValueError("path escapes workspace")
     return full
@@ -562,8 +576,8 @@ def run_bash(command: str) -> str:
         "--security-opt", "no-new-privileges",
         "--read-only",
         "--tmpfs", "/tmp:size=256m",
-        "-v", f"{ws}:/ws:rw",
-        "-w", "/ws",
+        "-v", f"{ws}:{_CONTAINER_WS}:rw",
+        "-w", _CONTAINER_WS,
         image, "bash", "-lc", command,
     ]
     try:
