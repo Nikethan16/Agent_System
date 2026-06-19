@@ -24,14 +24,34 @@ For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OV
 - **Email+password login is ACTIVE** (now the only thing standing between the public URL and
   the app — see "Security follow-ups" below); **Telegram bot** runs on the server; **nightly
   backups** via cron (`scripts/backup.py --keep 14`).
-- **Run/test:** local run `.\run.ps1` → http://localhost:8800. **55/55 pytest** (`python -m
-  pytest tests/ -v`). Smoke **158/158** (`scripts\smoke_test.py`). Rebuild UI after frontend
-  changes: `npm --prefix web run build`.
+- **Run/test:** local run `.\run.ps1` → http://localhost:8800. **111/111 pytest** (`python -m
+  pytest tests/ -v`; `pytest` lives in `.venv`). Smoke **171/171** (`scripts\smoke_test.py`).
+  Rebuild UI after frontend changes: `npm --prefix web run build`.
 - **Diagnostics**: `python3 scripts/inspect_run.py --list` / `<session_id>` — read-only dump
   of a run's full event timeline, span-tree (cost/tokens/duration), generated workspace files,
   and last stored message. Use this whenever asked "what did a run actually do."
 
-## Last session (2026-06-18) — observability tool, real-run deep-dive, public exposure
+## Last session (2026-06-20) — absorb OpenCode's coding-engine design (branch `claude/coding-engine-port`)
+Reimplemented the best of OpenCode (MIT) in our own Python — **no OpenCode runtime
+dependency** (attribution in `THIRD_PARTY.md`). 11 commits, each with tests. **pytest 111/111,
+smoke 171/171.** Not yet merged to `main` (no PR opened — awaiting owner).
+1. **Tool reliability port:** fuzzy `edit_file` (5-strategy cascade, whitespace/indentation
+   tolerant, REFUSES low-confidence matches); `read_file` numbered lines + offset/limit + caps;
+   new pure-Python sandboxed `grep`/`glob` code-search tools (granted to the coding agents);
+   tool-argument schema validation before execution (`toolbelt.validate_args` → re-issue on
+   bad args).
+2. **All 7 orchestration issues fixed** (see `docs/BACKLOG.md` for the per-issue mapping):
+   leaked raw tool-call markup (#1), research death-spiral (#2), 7× re-plan (#3), tier/agent
+   cost mismatch (#4), skill over-trigger (#5), workspace collisions (#6, behind
+   `AGENT_TASK_SUBWORKSPACE`, off by default), `/ws` path mismatch (#7).
+   - **#2 is a MITIGATION, not a root fix.** The near-cap synthesis nudge + forced
+     `_finalize_from_board` stop the *symptom* (raw text surfaced as "final" at the cap). The
+     *root cause* is context bloat reaching the cap — the real fix is **within-run compaction,
+     scheduled as PHASE 2** in `docs/BACKLOG.md`.
+3. **New optional env vars:** `AGENT_TASK_SUBWORKSPACE` (off), `AGENT_READ_MAX_LINES` (2000),
+   `AGENT_READ_MAX_BYTES` (51200). Note: `pytest` was installed into `.venv` to run the suite.
+
+## Earlier session (2026-06-18) — observability tool, real-run deep-dive, public exposure
 1. **`scripts/inspect_run.py`** (PR #3, merged) — read-only diagnostic dump (see above). Built
    specifically so a *new chat with no filesystem access to the VM* can still verify what a
    run actually did, by having the owner paste its output.

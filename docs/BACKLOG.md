@@ -6,11 +6,36 @@ for current state and `STATUS.md` for what's already done._
 
 ---
 
-## 🔎 Orchestration issues found via live trace analysis (2026-06-18, observed only — not yet fixed)
+## ✅ Orchestration issues — ADDRESSED on branch `claude/coding-engine-port` (2026-06-20)
+All 7 issues below were fixed as part of the "absorb OpenCode's coding-engine design" work
+(see `HANDOFF.md`). Each fix shipped as its own commit with tests. **#2 is a MITIGATION, not a
+root fix** (see the scheduled phase-2 item at the bottom of this section).
+
+1. ✅ Leaked raw tool-call markup as final → `_looks_like_raw_toolcall` + one-shot re-prompt
+   in both loops (`core/agent.py`, `core/orchestrator.py`), false-positive guarded.
+2. ⚠️ Research death-spiral → near-cap synthesis nudge + force `_finalize_from_board` at the
+   cap (`core/orchestrator.py`). **MITIGATION ONLY** — root cause is context bloat hitting the
+   cap; the real fix is within-run **compaction (PHASE 2, scheduled below)**.
+3. ✅ LEAD re-plans identical template → plan-repeat guard + plan-only-round counter.
+4. ✅ Tier/agent cost mismatch + dispatcher fragility → `_effective_tier` (run at the cheaper
+   of routed/agent tier) + `select_agent` tolerates a bare/embedded agent id.
+5. ✅ research-report skill over-triggers → `use_skills=(tier>=2)` skips auto-matching on
+   trivial tier-1 tasks (`core/skills.py` `auto=` flag).
+6. ✅ Shared-workspace collisions → optional per-build sub-workspace behind
+   `AGENT_TASK_SUBWORKSPACE` (OFF by default), `fresh_build_slug` in `core/tools.py`.
+7. ✅ `run_bash`/`write_file` `/ws` path mismatch → `_safe` maps the Docker mount prefix.
+
+**Scheduled next — PHASE 2 (the root fix for #2):** within-run **context compaction** —
+summarize old turns / keep recent in the agent + master loops when message tokens approach the
+model's window, so long coding/research tasks stop hitting the iteration cap. Plus a **light
+post-edit verifier** (run `py_compile`/`ruff`/`node --check`/`tsc --noEmit` after an edit and
+feed diagnostics back — the realistic stand-in for OpenCode's LSP; full LSP is not worth it).
+
+---
+
+## 🔎 Original observations (for reference — 2026-06-18)
 Found by running `scripts/inspect_run.py` against a real multi-turn session and reading the
-full event timeline + generated workspace files. The owner asked to observe real runs across
-varying task complexity before deciding what to fix — **none of these have been touched**.
-Re-run `inspect_run.py` on more sessions for more evidence before prioritizing.
+full event timeline + generated workspace files.
 
 1. **Garbled/leaked special-token tool-call output shown as the final answer** — raw model
    tokens like `<｜DSML｜tool_calls>` and `<tool_call><function=run_bash>` (including a

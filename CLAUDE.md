@@ -44,8 +44,8 @@ config/policy.yaml   security gate rules (hard-block + require-human patterns)
 config/playbooks.yaml task PLAYBOOKS: the proven path per task type (+ default backup)
 core/registry.py     loads models config, resolves tier -> model, live swap
 core/llm.py          the one unified model call + generate_image + Budget caps
-core/tools.py        sandboxed file/shell tools (read/write/EDIT/list/run_bash) + per-session workspace
-core/toolbelt.py     THE tool registry: schema + risk label + which agents may use
+core/tools.py        sandboxed file/shell tools (read[paged]/write/EDIT[fuzzy]/list/GREP/GLOB/run_bash) + per-session workspace
+core/toolbelt.py     THE tool registry: schema + risk label + ARG VALIDATION + which agents may use
 core/agent.py        the generalized agent loop (think -> act -> observe) + approve hook
 core/policy.py       deterministic security gate (Layer 2) + append-only audit log
 core/agents.py       agent registry loader + the dispatcher (picks an agent)
