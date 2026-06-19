@@ -202,9 +202,10 @@ def _looks_failed(r) -> bool:
 
 
 def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=False,
-                task_type=None, acceptance="", tier=None):
+                task_type=None, acceptance="", tier=None, use_skills=True):
     r = team.run(agent_id, task, budget=budget, emit=emit, approve=approve,
-                 context=context, stream=stream, task_type=task_type, tier=tier)
+                 context=context, stream=stream, task_type=task_type, tier=tier,
+                 use_skills=use_skills)
     # A2: if the agent errored / gave up / returned nothing, retry once with a nudge
     # (the model fallback chain has already handled provider-down within the run).
     if _looks_failed(r):
@@ -213,13 +214,14 @@ def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=F
         r = team.run(agent_id, task + "\n\n(Your previous attempt failed or was cut off — "
                      "try again and give a focused, complete result.)",
                      budget=budget, emit=emit, approve=approve, context=context,
-                     stream=stream, task_type=task_type, tier=tier)
+                     stream=stream, task_type=task_type, tier=tier, use_skills=use_skills)
     if review:
         passed, feedback = _review(task, r, budget, emit, approve, acceptance=acceptance)
         if not passed:
             fix = f"{task}\n\nA QA reviewer found issues — fix them:\n{feedback}"
             r = team.run(agent_id, fix, budget=budget, emit=emit, approve=approve,
-                         context=context, stream=stream, task_type=task_type, tier=tier)
+                         context=context, stream=stream, task_type=task_type, tier=tier,
+                         use_skills=use_skills)
     return r
 
 
@@ -631,8 +633,11 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         if acceptance:
             agent_task += ("\n\nACCEPTANCE CRITERIA (the definition of done — make sure your "
                            "result satisfies ALL of these):\n" + acceptance)
+        # #5: trivial tier-1 work skips auto skill-matching so a one-line factual
+        # question can't drag in a heavy skill (e.g. the research report).
         result = _do_subtask(agent_id, agent_task, budget, emit, approve, "", review, stream,
-                             task_type=task_type, acceptance=acceptance, tier=tier)
+                             task_type=task_type, acceptance=acceptance, tier=tier,
+                             use_skills=(tier >= 2))
         _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
         return result
 

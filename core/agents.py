@@ -85,7 +85,8 @@ def _effective_tier(agent_tier, routed_tier) -> str:
 
 # ---- running an agent -------------------------------------------------------
 def run(agent_id, task, budget=None, emit=None, approve=None, context="",
-        max_tokens=None, stream=False, task_type=None, skills=None, tier=None):
+        max_tokens=None, stream=False, task_type=None, skills=None, tier=None,
+        use_skills=True):
     a = agents.get(agent_id) or agents.get(agents.fallback_id())
     # Cost-first selection prefers a cheap model good at this task / the agent's specialty.
     tt = task_type or (a.capabilities[0] if a.capabilities else None)
@@ -99,7 +100,7 @@ def run(agent_id, task, budget=None, emit=None, approve=None, context="",
     # scripts into the workspace, and inject their guidance — this lifts output quality.
     # `skills` lets the lead agent EXPLICITLY pull a skill it judged relevant; the rest
     # are auto-matched. (Progressive disclosure: only selected skills' bodies load.)
-    chosen = skill_lib.select(task, agent=a, names=skills)
+    chosen = skill_lib.select(task, agent=a, names=skills, auto=use_skills)
     skctx = ""
     if chosen:
         skill_lib.stage(chosen)
