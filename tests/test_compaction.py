@@ -30,7 +30,8 @@ def test_large_history_compacted(monkeypatch):
     class _Resp:
         choices = [type("C", (), {"message": _Msg()})()]
 
-    monkeypatch.setattr(ag, "complete", lambda *a, **k: (_Resp(), 0.0))
+    # compaction uses the fallback chain (complete_chain) now
+    monkeypatch.setattr(ag, "complete_chain", lambda *a, **k: (_Resp(), 0.0))
     msgs = _big_history(40)
     out = ag._compact_messages(msgs, budget=Budget(max_iterations=999))
     assert len(out) < len(msgs)
@@ -48,7 +49,7 @@ def test_tail_never_starts_on_tool_message(monkeypatch):
     class _Resp:
         choices = [type("C", (), {"message": _Msg()})()]
 
-    monkeypatch.setattr(ag, "complete", lambda *a, **k: (_Resp(), 0.0))
+    monkeypatch.setattr(ag, "complete_chain", lambda *a, **k: (_Resp(), 0.0))
     # Build history whose natural keep-window would START on a 'tool' message.
     msgs = [{"role": "system", "content": "s"}]
     for i in range(20):
@@ -66,7 +67,7 @@ def test_compaction_failure_is_safe(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("model down")
 
-    monkeypatch.setattr(ag, "complete", _boom)
+    monkeypatch.setattr(ag, "complete_chain", _boom)
     msgs = _big_history(40)
     out = ag._compact_messages(msgs, budget=Budget())
     assert out == msgs   # unchanged on failure — never breaks the run

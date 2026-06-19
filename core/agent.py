@@ -76,9 +76,12 @@ def _compact_messages(messages, budget=None, emit=None, label="agent"):
         lines.append(f"{m.get('role', '?')}: {str(content)[:1000]}")
     convo = "\n".join(lines)[:12000]
     try:
-        model = registry.model_for_tier("tier1")
-        resp, _ = complete(
-            model,
+        # Use the fallback CHAIN, not a single model: compaction is needed most when a
+        # long run is under provider pressure — a single rate-limited model would make
+        # _compact_messages silently no-op exactly when it matters.
+        chain = registry.model_chain("tier1")
+        resp, _ = complete_chain(
+            chain,
             [{"role": "system", "content":
               "Summarize this agent work-log compactly. PRESERVE: files created/edited, "
               "key decisions, tool results that matter, errors hit, and what REMAINS to do. "

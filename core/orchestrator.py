@@ -478,16 +478,32 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
                 elif not items:
                     result = "delegate_parallel needs a non-empty 'tasks' list."
                 else:
+                    requested = len(items)
                     items = items[:min(remaining, MAX_PARALLEL_FANOUT)]
                     base = delegations
                     delegations += len(items)
                     did_work = True
+
+                    # Isolate each worker: one failing parallel step must NOT discard the
+                    # siblings' results (ex.map re-raises the first exception). A real
+                    # BudgetExceeded still propagates so the global cap halts the run.
+                    def _safe_delegation(iv):
+                        try:
+                            return _run_delegation(iv[1], base + 1 + iv[0])
+                        except BudgetExceeded:
+                            raise
+                        except Exception as e:
+                            aid = (iv[1].get("agent") or "general")
+                            return aid, f"(parallel step failed: {type(e).__name__}: {e})"
+
                     # Run the independent steps CONCURRENTLY (the key pool spreads them
                     # across keys so this is genuinely faster, not just interleaved).
                     with ThreadPoolExecutor(max_workers=len(items)) as ex:
-                        pairs = list(ex.map(lambda iv: _run_delegation(iv[1], base + 1 + iv[0]),
-                                            list(enumerate(items))))
+                        pairs = list(ex.map(_safe_delegation, list(enumerate(items))))
                     result = "\n\n".join(f"[{aid}] {r}" for aid, r in pairs)
+                    if requested > len(items):
+                        result += (f"\n\n(Note: {requested - len(items)} requested step(s) exceeded "
+                                   "the parallel limit and were NOT run — issue them next.)")
             else:
                 did_work = True
                 result = _run_one_tool(name, args, "lead", approve, emit)
@@ -502,21 +518,19 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
             plan_only_rounds += 1
         else:
             plan_only_rounds = 0
-        if todos and (replan_repeats >= 1 or plan_only_rounds >= 2):
-            messages.append({"role": "user", "content":
-                "The plan is set. Do NOT call write_todos again — begin executing step 1 "
-                "right now (delegate it or use a tool)."})
-
-        # #2 MITIGATION (not a root fix — see HANDOFF/BACKLOG; the real fix is within-run
-        # compaction in phase 2): a couple of rounds before the hard cap, tell the lead to
-        # stop and synthesize, so a long run ends with a real answer instead of dumping
-        # raw subtask text when force_final trips.
-        elif not near_cap_nudged and rounds >= max(1, MAX_MASTER_ROUNDS - 2):
+        # #2: the near-cap synthesis nudge is evaluated FIRST and independently — a lead
+        # that's stuck re-planning near the cap is exactly when this matters most, so it
+        # must not be starved by the plan-repeat branch below (mitigation; the root fix is
+        # within-run compaction, now shipped — see HANDOFF/BACKLOG).
+        if not near_cap_nudged and rounds >= max(1, MAX_MASTER_ROUNDS - 2):
             near_cap_nudged = True
             messages.append({"role": "user", "content":
                 "You are near the step limit. Stop delegating/planning and WRITE THE FINAL "
                 "synthesized answer now (no tool calls), drawing on the work done so far."})
-
+        elif todos and (replan_repeats >= 1 or plan_only_rounds >= 2):
+            messages.append({"role": "user", "content":
+                "The plan is set. Do NOT call write_todos again — begin executing step 1 "
+                "right now (delegate it or use a tool)."})
         # Claude-style reminder injection: keep the live plan in front of the model.
         elif todos:
             messages.append({"role": "user", "content": "(reminder) current todo list:\n" + _todos_text(todos)})
