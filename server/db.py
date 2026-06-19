@@ -113,6 +113,14 @@ def _migrate():
         "spend": [("project_id", "TEXT DEFAULT ''")],
         "project": [("budget_usd", "REAL DEFAULT 0")],
     }
+    # Indexes for columns added by ALTER above — create_all() only indexes tables it
+    # creates FRESH, so a pre-existing table (the live DB) never gets these otherwise.
+    indexes = [
+        ("spend", "ix_spend_project_id", "project_id"),
+        ("session", "ix_session_project_id", "project_id"),
+        ("memory", "ix_memory_scope", "scope"),
+        ("memory", "ix_memory_kind", "kind"),
+    ]
     with engine.begin() as conn:
         for table, cols in wanted.items():
             existing = [r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")]
@@ -121,6 +129,10 @@ def _migrate():
             for name, decl in cols:
                 if name not in existing:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+        for table, idx, col in indexes:
+            existing = [r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")]
+            if col in existing:
+                conn.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS {idx} ON {table}({col})")
 
 
 def init_db():
