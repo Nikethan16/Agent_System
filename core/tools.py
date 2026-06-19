@@ -403,6 +403,34 @@ def list_files(directory: str = ".") -> str:
         return f"ERROR listing {directory}: {e}"
 
 
+# ---- per-task sub-workspace heuristic (orchestration issue #6) -------------
+# OFF by default — only consulted when the server enables AGENT_TASK_SUBWORKSPACE.
+# A single chat session shares one workspace; when a user builds several unrelated
+# things in one chat their files collide and confuse later turns. When enabled, a
+# request that clearly STARTS A NEW standalone build gets its own subfolder.
+_BUILD_RE = re.compile(
+    r"\b(build|create|make|start|scaffold|generate)\b.*?\b(app|application|api|site|website|"
+    r"web ?page|page|tool|script|project|service|cli|bot|game|dashboard|website)\b",
+    re.IGNORECASE | re.DOTALL)
+_FOLLOWUP_RE = re.compile(
+    r"\b(the project|the app|earlier|previous|continue|keep going|add to|update the|"
+    r"fix the|same|that we|it again|the existing|above)\b", re.IGNORECASE)
+_SLUG_STOP = {"build", "create", "make", "start", "scaffold", "generate", "a", "an",
+              "the", "me", "please", "with", "and", "for", "to", "new", "that"}
+
+
+def fresh_build_slug(text: str):
+    """Return a short folder slug if `text` reads like a request to START A NEW
+    standalone build (and not a follow-up to existing work); else None. Pure +
+    deterministic — the caller decides whether to actually use a sub-workspace."""
+    t = text or ""
+    if not _BUILD_RE.search(t) or _FOLLOWUP_RE.search(t):
+        return None
+    words = [w for w in re.findall(r"[a-z0-9]+", t.lower()) if w not in _SLUG_STOP]
+    slug = "-".join(words[:4]) or "project"
+    return ("proj_" + slug)[:48]
+
+
 # ---- code search (grep / glob) ---------------------------------------------
 # Design inspired by OpenCode's grep/glob tools (which shell to ripgrep); ours is
 # pure-Python and confined to the workspace via _safe(), so it adds no dependency
