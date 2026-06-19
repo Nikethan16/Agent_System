@@ -24,14 +24,31 @@ For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OV
 - **Email+password login is ACTIVE** (now the only thing standing between the public URL and
   the app — see "Security follow-ups" below); **Telegram bot** runs on the server; **nightly
   backups** via cron (`scripts/backup.py --keep 14`).
-- **Run/test:** local run `.\run.ps1` → http://localhost:8800. **111/111 pytest** (`python -m
+- **Run/test:** local run `.\run.ps1` → http://localhost:8800. **130/130 pytest** (`python -m
   pytest tests/ -v`; `pytest` lives in `.venv`). Smoke **171/171** (`scripts\smoke_test.py`).
   Rebuild UI after frontend changes: `npm --prefix web run build`.
 - **Diagnostics**: `python3 scripts/inspect_run.py --list` / `<session_id>` — read-only dump
   of a run's full event timeline, span-tree (cost/tokens/duration), generated workspace files,
   and last stored message. Use this whenever asked "what did a run actually do."
 
-## Last session (2026-06-20) — absorb OpenCode's coding-engine design (branch `claude/coding-engine-port`)
+## Last session (2026-06-20, pt. 2) — Phase 2 + app hardening (branch `claude/phase2-and-hardening`, stacked on the port branch)
+Broad "make the whole app better" pass. 6 commits, each tested. **pytest 130/130, smoke 171/171.**
+Not merged; no PR yet. Builds on `claude/coding-engine-port`.
+1. **Phase 2 — coding engine finished:** within-run **context compaction** (`core/agent.py:_compact_messages`,
+   both loops, summarizes old turns at 80% of the context budget, preserves tool-sequence
+   validity) — the ROOT fix for orch #2. Plus a **post-edit syntax verifier** (in-process
+   `.py`/`.json`/`.yaml` check appended to write/edit results; safe offline LSP stand-in).
+2. **Security:** **encrypt API keys at rest** — `AGENT_SECRET_KEY` Fernet-encrypts
+   `data/keys.json` (`core/keypool.py`), backward-compatible (legacy plaintext still loads).
+   (Off-site backups were already supported via `BACKUP_UPLOAD_CMD` — just set it.)
+3. **Capability:** **per-project budgets** — `Project.budget_usd` cap, enforced + tracked per
+   project; `GET /api/projects/{id}/spend`. Additive migrations (spend.project_id, project.budget_usd).
+4. **UI:** mobile **drawer overflow fix** (sidebar/artifacts panel no longer overflow narrow
+   phones; verified 320/375px via the preview tools, no console errors).
+5. **New optional env vars:** `AGENT_SECRET_KEY` (key encryption), `AGENT_COMPACT`/`AGENT_COMPACT_RATIO`/
+   `AGENT_COMPACT_KEEP` (compaction), `AGENT_POSTEDIT_VERIFY` (syntax verifier). All default-safe.
+
+## Earlier session (2026-06-20) — absorb OpenCode's coding-engine design (branch `claude/coding-engine-port`)
 Reimplemented the best of OpenCode (MIT) in our own Python — **no OpenCode runtime
 dependency** (attribution in `THIRD_PARTY.md`). 11 commits, each with tests. **pytest 111/111,
 smoke 171/171.** Not yet merged to `main` (no PR opened — awaiting owner).

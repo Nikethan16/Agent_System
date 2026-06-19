@@ -13,9 +13,10 @@ root fix** (see the scheduled phase-2 item at the bottom of this section).
 
 1. ✅ Leaked raw tool-call markup as final → `_looks_like_raw_toolcall` + one-shot re-prompt
    in both loops (`core/agent.py`, `core/orchestrator.py`), false-positive guarded.
-2. ⚠️ Research death-spiral → near-cap synthesis nudge + force `_finalize_from_board` at the
-   cap (`core/orchestrator.py`). **MITIGATION ONLY** — root cause is context bloat hitting the
-   cap; the real fix is within-run **compaction (PHASE 2, scheduled below)**.
+2. ✅ Research death-spiral → near-cap synthesis nudge + force `_finalize_from_board` at the
+   cap, **AND the root fix now shipped**: within-run **compaction** (`_compact_messages` in
+   `core/agent.py`, wired into both loops) summarizes old turns so long tasks stop reaching the
+   cap. (The mitigation remains as a backstop.)
 3. ✅ LEAD re-plans identical template → plan-repeat guard + plan-only-round counter.
 4. ✅ Tier/agent cost mismatch + dispatcher fragility → `_effective_tier` (run at the cheaper
    of routed/agent tier) + `select_agent` tolerates a bare/embedded agent id.
@@ -25,11 +26,11 @@ root fix** (see the scheduled phase-2 item at the bottom of this section).
    `AGENT_TASK_SUBWORKSPACE` (OFF by default), `fresh_build_slug` in `core/tools.py`.
 7. ✅ `run_bash`/`write_file` `/ws` path mismatch → `_safe` maps the Docker mount prefix.
 
-**Scheduled next — PHASE 2 (the root fix for #2):** within-run **context compaction** —
-summarize old turns / keep recent in the agent + master loops when message tokens approach the
-model's window, so long coding/research tasks stop hitting the iteration cap. Plus a **light
-post-edit verifier** (run `py_compile`/`ruff`/`node --check`/`tsc --noEmit` after an edit and
-feed diagnostics back — the realistic stand-in for OpenCode's LSP; full LSP is not worth it).
+**✅ PHASE 2 — SHIPPED (branch `claude/phase2-and-hardening`):** within-run **context
+compaction** (`core/agent.py:_compact_messages`, both loops, triggers at 80% of the context
+budget, preserves tool-sequence validity) + a **post-edit syntax verifier** (in-process
+`.py`/`.json`/`.yaml` check appended to write/edit results — the safe, offline stand-in for
+OpenCode's LSP; full LSP confirmed not worth it). Both tested.
 
 ---
 
@@ -115,22 +116,25 @@ Code is done; the items below note the **operational steps** still needed to act
   sub-linear ANN index is only worth it at much larger scale.
 
 ## UI / UX polish
-- **Mobile pass** on the new Claude UI (desktop verified; phone drawers need a look).
+- ✅ **Mobile pass (drawers)** — sidebar + artifacts panel no longer overflow narrow phones
+  (verified 320/375px). Remaining: broader phone polish across all panels if desired.
 - **Deep-polish the last two Settings panels** — Health and Schedules (Models/Memory/Fleet done).
 
 ## Performance / cost
 - Add more **free NVIDIA keys** (`NVIDIA_NIM_API_KEY_1..N`) to multiply throughput.
-- **Per-project budgets** + a spend dashboard.
+- ✅ **Per-project budgets** — cumulative cap per project (`budget_usd`), enforced + tracked;
+  `GET /api/projects/{id}/spend`. Remaining: a richer spend *dashboard* UI.
 - Prompt caching — deferred (low payoff on NVIDIA's free tier; the classifier cache covers repeats).
 
 ## Reliability / quality
 - Broaden integration tests further (more edge cases; multi-agent flow tests).
 
 ## Security / ops (the app is now public — see HANDOFF.md "Security follow-ups")
-- **Encrypt stored API keys** at rest — matters more now that the app is internet-reachable.
+- ✅ **Encrypt stored API keys at rest** — `AGENT_SECRET_KEY` Fernet-encrypts `data/keys.json`
+  (`core/keypool.py`), backward-compatible. ✅ **Off-site backups** already supported via
+  `BACKUP_UPLOAD_CMD` in `scripts/backup.py` (operational: set the env var).
 - Consider rotating/strengthening `AGENT_LOGIN_PASSWORD`; watch `journalctl -u agentcore` for
   repeated 401/429s on `/api/login` as a sign of scanning/brute-force attempts.
-- **Off-site backups** (`BACKUP_UPLOAD_CMD`) so backups leave the VM.
 - Docker-group membership is root-equivalent — consider rootless Docker for the sandbox.
 
 ---

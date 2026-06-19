@@ -38,6 +38,11 @@ answers only on localhost. They matter mainly if you ever expose it to a network
 | `MEMORY_SEMANTIC_THRESHOLD` | `0.60` | Similarity cutoff for Phase C embedding recall. Tuning only. |
 | `MAX_CHECKPOINTS` | `20` | Per-chat workspace snapshots kept for rewind (older ones pruned). |
 | `AGENT_MAX_TOOL_ROUNDS` | `14` | How many tool rounds a single agent gets before being forced to a final answer. Raised so multi-step coding (read→edit→run→fix) can finish; the per-run budget is still the hard ceiling. |
+| `AGENT_SECRET_KEY` | unset | **NEW.** When set, the UI-managed API-key store (`data/keys.json`) is encrypted at rest (Fernet, key derived from this secret). Recommended for any internet-facing deployment. Backward-compatible: a legacy plaintext store still loads and is re-encrypted on the next save. Keep this value stable — changing it makes previously-stored keys unreadable (env-var keys still work). |
+| `AGENT_COMPACT` | `1` (on) | **NEW.** Within-run context compaction: summarizes older turns when the history nears the context budget so long tasks don't hit the cap. Set `0` to disable. `AGENT_COMPACT_RATIO` (`0.8`) = fraction of the context budget that triggers it; `AGENT_COMPACT_KEEP` (`6`) = recent messages kept verbatim. |
+| `AGENT_POSTEDIT_VERIFY` | `1` (on) | **NEW.** After write_file/edit_file, syntax-checks `.py`/`.json`/`.yaml` in-process and warns if the file is broken. Set `0` to disable. |
+| `AGENT_TASK_SUBWORKSPACE` | `0` (off) | **NEW.** When `1`, a request that starts a fresh standalone build runs in its own sub-folder so unrelated projects in one chat don't collide. Off by default (everything in the session root). |
+| `AGENT_READ_MAX_LINES` / `AGENT_READ_MAX_BYTES` | `2000` / `51200` | **NEW.** Caps on a single `read_file` (paged output; use offset/limit to continue). Tuning only. |
 
 ## Backups (no key needed)
 Your only un-rebuildable data lives in `data/` (chats, memory, files, checkpoints).
