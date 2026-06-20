@@ -48,8 +48,12 @@ def select(task_type: str) -> list:
 
 
 def as_todos(phases: list) -> list:
-    """Playbook phases -> the LEAD's initial todo list."""
-    return [{"text": f"{p.get('phase', 'step')}: {p.get('goal', '')}", "status": "pending"}
+    """Playbook phases -> the LEAD's initial todo list. SHORT labels (the phase name,
+    title-cased) — the full goal/guidance is injected into the system prompt via
+    guidance(), so the checklist stays a clean, scannable set of steps rather than a
+    wall of repeated paragraphs."""
+    return [{"text": str(p.get("phase", "step")).replace("_", " ").strip().title(),
+             "status": "pending"}
             for p in (phases or [])]
 
 

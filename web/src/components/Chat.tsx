@@ -88,10 +88,39 @@ function AgentStatus({ events, running }: { events: Ev[]; running?: boolean }) {
   );
 }
 
+// A single live checklist for the LEAD's plan — updates in place (✓ done / ● doing /
+// ○ pending) instead of printing the whole plan again on every update.
+function PlanChecklist({ todos }: { todos?: { text: string; status?: string }[] }) {
+  if (!todos?.length) return null;
+  return (
+    <div className="mb-4 rounded-lg border border-light-border/60 dark:border-dark-border p-3">
+      <div className="text-[10px] uppercase tracking-widest text-light-muted mb-2">Plan</div>
+      <ul className="space-y-1.5">
+        {todos.map((t, i) => {
+          const s = t.status || "pending";
+          const mark = s === "done" ? "✓" : s === "in_progress" ? "●" : "○";
+          const cls = s === "done" ? "text-emerald-600"
+            : s === "in_progress" ? "text-accent-terracotta" : "text-light-muted";
+          return (
+            <li key={i} className="flex items-start gap-2 text-xs">
+              <span className={`${cls} ${s === "in_progress" ? "animate-pulse" : ""} mt-px`}>{mark}</span>
+              <span className={s === "done" ? "line-through text-light-muted" : "text-on-surface-variant dark:text-light-muted"}>{t.text}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function Activity({ events, running }: { events: Ev[]; running?: boolean }) {
   const { submit } = useStore();
   const [open, setOpen] = useState(false);   // collapsed by default — keep the chat clean
-  const steps = events.map(describe).map((d, i) => ({ d, ev: events[i] })).filter((x) => x.d);
+  // The latest plan drives a single updating checklist; individual plan events are NOT
+  // shown as repeated timeline rows.
+  const lastPlan = [...events].reverse().find((e) => e.type === "plan") as any;
+  const steps = events.map(describe).map((d, i) => ({ d, ev: events[i] }))
+    .filter((x) => x.d && x.ev.type !== "plan");
   // Only surface the timeline when the team actually did work (tools, a plan, QA, etc.),
   // or while a run is in progress. Simple Q&A turns show nothing.
   const worthShowing = events.some((e) => MEANINGFUL.includes(e.type)) ||
@@ -109,6 +138,7 @@ function Activity({ events, running }: { events: Ev[]; running?: boolean }) {
       <AgentStatus events={events} running={running} />
       {open && (
         <div className="px-5 pb-5 pt-3 border-t border-light-border/40 dark:border-dark-border">
+          <PlanChecklist todos={lastPlan?.todos} />
           <div className="space-y-4 relative before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-light-border dark:before:bg-dark-border">
             {steps.map(({ d, ev }, i) => (
               <div key={i} className="relative pl-6 fadeup">

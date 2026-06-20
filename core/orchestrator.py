@@ -309,7 +309,25 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     if not todos:
         todos = playbook_lib.as_todos(phases) or \
             [{"text": s, "status": "pending"} for s in _make_plan(task, budget)]
-    _emit({"type": "plan", "subtasks": [t["text"] for t in todos], "todos": todos})
+
+    # ONE live checklist, not a wall of repeated plans: overlay progress (first
+    # `done` steps complete, the next in-progress) and emit a `plan` event ONLY when
+    # the rendered checklist actually changed. This both kills the duplicate-plan
+    # spam and makes the UI markers advance as work happens.
+    plan_state = {"sig": None, "done": 0}
+
+    def _emit_plan():
+        items = [{"text": t.get("text", ""),
+                  "status": ("done" if i < plan_state["done"]
+                             else "in_progress" if i == plan_state["done"] else "pending")}
+                 for i, t in enumerate(todos)]
+        sig = json.dumps([(t["text"], t["status"]) for t in items])
+        if sig == plan_state["sig"]:
+            return
+        plan_state["sig"] = sig
+        _emit({"type": "plan", "subtasks": [t["text"] for t in items], "todos": items})
+
+    _emit_plan()
     messages.append({"role": "user",
                      "content": ("Here is the plan. Work through it step by step — delegate each "
                                  "step to the right specialist (or do small steps yourself), update "
@@ -428,6 +446,10 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
                 return (_finalize_from_board(board, task, budget, emit, stream)
                         or msg_content
                         or "(Stopped at the step limit without a clean answer — please retry.)")
+            # The lead finished — mark every step complete so the checklist shows done.
+            if todos:
+                plan_state["done"] = len(todos)
+                _emit_plan()
             return msg_content or _finalize_from_board(board, task, budget, emit, stream)
 
         did_work = False          # any real action this round (delegate / file tool)?
@@ -456,13 +478,17 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
                     replan_repeats += 1
                 else:
                     replan_repeats = 0
-                last_todos_sig = sig
-                todos = new_todos
-                _emit({"type": "plan", "subtasks": [t.get("text", "") for t in todos], "todos": todos})
-                # #3: after an identical re-plan, push the lead to act instead of re-emitting.
-                result = ("todos updated" if replan_repeats == 0 else
-                          "Plan UNCHANGED from last time — stop calling write_todos and "
-                          "execute step 1 now (delegate it or use a tool).")
+                    last_todos_sig = sig
+                    todos = new_todos      # only ADOPT a genuinely new plan
+                # #3: after the FIRST identical re-plan, REFUSE further re-planning — don't
+                # adopt or re-emit it; force the lead to start executing. (Prevents the
+                # "re-emit the same 7-step plan for 5 minutes before acting" loop.)
+                if replan_repeats == 0:
+                    _emit_plan()
+                    result = "todos updated."
+                else:
+                    result = ("Plan is ALREADY set and unchanged — do NOT call write_todos "
+                              "again. Execute step 1 now: delegate it or use a tool.")
             elif name == "delegate":
                 if delegations >= MAX_DELEGATIONS:
                     result = "Delegation limit reached — do the remaining steps yourself or finish."
@@ -511,6 +537,12 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
             messages.append({"role": "tool", "tool_call_id": tc_id, "content": str(result)})
 
         rounds += 1
+
+        # Advance the live checklist when real work happened this round, so the UI
+        # markers actually move (✓) instead of the model having to update statuses.
+        if did_work and todos:
+            plan_state["done"] = min(plan_state["done"] + 1, len(todos))
+            _emit_plan()
 
         # #3: count rounds that only (re)planned without doing work; after a couple,
         # or after an identical re-plan, force the lead to start executing.

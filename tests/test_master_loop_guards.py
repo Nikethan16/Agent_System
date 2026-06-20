@@ -81,3 +81,31 @@ def test_clean_final_returned_normally(monkeypatch):
     out = orch._master_loop("q", Budget(max_iterations=50), None, None,
                             review=False, initial_todos=plan)
     assert out == "here is the answer"
+
+
+def test_plan_not_re_emitted_on_identical_replan(monkeypatch):
+    """An identical re-plan must NOT spam new plan events (was 4x in a live trace)."""
+    plan = [{"text": "Understand", "status": "pending"},
+            {"text": "Build", "status": "pending"}]
+    script = [
+        _Msg(tool_calls=[_TC(1, "write_todos", {"todos": plan})]),   # same as seed
+        _Msg(tool_calls=[_TC(2, "write_todos", {"todos": plan})]),   # identical re-plan
+        _Msg(content="done"),
+    ]
+    calls = {"n": 0}
+    plan_events = []
+
+    def fake_chain(models, messages, **kw):
+        resp = _Resp(script[calls["n"]]); calls["n"] += 1
+        return resp, 0.0
+
+    def emit(ev):
+        if ev.get("type") == "plan":
+            plan_events.append(ev)
+
+    monkeypatch.setattr(orch, "complete_chain", fake_chain)
+    out = orch._master_loop("build x", Budget(max_iterations=50), emit, None,
+                            review=False, initial_todos=plan)
+    assert out == "done"
+    # seed emits once; the two identical re-plans are deduped/refused -> no extra spam.
+    assert len(plan_events) <= 2, f"plan emitted {len(plan_events)}x (should be deduped)"
