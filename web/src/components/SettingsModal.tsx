@@ -6,11 +6,13 @@ import MemoryPanel from "./MemoryPanel";
 import FleetPanel from "./FleetPanel";
 import HealthPanel from "./HealthPanel";
 import SchedulesPanel from "./SchedulesPanel";
+import UsagePanel from "./UsagePanel";
 
-// Five clear homes — every feature lives in exactly one (the old build had drifted to 9).
+// Clear homes — every feature lives in exactly one (the old build had drifted to 9).
 const TABS = [
   { id: "general", label: "General", icon: "tune" },
   { id: "limits", label: "Limits & cost", icon: "savings" },
+  { id: "usage", label: "Usage & cost", icon: "monitoring" },
   { id: "models", label: "Models & keys", icon: "smart_toy" },
   { id: "memory", label: "Memory", icon: "neurology" },
   { id: "advanced", label: "Advanced", icon: "shield" },
@@ -44,12 +46,18 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
   const [token, setToken] = useState(getAuthToken());
   const inp = "bg-surface-container-low dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-2 py-1 text-sm outline-none";
 
+  // Run ONCE when the modal opens. Depending on [onClose] re-fired this effect on
+  // every App re-render (onClose is a fresh closure each render) — during a streaming
+  // run that hammered /api/spend hundreds of times a minute and tripped the rate
+  // limiter, breaking the whole UI. loadSpend is a one-shot; the keydown closure
+  // captures a stable setSettings, so [] is correct.
   useEffect(() => {
     loadSpend();
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load memory data when its tab is first opened.
   useEffect(() => { if (tab === "memory") { loadFacts(); loadRules(); } }, [tab]);
@@ -110,9 +118,10 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
                   <span className="text-sm">${(spend?.spent_today ?? 0).toFixed(4)}
                     <span className="text-light-muted">{spend?.cap != null ? ` / $${spend.cap.toFixed(2)} cap` : " (no cap)"}</span></span>
                 </Row>
-                <p className="text-xs text-light-muted mt-4">The daily spend cap is set with <code>AGENT_DAILY_USD_CAP</code> in <code>.env</code>.</p>
+                <p className="text-xs text-light-muted mt-4">The daily spend cap is set with <code>AGENT_DAILY_USD_CAP</code> in <code>.env</code>. See <b>Usage &amp; cost</b> for trends.</p>
               </div>
             )}
+            {tab === "usage" && <UsagePanel />}
             {tab === "models" && (
               <div>
                 <div className="flex items-center justify-between gap-3 mb-4">

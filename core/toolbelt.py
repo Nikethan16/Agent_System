@@ -58,6 +58,37 @@ def names() -> list:
     return list(_REGISTRY)
 
 
+def validate_args(tool: "Tool", args) -> Optional[str]:
+    """Return None if `args` satisfy the tool's JSON schema, else a short error.
+
+    Lenient on scalar type drift (a model sending a number as "4" is fine) but
+    STRICT on the two failure modes that actually break a tool call: a missing
+    required argument, and a structurally-wrong container (object/array/string
+    confusion). On failure the agent loop feeds the error back so the model
+    re-issues the call — instead of executing with broken args. Design inspired
+    by OpenCode's pre-execution arg validation (see THIRD_PARTY.md)."""
+    if not isinstance(args, dict):
+        return "arguments must be a JSON object"
+    params = (tool.schema.get("function", {}) or {}).get("parameters", {}) or {}
+    props = params.get("properties", {}) or {}
+    required = params.get("required", []) or []
+    missing = [k for k in required if k not in args or args[k] is None]
+    if missing:
+        return f"missing required argument(s): {', '.join(missing)}"
+    for k, v in args.items():
+        spec = props.get(k)
+        if not spec:
+            continue
+        t = spec.get("type")
+        if t == "string" and isinstance(v, (dict, list)):
+            return f"argument '{k}' should be a string, got {type(v).__name__}"
+        if t == "array" and not isinstance(v, list):
+            return f"argument '{k}' should be an array"
+        if t == "object" and not isinstance(v, dict):
+            return f"argument '{k}' should be an object"
+    return None
+
+
 def schemas_for(tool_names) -> list:
     """OpenAI tool schemas for the given names (silently skips unknown names)."""
     out = []
@@ -73,12 +104,18 @@ def _obj(props, required=None):
 
 
 # ---- built-in OFFLINE sandboxed tools (file/shell) --------------------------
-from .tools import read_file, write_file, edit_file, list_files, run_bash, parse_document  # noqa: E402
+from .tools import (read_file, write_file, edit_file, list_files, run_bash,  # noqa: E402
+                    parse_document, grep, glob)
 
 register_fn(
-    "read_file", lambda path: read_file(path),
-    _obj({"path": {"type": "string"}}, ["path"]),
-    "Read the full contents of a file in the workspace.", RISK_SAFE,
+    "read_file", lambda path, offset=1, limit=None: read_file(path, offset, limit),
+    _obj({"path": {"type": "string"},
+          "offset": {"type": "integer", "description": "1-indexed first line to read (default 1)"},
+          "limit": {"type": "integer", "description": "max lines to return (default/cap 2000)"}},
+         ["path"]),
+    "Read a file in the workspace as numbered lines. Large files are capped (~2000 lines / "
+    "50KB); use offset/limit to page through the rest (the footer tells you the next offset).",
+    RISK_SAFE,
 )
 register_fn(
     "parse_document", lambda path: parse_document(path),
@@ -90,6 +127,23 @@ register_fn(
     "list_files", lambda directory=".": list_files(directory),
     _obj({"directory": {"type": "string"}}),
     "List files in a workspace directory (default: root).", RISK_SAFE,
+)
+register_fn(
+    "grep", lambda pattern, include=None, path=".": grep(pattern, include, path),
+    _obj({"pattern": {"type": "string", "description": "regex to search file contents for"},
+          "include": {"type": "string", "description": "optional filename glob, e.g. '*.py'"},
+          "path": {"type": "string", "description": "subdirectory to search (default: root)"}},
+         ["pattern"]),
+    "Search file CONTENTS across the workspace for a regex (returns relpath:line: match, "
+    "capped at 100). Use this to FIND code instead of reading whole files.", RISK_SAFE,
+)
+register_fn(
+    "glob", lambda pattern, path=".": glob(pattern, path),
+    _obj({"pattern": {"type": "string", "description": "glob, e.g. '**/*.py' or 'src/*.ts'"},
+          "path": {"type": "string", "description": "subdirectory to search (default: root)"}},
+         ["pattern"]),
+    "Find files by name/glob pattern across the workspace (newest first, capped at 100).",
+    RISK_SAFE,
 )
 register_fn(
     "write_file", lambda path, content: write_file(path, content),

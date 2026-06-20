@@ -25,7 +25,7 @@ export default function RightPanel({ open = false, onClose }: { open?: boolean; 
     return null;
   };
   return (
-    <aside className={`fixed right-0 top-0 h-screen w-panel-width flex flex-col border-l border-light-border dark:border-dark-border bg-surface dark:bg-dark-surface z-40 transition-transform duration-200 ${open ? "translate-x-0" : "translate-x-full"}`}>
+    <aside className={`fixed right-0 top-0 h-screen w-full max-w-panel-width flex flex-col border-l border-light-border dark:border-dark-border bg-surface dark:bg-dark-surface z-40 transition-transform duration-200 ${open ? "translate-x-0" : "translate-x-full"}`}>
       <div className="flex items-center justify-between h-14 px-4 shrink-0">
         <span className="text-[13px] font-medium text-on-surface dark:text-dark-text">Artifacts</span>
         <button onClick={onClose} title="Close panel" aria-label="Close panel"

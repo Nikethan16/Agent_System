@@ -70,6 +70,7 @@ export const api = {
   agents: () => GET("/api/agents"),
   skills: () => GET("/api/skills"),
   spend: () => GET("/api/spend"),
+  spendOverview: () => GET("/api/spend/overview"),
   setTier: (tier: string, model: string) => POST("/api/models/tier", { tier, model }),
   scout: () => POST("/api/models/scout", {}),
   applyCatalog: (models: any[]) => POST("/api/models/catalog", { models }),

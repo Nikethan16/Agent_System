@@ -104,8 +104,21 @@ class ModelRegistry:
         with little marginal benefit (cross-session memory recall already supplies older
         facts). The cap keeps plenty of recent history while cutting input cost; raise it
         for very long-context workflows."""
-        wins = [self.context_window_for(m["id"]) for m in self.catalog() if self._available(m)]
-        floor = min(wins) if wins else self.context_window_for("")
+        # Read each model's window straight from its catalog entry instead of calling
+        # context_window_for() (which does a linear _by_id scan) per model — that made
+        # this O(catalog^2), and it runs every turn (context assembly) + every
+        # compaction check. This is O(catalog).
+        default_win = int(self.cfg.get("defaults", {}).get("context_window", 32000))
+        wins = []
+        for m in self.catalog():
+            if not self._available(m):
+                continue
+            cw = m.get("context_window")
+            try:
+                wins.append(int(cw) if cw else default_win)
+            except (TypeError, ValueError):
+                wins.append(default_win)
+        floor = min(wins) if wins else default_win
         budget = max(4000, int(floor * 0.6) - 8192)
         try:
             cap = int(os.environ.get("AGENT_MAX_CONTEXT_TOKENS", "24000"))

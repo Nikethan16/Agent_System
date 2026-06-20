@@ -371,11 +371,16 @@ def upsert_fact(text: str, fact_key: str, scope: str = "global") -> None:
 
 def get_facts(scopes: list) -> list:
     """Fact texts for the given scopes (e.g. ['global', 'project:<id>']), newest first."""
+    if not scopes:
+        return []
+    # Filter scope in SQL (uses the scope index) instead of scanning every fact and
+    # filtering in Python — this runs on every substantive turn.
     with DBSession(engine) as s:
         rows = s.exec(
-            select(Memory).where(Memory.kind == "fact").order_by(Memory.updated_at.desc())
+            select(Memory).where(Memory.kind == "fact", Memory.scope.in_(list(scopes)))
+            .order_by(Memory.updated_at.desc())
         ).all()
-    return [r.text for r in rows if r.scope in scopes]
+    return [r.text for r in rows]
 
 
 def list_facts(scope: str = None) -> list:
@@ -481,11 +486,14 @@ def list_rules(status: str = None) -> list:
 
 
 def get_active_rules(scopes: list) -> list:
+    if not scopes:
+        return []
     with DBSession(engine) as s:
         rows = s.exec(
-            select(Memory).where(Memory.kind == "rule").order_by(Memory.updated_at.desc())
+            select(Memory).where(Memory.kind == "rule", Memory.scope.in_(list(scopes)))
+            .order_by(Memory.updated_at.desc())
         ).all()
-    return [r.text for r in rows if r.scope in scopes]
+    return [r.text for r in rows]
 
 
 def approve_rule(rule_id: str) -> bool:

@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 
 from .. import projects
+from .. import spend
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -14,6 +15,7 @@ class CreateIn(BaseModel):
 class UpdateIn(BaseModel):
     name: str | None = None
     instructions: str | None = None
+    budget_usd: float | None = None
 
 
 @router.post("")
@@ -36,10 +38,20 @@ def get(pid: str):
 
 @router.patch("/{pid}")
 def update(pid: str, body: UpdateIn):
-    p = projects.update(pid, name=body.name, instructions=body.instructions)
+    p = projects.update(pid, name=body.name, instructions=body.instructions,
+                        budget_usd=body.budget_usd)
     if not p:
         raise HTTPException(404, "project not found")
     return p
+
+
+@router.get("/{pid}/spend")
+def project_spend(pid: str):
+    """Cumulative spend for this project + its budget cap (for the dashboard)."""
+    p = projects.get(pid)
+    if not p:
+        raise HTTPException(404, "project not found")
+    return spend.project_status(pid, projects.budget_of(pid))
 
 
 @router.delete("/{pid}")

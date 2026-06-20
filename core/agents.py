@@ -6,6 +6,7 @@ entry, and because the dispatcher builds its menu from this registry at call tim
 new agent is immediately selectable with zero code changes.
 """
 import os
+import re
 import json
 import threading
 
@@ -65,22 +66,41 @@ class AgentRegistry:
 agents = AgentRegistry()
 
 
+# ---- tier helpers (orchestration issue #4) ---------------------------------
+def _tier_num(t) -> int:
+    try:
+        return int(str(t).lower().replace("tier", "").strip())
+    except (TypeError, ValueError):
+        return 2
+
+
+def _effective_tier(agent_tier, routed_tier) -> str:
+    """The tier to actually run at. A trivial (tier-1) task routed to a tier-2
+    specialist (general/research) should NOT pay a tier-2 model — use the CHEAPER
+    of the two so the cost-tier separation holds (orchestration issue #4)."""
+    if routed_tier is None:
+        return agent_tier
+    return f"tier{min(_tier_num(agent_tier), _tier_num(routed_tier))}"
+
+
 # ---- running an agent -------------------------------------------------------
 def run(agent_id, task, budget=None, emit=None, approve=None, context="",
-        max_tokens=None, stream=False, task_type=None, skills=None):
+        max_tokens=None, stream=False, task_type=None, skills=None, tier=None,
+        use_skills=True):
     a = agents.get(agent_id) or agents.get(agents.fallback_id())
     # Cost-first selection prefers a cheap model good at this task / the agent's specialty.
     tt = task_type or (a.capabilities[0] if a.capabilities else None)
+    eff_tier = _effective_tier(a.tier, tier)
     # The fallback CHAIN for this agent (primary first); run_agent falls back down it
     # if a model is rate-limited/down. model_chain[0] is the same primary as before.
-    models = model_registry.model_chain(a.tier, task_type=tt)
-    mt = max_tokens or model_registry.max_tokens_for_tier(a.tier)
+    models = model_registry.model_chain(eff_tier, task_type=tt)
+    mt = max_tokens or model_registry.max_tokens_for_tier(eff_tier)
 
     # SKILLS (Claude-style): pick relevant skills for this task, stage their bundled
     # scripts into the workspace, and inject their guidance — this lifts output quality.
     # `skills` lets the lead agent EXPLICITLY pull a skill it judged relevant; the rest
     # are auto-matched. (Progressive disclosure: only selected skills' bodies load.)
-    chosen = skill_lib.select(task, agent=a, names=skills)
+    chosen = skill_lib.select(task, agent=a, names=skills, auto=use_skills)
     skctx = ""
     if chosen:
         skill_lib.stage(chosen)
@@ -152,6 +172,7 @@ def select_agent(task: str, budget: Budget = None):
     # NOTE: _DISPATCH_SYS contains a literal JSON example with braces, so we must NOT
     # use str.format() (it would treat {"agent"} as a field). Use replace().
     system = _DISPATCH_SYS.replace("{menu}", menu)
+    txt = ""
     try:
         resp, _ = complete_chain(
             chain,
@@ -166,4 +187,11 @@ def select_agent(task: str, budget: Budget = None):
             return aid, data.get("reason", "")
     except Exception:
         pass
+    # Tolerate a model that replied with the bare id (or wrapped it in prose) but
+    # not clean JSON, before dropping to keyword matching — this is what made the
+    # dispatcher silently fall back in live traces (orchestration issue #4).
+    low = txt.lower()
+    for a in cat:
+        if re.search(rf"\b{re.escape(a.id)}\b", low):
+            return a.id, "matched agent id in response"
     return _fallback_select(task), "fallback (keyword match)"

@@ -20,6 +20,7 @@ class Project(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
     name: str = "New project"
     instructions: str = ""          # custom guidance prepended to every chat in the project
+    budget_usd: float = 0.0         # cumulative spend cap for this project (0 = unlimited)
     created_at: str = Field(default_factory=_now)
 
 
@@ -48,7 +49,7 @@ def get(pid: str):
         return p.model_dump() if p else None
 
 
-def update(pid: str, name=None, instructions=None):
+def update(pid: str, name=None, instructions=None, budget_usd=None):
     with DBSession(engine) as s:
         p = s.get(Project, pid)
         if not p:
@@ -57,8 +58,19 @@ def update(pid: str, name=None, instructions=None):
             p.name = name
         if instructions is not None:
             p.instructions = instructions
+        if budget_usd is not None:
+            try:
+                p.budget_usd = max(0.0, float(budget_usd))
+            except (TypeError, ValueError):
+                pass
         s.add(p); s.commit(); s.refresh(p)
         return p.model_dump()
+
+
+def budget_of(pid: str) -> float:
+    """The project's spend cap (0 = unlimited). Safe on a missing project."""
+    p = get(pid)
+    return float(p.get("budget_usd", 0.0) or 0.0) if p else 0.0
 
 
 def delete(pid: str):

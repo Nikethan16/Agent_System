@@ -11,8 +11,9 @@ import os
 
 from core.llm import Budget, _span_ctx, use_span_ctx
 from core.boundary import wrap as _wrap_untrusted
-from core.tools import using_workspace
-from core.orchestrator import handle_task
+from core.tools import using_workspace, fresh_build_slug
+from core.orchestrator import handle_task, _user_request
+from core.router import classify
 
 from . import db
 from . import memory
@@ -133,6 +134,18 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
 
     sess = db.get_session(session_id) or {}
     project_id = sess.get("project_id") or ""
+
+    # Per-project budget (a cumulative cap scoped to one project, above the daily cap).
+    if project_id:
+        _pcap = projects.budget_of(project_id)
+        if spend.project_over_cap(project_id, _pcap):
+            msg = (f"Project budget reached (${spend.spent_by_project(project_id):.2f} of "
+                   f"${_pcap:.2f}). Raise it in the project settings to continue.")
+            _emit({"type": "error", "text": msg})
+            db.add_message(session_id, "assistant", msg)
+            _emit({"type": "final", "text": msg, "cost": 0})
+            return msg
+
     # Continuity scope: a project shares state across ALL its chats; a standalone chat
     # keeps its own. This is what lets a NEW chat resume an ongoing project's roadmap.
     scope = f"project:{project_id}" if project_id else f"session:{session_id}"
@@ -215,6 +228,21 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
     task = text if not context else f"{context}\n\nNEW REQUEST: {text}"
 
     workspace = db.session_workspace(session_id)
+    # #6 (OFF by default): when AGENT_TASK_SUBWORKSPACE is enabled, a request that
+    # clearly starts a NEW standalone build runs in its own subfolder so unrelated
+    # projects built in one chat don't collide. We only classify when the build-regex
+    # matches (rare), and that classify warms the cache handle_task reuses for free.
+    if os.environ.get("AGENT_TASK_SUBWORKSPACE", "").strip().lower() in ("1", "true", "yes"):
+        slug = fresh_build_slug(_user_request(task))
+        if slug:
+            try:
+                cls = classify(_user_request(task), budget=budget)
+                if cls.get("task_type") in ("coding", "frontend"):
+                    sub = os.path.join(workspace, slug)
+                    os.makedirs(sub, exist_ok=True)
+                    workspace = sub
+            except Exception:
+                pass   # never let the heuristic break a turn — fall back to session root
     # Bind the session_id as the span context so the LLM observer (server/trace.py)
     # can attribute each model call to the right Langfuse trace without core knowing
     # anything about Langfuse. Worker threads re-bind via use_span_ctx in orchestrator.
@@ -229,7 +257,7 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
 
     db.add_message(session_id, "assistant", final or "", cost=round(budget.spent_usd, 6))
     db.touch_session(session_id)
-    spend.record(budget.spent_usd)   # count this turn toward the daily cap
+    spend.record(budget.spent_usd, project_id=project_id)   # daily cap + per-project
 
     # ---- update memory (the WRITE path) — skip pure plan previews -----------
     if not plan_first:

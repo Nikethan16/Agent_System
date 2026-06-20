@@ -113,12 +113,17 @@ def _score(task_words: set, raw_task: str, s: Skill) -> int:
     return len(task_words & hay)
 
 
-def select(task: str, agent=None, k: int = 2, min_score: int = 2, names=None) -> list:
+def select(task: str, agent=None, k: int = 2, min_score: int = 2, names=None,
+           auto: bool = True) -> list:
     """Pick the most relevant skills for a task.
 
     Deterministic and free (no model call). `names` force-loads specific skills the
     caller already chose (Claude-style explicit selection by the lead agent) — those
     are returned first, then auto-matched ones fill the remaining slots.
+
+    `auto=False` disables fuzzy auto-matching (only explicit `names` load). The
+    orchestrator uses this for trivial tier-1 tasks so a one-line factual question
+    can't drag in a heavy skill like the research report (orchestration issue #5).
     """
     raw = (task or "").lower()
     tw = set(_WORD.findall(raw)) - _STOP
@@ -129,6 +134,9 @@ def select(task: str, agent=None, k: int = 2, min_score: int = 2, names=None) ->
     if names:
         wanted = {str(n).strip().lower() for n in names}
         forced = [s for s in _SKILLS if s.name.lower() in wanted]
+
+    if not auto:
+        return forced[:max(k, len(forced))] if forced else []
 
     cands = []
     for s in _SKILLS:

@@ -143,6 +143,44 @@ with _T.using_workspace(tempfile.mkdtemp()):
 from core import agents as _team
 check("edit_file granted to the coder agent", "edit_file" in _team.agents.get("coder").tools)
 
+# ---- OpenCode-derived tool reliability upgrades -----------------------------
+with _T.using_workspace(tempfile.mkdtemp()):
+    # fuzzy edit: a near-miss snippet (indentation drift) still lands...
+    _T.write_file("f.py", "def f():\n        return 1\n")
+    check("fuzzy edit lands on indentation drift",
+          "Edited" in _T.edit_file("f.py", "    return 1", "    return 2"))
+    # ...but a no-confident-match REFUSES rather than guessing
+    check("fuzzy edit refuses a non-match",
+          _T.edit_file("f.py", "totally_absent = 9", "z = 0").startswith("ERROR"))
+    # read_file: numbered lines + offset/limit paging
+    _T.write_file("big.py", "\n".join(f"L{i}" for i in range(1, 51)) + "\n")
+    _r = _T.read_file("big.py", offset=10, limit=3)
+    check("read_file numbers lines + pages", "10: L10" in _r and "offset=13 to continue" in _r)
+    # grep / glob registered + functional
+    check("grep + glob registered", "grep" in toolbelt.names() and "glob" in toolbelt.names())
+    _T.write_file("src/app.py", "def handler():\n    return 'ok'\n")
+    check("grep finds a content match", "src/app.py:1:" in _T.grep("def handler"))
+    check("glob finds files by pattern", "src/app.py" in _T.glob("**/*.py"))
+check("grep + glob granted to the coder agent",
+      "grep" in _team.agents.get("coder").tools and "glob" in _team.agents.get("coder").tools)
+# tool-arg validation: a missing required arg is rejected, not executed
+check("tool-arg validation rejects a missing required arg",
+      toolbelt.validate_args(toolbelt.get("read_file"), {}) is not None)
+check("tool-arg validation passes a valid call",
+      toolbelt.validate_args(toolbelt.get("read_file"), {"path": "x"}) is None)
+# leaked raw tool-call detection (orch #1) — guarded against false positives
+from core.agent import _looks_like_raw_toolcall as _lrtc
+check("detects a leaked raw tool call", _lrtc("<tool_call><function=run_bash>ls"))
+check("does NOT flag an answer quoting <function= in prose",
+      not _lrtc("The model emits a `<function=name>` tag to call tools."))
+# tier alignment (orch #4): tier-1 task on a tier-2 agent runs at tier1
+check("effective tier uses the cheaper of routed/agent",
+      _team._effective_tier("tier2", 1) == "tier1")
+# /ws mapping (orch #7)
+with _T.using_workspace(tempfile.mkdtemp()) as _wsroot:
+    check("_safe maps the /ws docker mount prefix",
+          os.path.normpath(_T._safe("/ws/a.py")) == os.path.normpath(os.path.join(_wsroot, "a.py")))
+
 ev = []
 final = orch.handle_task("write a function", emit=ev.append, review=True)
 check("simple path returns final", bool(final))

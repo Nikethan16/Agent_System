@@ -30,7 +30,7 @@ from . import agents as team
 from . import toolbelt
 from . import skills as skill_lib
 from . import playbooks as playbook_lib
-from .agent import _run_one_tool
+from .agent import _run_one_tool, _looks_like_raw_toolcall, _compact_messages
 from .blackboard import Blackboard
 from .tools import current_workspace, using_workspace
 
@@ -202,9 +202,10 @@ def _looks_failed(r) -> bool:
 
 
 def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=False,
-                task_type=None, acceptance=""):
+                task_type=None, acceptance="", tier=None, use_skills=True):
     r = team.run(agent_id, task, budget=budget, emit=emit, approve=approve,
-                 context=context, stream=stream, task_type=task_type)
+                 context=context, stream=stream, task_type=task_type, tier=tier,
+                 use_skills=use_skills)
     # A2: if the agent errored / gave up / returned nothing, retry once with a nudge
     # (the model fallback chain has already handled provider-down within the run).
     if _looks_failed(r):
@@ -213,13 +214,14 @@ def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=F
         r = team.run(agent_id, task + "\n\n(Your previous attempt failed or was cut off — "
                      "try again and give a focused, complete result.)",
                      budget=budget, emit=emit, approve=approve, context=context,
-                     stream=stream, task_type=task_type)
+                     stream=stream, task_type=task_type, tier=tier, use_skills=use_skills)
     if review:
         passed, feedback = _review(task, r, budget, emit, approve, acceptance=acceptance)
         if not passed:
             fix = f"{task}\n\nA QA reviewer found issues — fix them:\n{feedback}"
             r = team.run(agent_id, fix, budget=budget, emit=emit, approve=approve,
-                         context=context, stream=stream, task_type=task_type)
+                         context=context, stream=stream, task_type=task_type, tier=tier,
+                         use_skills=use_skills)
     return r
 
 
@@ -266,7 +268,8 @@ def _master_tool_schemas():
                                                "constraints, acceptance check)."},
                 "skill": {"type": "string"}}, "required": ["agent", "instruction"]}}}, ["tasks"])}},
     ]
-    return meta + toolbelt.schemas_for(["read_file", "list_files", "write_file", "edit_file", "run_bash"])
+    return meta + toolbelt.schemas_for(["read_file", "list_files", "grep", "glob",
+                                        "write_file", "edit_file", "run_bash"])
 
 
 def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_type=None,
@@ -306,7 +309,25 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     if not todos:
         todos = playbook_lib.as_todos(phases) or \
             [{"text": s, "status": "pending"} for s in _make_plan(task, budget)]
-    _emit({"type": "plan", "subtasks": [t["text"] for t in todos], "todos": todos})
+
+    # ONE live checklist, not a wall of repeated plans: overlay progress (first
+    # `done` steps complete, the next in-progress) and emit a `plan` event ONLY when
+    # the rendered checklist actually changed. This both kills the duplicate-plan
+    # spam and makes the UI markers advance as work happens.
+    plan_state = {"sig": None, "done": 0}
+
+    def _emit_plan():
+        items = [{"text": t.get("text", ""),
+                  "status": ("done" if i < plan_state["done"]
+                             else "in_progress" if i == plan_state["done"] else "pending")}
+                 for i, t in enumerate(todos)]
+        sig = json.dumps([(t["text"], t["status"]) for t in items])
+        if sig == plan_state["sig"]:
+            return
+        plan_state["sig"] = sig
+        _emit({"type": "plan", "subtasks": [t["text"] for t in items], "todos": items})
+
+    _emit_plan()
     messages.append({"role": "user",
                      "content": ("Here is the plan. Work through it step by step — delegate each "
                                  "step to the right specialist (or do small steps yourself), update "
@@ -315,6 +336,12 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     board = Blackboard()
     schemas = _master_tool_schemas()
     rounds, delegations = 0, 0
+    raw_repaired = False        # one-shot guard: lead leaked a raw tool call (#1)
+    # #3: stop the lead re-emitting the same plan forever before doing real work.
+    last_todos_sig = None       # text of the last todo list written
+    replan_repeats = 0          # consecutive write_todos calls with an identical plan
+    plan_only_rounds = 0        # consecutive rounds whose ONLY action was (re)planning
+    near_cap_nudged = False     # one-shot near-step-limit synthesis nudge (#2)
 
     # delegate_parallel runs each step in a ThreadPoolExecutor worker, and worker threads
     # do NOT inherit this thread's contextvars. Capture the run's workspace, span context,
@@ -353,6 +380,8 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     while True:
         force_final = rounds >= MAX_MASTER_ROUNDS
         active_tools = None if force_final else schemas
+        # Compact older turns when the lead's history grows large (root fix for #2).
+        messages = _compact_messages(messages, budget=budget, emit=emit, label="lead")
         max_tok = registry.max_tokens_for_tier("tier3")
         try:
             if stream:
@@ -396,8 +425,35 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
                 _emit({"type": "thought", "agent": "lead", "text": msg_content})
 
         if not msg_tool_calls:
+            # #1: never surface raw tool-call markup as the final answer. Re-prompt
+            # once for a clean answer; if it persists, synthesize from the blackboard.
+            if _looks_like_raw_toolcall(msg_content) and not force_final:
+                _emit({"type": "retry", "agent": "lead",
+                       "reason": "lead emitted a raw tool call as text"})
+                if not raw_repaired:
+                    raw_repaired = True
+                    messages.append({"role": "user", "content":
+                        "Your last message contained raw tool-call markup, not a real tool "
+                        "call or a clean answer. Issue a proper tool call, or give the final "
+                        "answer with NO tool-call syntax."})
+                    rounds += 1
+                    continue
+                return _finalize_from_board(board, task, budget, emit, stream) or (
+                    "(The model emitted malformed tool-call output; please retry.)")
+            # #2: at the hard cap, don't return raw/failed text — synthesize a real
+            # answer from the blackboard (mitigation; root fix = compaction, phase 2).
+            if force_final and (_looks_like_raw_toolcall(msg_content) or _looks_failed(msg_content)):
+                return (_finalize_from_board(board, task, budget, emit, stream)
+                        or msg_content
+                        or "(Stopped at the step limit without a clean answer — please retry.)")
+            # The lead finished — mark every step complete so the checklist shows done.
+            if todos:
+                plan_state["done"] = len(todos)
+                _emit_plan()
             return msg_content or _finalize_from_board(board, task, budget, emit, stream)
 
+        did_work = False          # any real action this round (delegate / file tool)?
+        called_writetodos = False
         for tc in msg_tool_calls:
             # Tool calls come as objects (non-stream) or dicts (stream path) — normalize.
             if isinstance(tc, dict):
@@ -415,14 +471,30 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
                 args = {}
 
             if name == "write_todos":
-                todos = args.get("todos") or todos
-                _emit({"type": "plan", "subtasks": [t.get("text", "") for t in todos], "todos": todos})
-                result = "todos updated"
+                called_writetodos = True
+                new_todos = args.get("todos") or todos
+                sig = _todos_text(new_todos).strip()
+                if sig and sig == last_todos_sig:
+                    replan_repeats += 1
+                else:
+                    replan_repeats = 0
+                    last_todos_sig = sig
+                    todos = new_todos      # only ADOPT a genuinely new plan
+                # #3: after the FIRST identical re-plan, REFUSE further re-planning — don't
+                # adopt or re-emit it; force the lead to start executing. (Prevents the
+                # "re-emit the same 7-step plan for 5 minutes before acting" loop.)
+                if replan_repeats == 0:
+                    _emit_plan()
+                    result = "todos updated."
+                else:
+                    result = ("Plan is ALREADY set and unchanged — do NOT call write_todos "
+                              "again. Execute step 1 now: delegate it or use a tool.")
             elif name == "delegate":
                 if delegations >= MAX_DELEGATIONS:
                     result = "Delegation limit reached — do the remaining steps yourself or finish."
                 else:
                     delegations += 1
+                    did_work = True
                     _aid, result = _run_delegation(args, delegations)
             elif name == "delegate_parallel":
                 items = [it for it in (args.get("tasks") or []) if isinstance(it, dict)]
@@ -432,23 +504,67 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
                 elif not items:
                     result = "delegate_parallel needs a non-empty 'tasks' list."
                 else:
+                    requested = len(items)
                     items = items[:min(remaining, MAX_PARALLEL_FANOUT)]
                     base = delegations
                     delegations += len(items)
+                    did_work = True
+
+                    # Isolate each worker: one failing parallel step must NOT discard the
+                    # siblings' results (ex.map re-raises the first exception). A real
+                    # BudgetExceeded still propagates so the global cap halts the run.
+                    def _safe_delegation(iv):
+                        try:
+                            return _run_delegation(iv[1], base + 1 + iv[0])
+                        except BudgetExceeded:
+                            raise
+                        except Exception as e:
+                            aid = (iv[1].get("agent") or "general")
+                            return aid, f"(parallel step failed: {type(e).__name__}: {e})"
+
                     # Run the independent steps CONCURRENTLY (the key pool spreads them
                     # across keys so this is genuinely faster, not just interleaved).
                     with ThreadPoolExecutor(max_workers=len(items)) as ex:
-                        pairs = list(ex.map(lambda iv: _run_delegation(iv[1], base + 1 + iv[0]),
-                                            list(enumerate(items))))
+                        pairs = list(ex.map(_safe_delegation, list(enumerate(items))))
                     result = "\n\n".join(f"[{aid}] {r}" for aid, r in pairs)
+                    if requested > len(items):
+                        result += (f"\n\n(Note: {requested - len(items)} requested step(s) exceeded "
+                                   "the parallel limit and were NOT run — issue them next.)")
             else:
+                did_work = True
                 result = _run_one_tool(name, args, "lead", approve, emit)
 
             messages.append({"role": "tool", "tool_call_id": tc_id, "content": str(result)})
 
         rounds += 1
+
+        # Advance the live checklist when real work happened this round, so the UI
+        # markers actually move (✓) instead of the model having to update statuses.
+        if did_work and todos:
+            plan_state["done"] = min(plan_state["done"] + 1, len(todos))
+            _emit_plan()
+
+        # #3: count rounds that only (re)planned without doing work; after a couple,
+        # or after an identical re-plan, force the lead to start executing.
+        if called_writetodos and not did_work:
+            plan_only_rounds += 1
+        else:
+            plan_only_rounds = 0
+        # #2: the near-cap synthesis nudge is evaluated FIRST and independently — a lead
+        # that's stuck re-planning near the cap is exactly when this matters most, so it
+        # must not be starved by the plan-repeat branch below (mitigation; the root fix is
+        # within-run compaction, now shipped — see HANDOFF/BACKLOG).
+        if not near_cap_nudged and rounds >= max(1, MAX_MASTER_ROUNDS - 2):
+            near_cap_nudged = True
+            messages.append({"role": "user", "content":
+                "You are near the step limit. Stop delegating/planning and WRITE THE FINAL "
+                "synthesized answer now (no tool calls), drawing on the work done so far."})
+        elif todos and (replan_repeats >= 1 or plan_only_rounds >= 2):
+            messages.append({"role": "user", "content":
+                "The plan is set. Do NOT call write_todos again — begin executing step 1 "
+                "right now (delegate it or use a tool)."})
         # Claude-style reminder injection: keep the live plan in front of the model.
-        if todos:
+        elif todos:
             messages.append({"role": "user", "content": "(reminder) current todo list:\n" + _todos_text(todos)})
 
 
@@ -549,8 +665,15 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     if tier < 3:
         agent_id, reason = team.select_agent(task, budget=budget)
         agent = team.agents.get(agent_id)
+        # #4: a trivial task handed to a TOOL-LESS chat agent (general) can run on the
+        # cheaper routed-tier model. But NEVER downgrade a TOOL-USING agent (research,
+        # coder, …): they need a capable model for reliable tool-calling — downgrading
+        # research to a cheap tier-1 model made it emit XML tool calls as raw text and
+        # break the answer (regression). Tool-using agents keep their declared tier.
+        downgrade_tier = tier if not getattr(agent, "tools", None) else None
+        eff_tier = team._effective_tier(getattr(agent, "tier", "tier2"), downgrade_tier)
         _emit({"type": "assign", "agent": agent_id, "label": getattr(agent, "label", agent_id),
-               "model": registry.model_for_tier(getattr(agent, "tier", "tier2"), task_type=task_type),
+               "model": registry.model_for_tier(eff_tier, task_type=task_type),
                "reason": reason})
         # Tier-2 single-agent runs follow a compact version of the same playbook path
         # (injected into the prompt — no extra calls). Tier-1 trivial work stays lean.
@@ -562,8 +685,11 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         if acceptance:
             agent_task += ("\n\nACCEPTANCE CRITERIA (the definition of done — make sure your "
                            "result satisfies ALL of these):\n" + acceptance)
+        # #5: trivial tier-1 work skips auto skill-matching so a one-line factual
+        # question can't drag in a heavy skill (e.g. the research report).
         result = _do_subtask(agent_id, agent_task, budget, emit, approve, "", review, stream,
-                             task_type=task_type, acceptance=acceptance)
+                             task_type=task_type, acceptance=acceptance, tier=downgrade_tier,
+                             use_skills=(tier >= 2))
         _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
         return result
 

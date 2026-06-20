@@ -6,11 +6,37 @@ for current state and `STATUS.md` for what's already done._
 
 ---
 
-## 🔎 Orchestration issues found via live trace analysis (2026-06-18, observed only — not yet fixed)
+## ✅ Orchestration issues — ADDRESSED on branch `claude/coding-engine-port` (2026-06-20)
+All 7 issues below were fixed as part of the "absorb OpenCode's coding-engine design" work
+(see `HANDOFF.md`). Each fix shipped as its own commit with tests. **#2 is a MITIGATION, not a
+root fix** (see the scheduled phase-2 item at the bottom of this section).
+
+1. ✅ Leaked raw tool-call markup as final → `_looks_like_raw_toolcall` + one-shot re-prompt
+   in both loops (`core/agent.py`, `core/orchestrator.py`), false-positive guarded.
+2. ✅ Research death-spiral → near-cap synthesis nudge + force `_finalize_from_board` at the
+   cap, **AND the root fix now shipped**: within-run **compaction** (`_compact_messages` in
+   `core/agent.py`, wired into both loops) summarizes old turns so long tasks stop reaching the
+   cap. (The mitigation remains as a backstop.)
+3. ✅ LEAD re-plans identical template → plan-repeat guard + plan-only-round counter.
+4. ✅ Tier/agent cost mismatch + dispatcher fragility → `_effective_tier` (run at the cheaper
+   of routed/agent tier) + `select_agent` tolerates a bare/embedded agent id.
+5. ✅ research-report skill over-triggers → `use_skills=(tier>=2)` skips auto-matching on
+   trivial tier-1 tasks (`core/skills.py` `auto=` flag).
+6. ✅ Shared-workspace collisions → optional per-build sub-workspace behind
+   `AGENT_TASK_SUBWORKSPACE` (OFF by default), `fresh_build_slug` in `core/tools.py`.
+7. ✅ `run_bash`/`write_file` `/ws` path mismatch → `_safe` maps the Docker mount prefix.
+
+**✅ PHASE 2 — SHIPPED (branch `claude/phase2-and-hardening`):** within-run **context
+compaction** (`core/agent.py:_compact_messages`, both loops, triggers at 80% of the context
+budget, preserves tool-sequence validity) + a **post-edit syntax verifier** (in-process
+`.py`/`.json`/`.yaml` check appended to write/edit results — the safe, offline stand-in for
+OpenCode's LSP; full LSP confirmed not worth it). Both tested.
+
+---
+
+## 🔎 Original observations (for reference — 2026-06-18)
 Found by running `scripts/inspect_run.py` against a real multi-turn session and reading the
-full event timeline + generated workspace files. The owner asked to observe real runs across
-varying task complexity before deciding what to fix — **none of these have been touched**.
-Re-run `inspect_run.py` on more sessions for more evidence before prioritizing.
+full event timeline + generated workspace files.
 
 1. **Garbled/leaked special-token tool-call output shown as the final answer** — raw model
    tokens like `<｜DSML｜tool_calls>` and `<tool_call><function=run_bash>` (including a
@@ -77,6 +103,32 @@ Code is done; the items below note the **operational steps** still needed to act
 
 ---
 
+## Post-build audit (2026-06-20) — findings & status
+A full subsystem review (core loops, tools, server/data, model layer). **Implemented**
+(branch `claude/phase2-and-hardening`): SQL aggregation for all spend analytics (were per-turn
+full scans), missing migration indexes, scope-filtered fact/rule queries, O(catalog) context
+budget, parallel-delegation exception isolation, resilient compaction (fallback chain),
+near-cap-nudge priority, keystore data-loss guards (refuse-overwrite + atomic write + warnings),
+`acquire()` never serving disabled keys, and grep/glob symlink containment.
+
+**Deferred (tracked recommendations — deliberately NOT changed to avoid regressing tuned
+reliability paths):**
+- **Circuit breaker sensitivity** (`core/llm.py`): a single transient (incl. a benign
+  `EmptyResponse` from a free-tier filter) trips a model fleet-wide for the cooldown. Consider
+  trip-after-N-consecutive-failures and not tripping on `EmptyResponse`. Also record
+  breaker-skips in `metrics` (currently undercounted). Low risk but touches the hang-fix path.
+- **Abandoned hard-timeout futures** (`core/llm.py`): a stuck provider call keeps running on a
+  worker after we stop waiting; under sustained provider stalls the 16-worker pool could
+  saturate. Consider passing the timeout into the HTTP client and/or bounding the queue.
+- **Streaming/image/embed key handling** (`core/llm.py`): these paths don't rotate/penalize keys
+  on error, and `generate_image` ignores the encrypted key store (uses env only). Matters once
+  image-gen is enabled.
+- **`read_file` loads the whole file then slices** — fine for workspace-sized files; stream-and-
+  stop only if very large files become common.
+- **Spend rollup table** — only needed past ~1M Spend rows (years of 24/7 use); add
+  `SpendDaily` + `spend.prune()` then.
+- **`AGENT_SECRET_KEY` must be high-entropy** (no KDF stretching) — documented in PLACEHOLDERS.
+
 ## Features not built
 - **Image generation** — code is ready; needs an `image_model:` in `config/models.yaml` + a
   matching provider key.
@@ -90,22 +142,26 @@ Code is done; the items below note the **operational steps** still needed to act
   sub-linear ANN index is only worth it at much larger scale.
 
 ## UI / UX polish
-- **Mobile pass** on the new Claude UI (desktop verified; phone drawers need a look).
+- ✅ **Mobile pass (drawers)** — sidebar + artifacts panel no longer overflow narrow phones
+  (verified 320/375px). Remaining: broader phone polish across all panels if desired.
 - **Deep-polish the last two Settings panels** — Health and Schedules (Models/Memory/Fleet done).
 
 ## Performance / cost
 - Add more **free NVIDIA keys** (`NVIDIA_NIM_API_KEY_1..N`) to multiply throughput.
-- **Per-project budgets** + a spend dashboard.
+- ✅ **Per-project budgets** — cumulative cap per project (`budget_usd`), enforced + tracked;
+  `GET /api/projects/{id}/spend`. ✅ **Spend dashboard UI** — Settings → **Usage & cost** tab
+  (today vs cap, all-time, 14-day bar chart, per-project table) via `GET /api/spend/overview`.
 - Prompt caching — deferred (low payoff on NVIDIA's free tier; the classifier cache covers repeats).
 
 ## Reliability / quality
 - Broaden integration tests further (more edge cases; multi-agent flow tests).
 
 ## Security / ops (the app is now public — see HANDOFF.md "Security follow-ups")
-- **Encrypt stored API keys** at rest — matters more now that the app is internet-reachable.
+- ✅ **Encrypt stored API keys at rest** — `AGENT_SECRET_KEY` Fernet-encrypts `data/keys.json`
+  (`core/keypool.py`), backward-compatible. ✅ **Off-site backups** already supported via
+  `BACKUP_UPLOAD_CMD` in `scripts/backup.py` (operational: set the env var).
 - Consider rotating/strengthening `AGENT_LOGIN_PASSWORD`; watch `journalctl -u agentcore` for
   repeated 401/429s on `/api/login` as a sign of scanning/brute-force attempts.
-- **Off-site backups** (`BACKUP_UPLOAD_CMD`) so backups leave the VM.
 - Docker-group membership is root-equivalent — consider rootless Docker for the sandbox.
 
 ---
