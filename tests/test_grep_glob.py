@@ -72,7 +72,11 @@ def test_grep_skips_symlink_escaping_workspace(ws, tmp_path):
         import pytest
         pytest.skip("symlinks not permitted on this platform/run")
     out = tools.grep("TOPSECRET_NEEDLE")
-    assert "TOPSECRET_NEEDLE" not in out   # the symlinked-out file was skipped
+    # The guard skips the symlink, so there's no match. Assert the symlinked FILE was
+    # not matched (its path absent) — not that the needle string is absent, since the
+    # "No matches for /TOPSECRET_NEEDLE/" message echoes the search pattern.
+    assert "link.txt" not in out
+    assert "No matches" in out
 
 
 def test_glob_skips_symlink_escaping_workspace(ws, tmp_path):
