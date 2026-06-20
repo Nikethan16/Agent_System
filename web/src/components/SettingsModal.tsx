@@ -46,12 +46,18 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
   const [token, setToken] = useState(getAuthToken());
   const inp = "bg-surface-container-low dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-2 py-1 text-sm outline-none";
 
+  // Run ONCE when the modal opens. Depending on [onClose] re-fired this effect on
+  // every App re-render (onClose is a fresh closure each render) — during a streaming
+  // run that hammered /api/spend hundreds of times a minute and tripped the rate
+  // limiter, breaking the whole UI. loadSpend is a one-shot; the keydown closure
+  // captures a stable setSettings, so [] is correct.
   useEffect(() => {
     loadSpend();
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load memory data when its tab is first opened.
   useEffect(() => { if (tab === "memory") { loadFacts(); loadRules(); } }, [tab]);

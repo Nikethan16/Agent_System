@@ -41,3 +41,13 @@ def test_passes_normal_answer():
 def test_passes_empty():
     assert not _looks_like_raw_toolcall("")
     assert not _looks_like_raw_toolcall(None)
+
+
+# ---- last-resort markup stripping (regression fix) -------------------------
+from core.agent import _strip_toolcall_markup
+
+
+def test_strip_removes_markup():
+    assert "<tool_call>" not in _strip_toolcall_markup("<tool_call>hello</tool_call>")
+    assert "<function=" not in _strip_toolcall_markup("<function=run>x</function> done")
+    assert _strip_toolcall_markup("plain answer") == "plain answer"

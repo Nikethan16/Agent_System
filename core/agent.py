@@ -124,6 +124,19 @@ def _looks_like_raw_toolcall(text: str) -> bool:
     head = text.lstrip()[:40].lower()
     return head.startswith(("<tool_call", "<function=", "<｜"))
 
+
+# Patterns to strip from a final answer as a LAST RESORT, so leaked tool-call markup
+# never reaches the user even if a model keeps emitting it after the repair re-prompt.
+_STRIP_PATTERNS = re.compile(
+    r"<｜[^｜>]*｜>|</?tool_call>|<function\s*=[^>]*>|</function>|<arg[^>]*>|</arg>",
+    re.IGNORECASE)
+
+
+def _strip_toolcall_markup(text: str) -> str:
+    """Remove tool-call markup tokens from `text`. Used only on a final answer that
+    still looked like a raw tool call after the one-shot repair."""
+    return _STRIP_PATTERNS.sub("", text or "").strip()
+
 # After this many tool-using rounds, force a final (no-tools) answer so a weaker
 # model can't spin on tool calls forever. Raised from 8 so real coding work
 # (explore → edit → run tests → fix → re-run) has room to finish; the per-run
@@ -246,8 +259,15 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
                     "call or a clean answer. If you need a tool, issue it properly; "
                     "otherwise reply with the final answer containing NO tool-call syntax."})
                 continue
-            _emit({"type": "done", "agent": label, "text": msg.content or ""})
-            return msg.content or ""
+            # Last resort: the model STILL emitted markup after the repair — strip it so
+            # the user never sees literal <tool_call>/<function=> garbage as the answer.
+            out = msg.content or ""
+            if _looks_like_raw_toolcall(out):
+                cleaned = _strip_toolcall_markup(out)
+                out = cleaned or ("(I couldn't format a clean answer this time — "
+                                  "please try again.)")
+            _emit({"type": "done", "agent": label, "text": out})
+            return out
 
         for tc in tool_calls:
             name = tc.function.name

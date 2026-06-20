@@ -633,9 +633,13 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     if tier < 3:
         agent_id, reason = team.select_agent(task, budget=budget)
         agent = team.agents.get(agent_id)
-        # #4: run at the CHEAPER of the routed tier and the agent's declared tier, so a
-        # trivial task handed to a tier-2 specialist doesn't silently pay a tier-2 model.
-        eff_tier = team._effective_tier(getattr(agent, "tier", "tier2"), tier)
+        # #4: a trivial task handed to a TOOL-LESS chat agent (general) can run on the
+        # cheaper routed-tier model. But NEVER downgrade a TOOL-USING agent (research,
+        # coder, …): they need a capable model for reliable tool-calling — downgrading
+        # research to a cheap tier-1 model made it emit XML tool calls as raw text and
+        # break the answer (regression). Tool-using agents keep their declared tier.
+        downgrade_tier = tier if not getattr(agent, "tools", None) else None
+        eff_tier = team._effective_tier(getattr(agent, "tier", "tier2"), downgrade_tier)
         _emit({"type": "assign", "agent": agent_id, "label": getattr(agent, "label", agent_id),
                "model": registry.model_for_tier(eff_tier, task_type=task_type),
                "reason": reason})
@@ -652,7 +656,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         # #5: trivial tier-1 work skips auto skill-matching so a one-line factual
         # question can't drag in a heavy skill (e.g. the research report).
         result = _do_subtask(agent_id, agent_task, budget, emit, approve, "", review, stream,
-                             task_type=task_type, acceptance=acceptance, tier=tier,
+                             task_type=task_type, acceptance=acceptance, tier=downgrade_tier,
                              use_skills=(tier >= 2))
         _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
         return result

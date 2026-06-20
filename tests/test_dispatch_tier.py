@@ -44,3 +44,19 @@ def test_select_agent_keyword_fallback_on_empty(monkeypatch):
     aid, reason = agents.select_agent("explain how recursion works")
     # explanation phrasing -> general (tool-less), per _fallback_select
     assert aid == "general"
+
+
+def test_tool_using_agents_not_downgraded():
+    """Regression: a tool-using agent (research/coder) must NOT be downgraded to a
+    tier-1 model just because the task routed tier-1 — that broke tool-calling.
+    Only tool-less agents (general) may run on the cheaper routed tier."""
+    research = agents.agents.get("research")
+    general = agents.agents.get("general")
+    assert research.tools          # has tools
+    assert not general.tools       # tool-less
+    # the orchestrator passes downgrade_tier=None for tool-using agents:
+    dt_research = 1 if not research.tools else None
+    dt_general = 1 if not general.tools else None
+    assert dt_research is None      # research keeps its own (tier2) model
+    assert dt_general == 1          # general may drop to tier1
+    assert agents._effective_tier(research.tier, dt_research) == research.tier
