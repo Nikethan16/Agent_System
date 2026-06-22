@@ -4,6 +4,36 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
+## ⚡ LATEST (2026-06-20) — big upgrade merged to `main` + deployed; one open issue
+A large two-branch effort (PR #6, merged to `main`, auto-deployed to the VM) absorbed
+OpenCode's coding-engine design into our Python and hardened the app. **All on `main` now**
+(stale branches deleted — repo is `main`-only). Shipped: fuzzy `edit_file`, `read_file`
+paging, `grep`/`glob`, tool-arg validation, all 7 orchestration fixes, within-run compaction,
+post-edit syntax verifier, **API-key encryption at rest** (`AGENT_SECRET_KEY`), **per-project
+budgets + a Usage & Cost dashboard**, mobile fixes, a **live plan checklist** (✓/●/○), audit
+perf fixes (SQL spend aggregation, indexes), and regression fixes (UI rate-limit storm;
+**research routed to Gemini 2.5 Flash** since free qwen3.5 was flaky at tool-calling).
+
+**🔴 THE OPEN ISSUE (top next task): heavy tier-3 builds are SLOW on the free tier.** Live
+trace shows the free NVIDIA models time out (~45s, the `AGENT_LLM_TIMEOUT` wall-clock) on big
+tier-3 reasoning calls → the circuit breaker (`core/llm.py`) trips and **`circuit-breaker:
+skipped` fires on nearly every step** → constant fallbacks → a build crawls and may not finish.
+The *logic is correct* (it wrote real, correct files: lexer/test); it's a **model-speed**
+problem. Levers to try (NOT yet done — discuss before changing tuned reliability paths):
+(1) tune the breaker — trip only after N **consecutive** failures (not 1) + don't trip on a
+benign `EmptyResponse` (audit item, `docs/BACKLOG.md`); (2) more NVIDIA NIM keys
+(`NVIDIA_NIM_API_KEY_1..3` → pooled RPM — currently only **1** NVIDIA + **1** Gemini key are
+configured); (3) route the coder (tier2) to Gemini Flash. Secondary: the `architect` wandered
+into `.skills/` exploration (skill staging/selection for tier-3 worth a look); the
+security-manager denied a harmless `ls` (auto-allow read-only bash).
+
+**Local Docker sandbox:** built `agent-verify:latest` on this dev laptop
+(`./docker/build-verify-image.sh`) and verified `pytest` runs offline in it. To run builds
+locally set `AGENT_BASH_DOCKER_IMAGE=agent-verify:latest`. NOTE: on a fresh laptop you must
+rebuild that image. Also seen: a bash shell with **blank** `GEMINI_API_KEY`/`NVIDIA_NIM_API_KEY`
+exported will *shadow* `.env` (load_dotenv doesn't override) — start the server so it loads
+`.env` cleanly (PowerShell `.\run.ps1` is fine; the VM is fine).
+
 ## Current state — LIVE in production, now PUBLIC
 - **Deployed 24/7** on an **Oracle Always-Free ARM VM** (Ubuntu 24.04, 2 OCPU / 12 GB, at
   `/home/ubuntu/agent_system`) as a **systemd service `agentcore`** on `0.0.0.0:8800`.
