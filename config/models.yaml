@@ -123,6 +123,11 @@ routing:
 #                  then by this number — so it doubles as "which free model wins".
 #   tier_hint    : 1=simple, 2=balanced, 3=frontier (must be >= the task's tier)
 #   good_for     : task tags the selector prefers when they match
+#   timeout_s    : per-model wall-clock timeout (seconds) for a single call; omit = the
+#                  global default (AGENT_LLM_TIMEOUT, 45s). Slow frontier reasoning models
+#                  take ~70s+ on the free tier, so a non-streaming call to one would be
+#                  guillotined by the 45s default — give them headroom here. (For streaming
+#                  calls this bounds the per-CHUNK watchdog, so it only trips on a true stall.)
 # The model-scout agent appends/updates discovered models in config/models.discovered.yaml.
 catalog:
   # =========================================================================
@@ -144,6 +149,7 @@ catalog:
     open_source: false          # open-weight status disputed — verify before self-host
     cost: 4
     tier_hint: 3
+    timeout_s: 120          # ~70s/call on the free tier (probe 2026-06-22) — needs >45s default
     good_for: [reasoning, planning, agents, hard, math]
 
   # --- Coder (the build sub-agent; verified JSON/tool-calling) ---
@@ -184,6 +190,7 @@ catalog:
     open_source: true
     cost: 1
     tier_hint: 3
+    timeout_s: 120          # ~70s/call, streams smoothly (probe 2026-06-22)
     good_for: [reasoning, hard, math]
   - id: "nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b"
     provider: "nvidia_nim"
@@ -192,6 +199,7 @@ catalog:
     open_source: true
     cost: 2
     tier_hint: 3
+    timeout_s: 120          # 550B frontier — slow on the free tier, give it headroom
     good_for: [reasoning, hard]
 
   # --- General / multimodal-doc alternate ---
@@ -225,6 +233,8 @@ catalog:
     cost: 2
     tier_hint: 3
     context_window: 1000000
+    timeout_s: 90           # ~230s total but streams (44s max gap, probe 2026-06-22): per-chunk
+                            # watchdog tolerates its gaps; demoted fallback, so cap the wait.
     good_for: [planning, reasoning, longcontext, architecture]
   - id: "nvidia_nim/qwen/qwen3.5-397b-a17b"
     provider: "nvidia_nim"
@@ -233,6 +243,7 @@ catalog:
     open_source: true
     cost: 2
     tier_hint: 3
+    timeout_s: 120          # 397B frontier — slow on the free tier
     good_for: [reasoning, research, analysis, hard]
   - id: "nvidia_nim/mistralai/mistral-large-3-675b-instruct-2512"
     provider: "nvidia_nim"
@@ -241,6 +252,7 @@ catalog:
     open_source: true
     cost: 3
     tier_hint: 3
+    timeout_s: 120          # 675B frontier — slow on the free tier
     good_for: [general, reasoning, writing]
 
   # NOTE: moonshotai/kimi-k2.6 IS available on NIM and is multimodal, but its

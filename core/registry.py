@@ -203,6 +203,18 @@ class ModelRegistry:
                 return m
         return None
 
+    def timeout_for_model(self, model: str):
+        """Per-model wall-clock timeout (seconds) from the catalog `timeout_s` field, or
+        None to use the global default (AGENT_LLM_TIMEOUT). Lets slow frontier reasoning
+        models (which take ~70s+ on the free tier) get more headroom than fast models,
+        so a non-streaming call to one isn't guillotined by the default 45s wall."""
+        try:
+            m = self._by_id(model)
+            v = (m or {}).get("timeout_s")
+            return float(v) if v else None
+        except Exception:
+            return None
+
     def model_chain(self, tier: str, task_type: str = None, max_len: int = 4) -> list:
         """The ordered fallback chain for a (tier, task_type): primary first, then
         progressively-broader fallbacks. Used by complete_chain(). Composition:

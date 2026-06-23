@@ -96,6 +96,23 @@ def _timeout_exc(timeout):
     return TimeoutError(f"hard wall-clock timeout after {timeout}s")
 
 
+def _resolve_timeout(model, timeout):
+    """The wall-clock timeout for a model call: an explicit `timeout` wins; else a
+    per-model `timeout_s` from the catalog (slow frontier reasoning models get more
+    headroom); else the global default. registry is imported LAZILY so llm stays free of
+    a registry import cycle (registry/router import llm, never the reverse)."""
+    if timeout is not None:
+        return timeout
+    try:
+        from .registry import registry
+        t = registry.timeout_for_model(model)
+        if t:
+            return t
+    except Exception:
+        pass
+    return _TIMEOUT
+
+
 def _bounded_completion(kwargs):
     """litellm.completion bounded by a hard wall-clock timeout we enforce ourselves."""
     if not _HARD_TIMEOUT:
@@ -389,7 +406,7 @@ def complete(model, messages, tools=None, max_tokens=4096,
         budget.check()
 
     kwargs = dict(model=model, messages=messages, max_tokens=max_tokens,
-                  temperature=temperature, timeout=timeout or _TIMEOUT)
+                  temperature=temperature, timeout=_resolve_timeout(model, timeout))
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
@@ -591,13 +608,16 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
     """
     if budget:
         budget.check()
+    to = _resolve_timeout(model, None)
     kwargs = dict(model=model, messages=messages, max_tokens=max_tokens,
-                  temperature=temperature, stream=True, timeout=_TIMEOUT,
+                  temperature=temperature, stream=True, timeout=to,
                   stream_options={"include_usage": True}, api_key=_key_for(model))
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
-    resp = _iter_stream_bounded(kwargs)
+    # Per-model timeout also bounds the PER-CHUNK watchdog (a slow frontier model may pause
+    # between tokens longer than the default 45s; it should fail over only on a true stall).
+    resp = _iter_stream_bounded(kwargs, timeout=to)
 
     content, tcs, cost, tokens = [], {}, 0.0, 0
     for chunk in resp:
