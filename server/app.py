@@ -77,6 +77,8 @@ def _resume_jobs():
     runs.mark_stale_running_done()   # any run still "running" is orphaned from a prior process
     jobs.start_worker()          # resume any queued jobs after a restart
     scheduler.start_scheduler()  # start firing due scheduled tasks
+    from . import auth
+    auth.warn_if_weak_login()    # nudge: the app is internet-facing — flag a weak login pw
     from . import telegram
     telegram.start_telegram()    # mobile control via Telegram (no-op unless a token is set)
     # Wire the LLM observer so Langfuse gets generation spans (model/cost/tokens/latency).

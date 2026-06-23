@@ -111,20 +111,26 @@ budget, parallel-delegation exception isolation, resilient compaction (fallback 
 near-cap-nudge priority, keystore data-loss guards (refuse-overwrite + atomic write + warnings),
 `acquire()` never serving disabled keys, and grep/glob symlink containment.
 
-**Deferred (tracked recommendations — deliberately NOT changed to avoid regressing tuned
-reliability paths):**
-- **Circuit breaker sensitivity** (`core/llm.py`): a single transient (incl. a benign
-  `EmptyResponse` from a free-tier filter) trips a model fleet-wide for the cooldown. Consider
-  trip-after-N-consecutive-failures and not tripping on `EmptyResponse`. Also record
-  breaker-skips in `metrics` (currently undercounted). Low risk but touches the hang-fix path.
-- **Abandoned hard-timeout futures** (`core/llm.py`): a stuck provider call keeps running on a
-  worker after we stop waiting; under sustained provider stalls the 16-worker pool could
-  saturate. Consider passing the timeout into the HTTP client and/or bounding the queue.
-- **Streaming/image/embed key handling** (`core/llm.py`): these paths don't rotate/penalize keys
-  on error, and `generate_image` ignores the encrypted key store (uses env only). Matters once
-  image-gen is enabled.
-- **`read_file` loads the whole file then slices** — fine for workspace-sized files; stream-and-
-  stop only if very large files become common.
+**Deferred (tracked recommendations):**
+- ✅ **Circuit breaker sensitivity — DONE** (`core/llm.py`, branch `claude/breaker-reliability`):
+  trips only after `AGENT_BREAKER_THRESHOLD` (default 2) consecutive failures; never on
+  `EmptyResponse`; breaker-skips recorded in metrics. Verified: tier-3 build churn dropped from
+  ~15+ skips to 3. Also shipped: read-only-bash auto-allow (`core/policy.py`) + `list_files`
+  hides `.skills` (`core/tools.py`). **Residual is free-tier model speed (~45s/call) — needs
+  more NVIDIA keys / higher `AGENT_LLM_TIMEOUT`, not code.**
+- **(C1) Abandoned hard-timeout futures** (`core/llm.py`): a stuck provider call keeps running on
+  a worker after we stop waiting; under sustained provider stalls the 16-worker pool could
+  saturate. **Still deferred** — not cleanly fixable in Python (threads can't be force-killed);
+  the A1 breaker fix cut the fallback cascade that triggers it.
+- ✅ **(C2) image key — DONE** (`core/llm.py`, branch `claude/breaker-reliability`):
+  `generate_image` now passes a pooled `api_key`, so it works with UI-managed/encrypted keys.
+  (Streaming key-rotation-on-error still deferred — marginal.)
+- ✅ **(C4) read_file streams — DONE** (`core/tools.py`): holds only the requested window in
+  memory while scanning to EOF for the exact total. Behavior unchanged.
+- ✅ **(C6) weak-login warning — DONE** (`server/auth.py`): startup warns if
+  `AGENT_LOGIN_PASSWORD` is short/common/single-class.
+- **(C3) Settings-panel polish** (Health/Schedules) — needs a concrete UI direction.
+- **(C5) Image model / Slack-DB MCP connectors** — blocked: need a provider key / server details.
 - **Spend rollup table** — only needed past ~1M Spend rows (years of 24/7 use); add
   `SpendDaily` + `spend.prune()` then.
 - **`AGENT_SECRET_KEY` must be high-entropy** (no KDF stretching) — documented in PLACEHOLDERS.

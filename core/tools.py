@@ -91,13 +91,6 @@ def read_file(path: str, offset: int = 1, limit: int = None) -> str:
     except ValueError as e:
         return f"ERROR: {e}"
     try:
-        with open(full, encoding="utf-8", errors="replace") as f:
-            all_lines = f.read().splitlines()
-    except Exception as e:
-        return f"ERROR reading {path}: {e}"
-
-    total = len(all_lines)
-    try:
         offset = max(1, int(offset))
     except (TypeError, ValueError):
         offset = 1
@@ -106,20 +99,29 @@ def read_file(path: str, offset: int = 1, limit: int = None) -> str:
     except (TypeError, ValueError):
         limit = _READ_MAX_LINES
     limit = min(limit, _READ_MAX_LINES)
-
     start = offset - 1
-    window = all_lines[start:start + limit]
-    out, used, byte_cut = [], 0, False
-    for i, ln in enumerate(window):
-        if len(ln) > _READ_MAX_LINE:
-            ln = ln[:_READ_MAX_LINE] + " …[line truncated]"
-        numbered = f"{start + i + 1}: {ln}"
-        size = len(numbered.encode("utf-8")) + 1
-        if used + size > _READ_MAX_BYTES and out:
-            byte_cut = True
-            break
-        out.append(numbered)
-        used += size
+
+    # Stream line-by-line: hold only the requested window in memory (not the whole
+    # file), while still scanning to EOF for an exact total-line count for the footer.
+    out, used, byte_cut, total = [], 0, False, 0
+    try:
+        with open(full, encoding="utf-8", errors="replace") as f:
+            for idx, raw_line in enumerate(f):
+                total = idx + 1
+                if idx < start or len(out) >= limit or byte_cut:
+                    continue                      # outside the window — just keep counting
+                ln = raw_line.rstrip("\n")
+                if len(ln) > _READ_MAX_LINE:
+                    ln = ln[:_READ_MAX_LINE] + " …[line truncated]"
+                numbered = f"{idx + 1}: {ln}"
+                size = len(numbered.encode("utf-8")) + 1
+                if used + size > _READ_MAX_BYTES and out:
+                    byte_cut = True
+                    continue                      # stop collecting, keep counting for total
+                out.append(numbered)
+                used += size
+    except Exception as e:
+        return f"ERROR reading {path}: {e}"
 
     last = start + len(out)
     body = "\n".join(out)
@@ -445,7 +447,11 @@ def edit_file(path: str, old_string: str, new_string: str = "",
 
 def list_files(directory: str = ".") -> str:
     try:
-        return "\n".join(sorted(os.listdir(_safe(directory)))) or "(empty)"
+        # Hide the staged skill machinery (.skills/) — it's not the user's project, and
+        # agents told to "explore first" were wasting rounds listing into it. grep/glob
+        # already skip it via _SKIP_DIRS.
+        entries = [f for f in sorted(os.listdir(_safe(directory))) if f != ".skills"]
+        return "\n".join(entries) or "(empty)"
     except Exception as e:
         return f"ERROR listing {directory}: {e}"
 

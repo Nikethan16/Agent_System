@@ -48,8 +48,15 @@ _KEY_ATTEMPTS = int(os.environ.get("AGENT_KEY_ATTEMPTS", "4"))
 # This is the fix for multi-minute hangs caused by a dead primary being retried on
 # every step. The last model in the chain is NEVER skipped (always a live attempt).
 _BREAKER: dict[str, float] = {}        # model_id -> open_until epoch
+_BREAKER_FAILS: dict[str, int] = {}    # model_id -> CONSECUTIVE fallbackable failures
 _BREAKER_LOCK = threading.Lock()
 _BREAKER_COOLDOWN = float(os.environ.get("AGENT_BREAKER_COOLDOWN", "60"))
+# Trip the breaker only after this many CONSECUTIVE failures, not the first one. The
+# free tier often takes ~_TIMEOUT seconds, so a SINGLE slow call shouldn't sideline a
+# model fleet-wide for the whole cooldown (that caused constant fallback churn on tier-3
+# runs). Each attempt is still bounded by the wall-clock timeout, so worst case is
+# ~threshold×timeout before a genuinely-dead model is benched — the hang protection holds.
+_BREAKER_THRESHOLD = max(1, int(os.environ.get("AGENT_BREAKER_THRESHOLD", "2")))
 
 
 def _breaker_open(model: str) -> bool:
@@ -57,14 +64,29 @@ def _breaker_open(model: str) -> bool:
         return time.time() < _BREAKER.get(model, 0)
 
 
+def _record_breaker_failure(model: str) -> bool:
+    """Count one consecutive failure; open the breaker once the threshold is reached.
+    Returns True if the breaker is now open."""
+    with _BREAKER_LOCK:
+        n = _BREAKER_FAILS.get(model, 0) + 1
+        _BREAKER_FAILS[model] = n
+        if n >= _BREAKER_THRESHOLD:
+            _BREAKER[model] = time.time() + _BREAKER_COOLDOWN
+            return True
+        return False
+
+
 def _trip_breaker(model: str) -> None:
+    """Force the breaker open immediately (bypasses the threshold)."""
     with _BREAKER_LOCK:
         _BREAKER[model] = time.time() + _BREAKER_COOLDOWN
+        _BREAKER_FAILS[model] = _BREAKER_THRESHOLD
 
 
 def _reset_breaker(model: str) -> None:
     with _BREAKER_LOCK:
         _BREAKER.pop(model, None)
+        _BREAKER_FAILS.pop(model, None)
 
 
 # Hard wall-clock timeout. litellm's own `timeout=` is NOT reliably enforced for
@@ -477,6 +499,9 @@ def complete_chain(models, messages, tools=None, max_tokens=4096, budget: Budget
         # Never skip the last fallback — we always make a live attempt.
         if _breaker_open(model) and i < len(chain) - 1:
             nxt = chain[i + 1]
+            # A3: surface breaker-skips in metrics (were invisible before) so the Health
+            # dashboard shows how often the breaker is firing.
+            metrics.record(model, 0.0, ok=False, fallback=True, error="breaker-skip")
             if on_fallback:
                 try:
                     on_fallback(model, nxt, "circuit-breaker: skipped (recent failure)")
@@ -486,15 +511,28 @@ def complete_chain(models, messages, tools=None, max_tokens=4096, budget: Budget
         try:
             resp = complete(model, messages, tools=tools, max_tokens=max_tokens,
                             budget=budget, temperature=temperature, timeout=timeout)
-            _reset_breaker(model)             # success — clear any open breaker
+            _reset_breaker(model)             # success — clear failures + any open breaker
             return resp
         except BudgetExceeded:
             raise                                  # hard cap — do not fall back
         except _BUG:
             raise                                  # our bug — surface it, don't mask
-        except Exception as e:                     # rate-limit-exhausted / timeout / 5xx / empty
+        except EmptyResponse as e:
+            # A2: a benign empty completion (free-tier throttle / safety filter) is NOT a
+            # model-health signal — fall back WITHOUT counting it toward the breaker.
             last_exc = e
-            _trip_breaker(model)              # trip the breaker so later calls skip it
+            nxt = chain[i + 1] if i + 1 < len(chain) else None
+            metrics.record(model, 0.0, ok=False, fallback=bool(nxt), error="EmptyResponse")
+            if nxt and on_fallback:
+                try:
+                    on_fallback(model, nxt, "empty response (not counted against breaker)")
+                except Exception:
+                    pass
+            continue
+        except Exception as e:                     # rate-limit-exhausted / timeout / 5xx
+            last_exc = e
+            # A1: only OPEN the breaker after N consecutive failures, not the first.
+            _record_breaker_failure(model)
             nxt = chain[i + 1] if i + 1 < len(chain) else None
             metrics.record(model, 0.0, ok=False, fallback=bool(nxt), error=type(e).__name__)
             if nxt and on_fallback:
@@ -515,7 +553,10 @@ def generate_image(prompt, model, budget: Budget = None, size="1024x1024", n=1):
     """
     if budget:
         budget.check()
-    resp = litellm.image_generation(model=model, prompt=prompt, n=n, size=size)
+    # Use a pooled key (same as text calls) so image gen works with UI-managed /
+    # encrypted keys, not only an env var. None when the provider needs no key.
+    resp = litellm.image_generation(model=model, prompt=prompt, n=n, size=size,
+                                    api_key=_key_for(model))
     cost = 0.0
     try:
         cost = resp._hidden_params.get("response_cost") or 0.0

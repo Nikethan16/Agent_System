@@ -40,6 +40,32 @@ def login_enabled() -> bool:
     return bool(email and pw)
 
 
+import logging as _logging
+_log = _logging.getLogger(__name__)
+_WEAK_PASSWORDS = {"password", "admin", "changeme", "letmein", "12345678",
+                   "password123", "agentcore", "secret", "qwerty"}
+
+
+def warn_if_weak_login() -> list:
+    """Log a warning if AGENT_LOGIN_PASSWORD looks weak — the app is internet-facing,
+    so a guessable login is the main risk. Returns the list of issues (for tests)."""
+    email, pw = _login_creds()
+    if not (email and pw):
+        return []
+    issues = []
+    if len(pw) < 10:
+        issues.append("under 10 characters")
+    if pw.lower() in _WEAK_PASSWORDS:
+        issues.append("a common/guessable value")
+    if pw.isalpha() or pw.isdigit():
+        issues.append("only letters or only digits")
+    if issues:
+        _log.warning("AGENT_LOGIN_PASSWORD looks weak (%s) — this app is internet-facing; "
+                     "use a long random passphrase (e.g. `python -c \"import secrets;"
+                     "print(secrets.token_urlsafe(24))\"`).", ", ".join(issues))
+    return issues
+
+
 def login_email() -> str:
     return _login_creds()[0]
 

@@ -14,7 +14,18 @@ budgets + a Usage & Cost dashboard**, mobile fixes, a **live plan checklist** (�
 perf fixes (SQL spend aggregation, indexes), and regression fixes (UI rate-limit storm;
 **research routed to Gemini 2.5 Flash** since free qwen3.5 was flaky at tool-calling).
 
-**🔴 THE OPEN ISSUE (top next task): heavy tier-3 builds are SLOW on the free tier.** Live
+**✅ UPDATE (2026-06-20, branch `claude/breaker-reliability`):** the circuit-breaker churn is
+FIXED — the breaker now trips only after `AGENT_BREAKER_THRESHOLD` (default 2) **consecutive**
+failures (not 1), never trips on a benign `EmptyResponse`, and breaker-skips show in metrics.
+Plus: read-only shell commands (`ls`/`cat`/…) auto-allow in the policy gate, and `list_files`
+hides the staged `.skills/` machinery. **Verified live:** a tier-3 calc build went from ~15+
+`circuit-breaker: skipped` events down to **3**, and wrote the full module set (lexer/parser/
+evaluator/CLI) vs only the lexer before. **RESIDUAL (not a bug): free-tier models are still
+~45s/call**, so big builds may not finish in one window — the real speed lever is **more NVIDIA
+keys** (`NVIDIA_NIM_API_KEY_1..3`) and/or raising `AGENT_LLM_TIMEOUT` to ~75s on the VM. (Branch
+pushed, not merged.)
+
+**🔴 ORIGINAL OPEN ISSUE (now mitigated, see UPDATE above): heavy tier-3 builds are SLOW on the free tier.** Live
 trace shows the free NVIDIA models time out (~45s, the `AGENT_LLM_TIMEOUT` wall-clock) on big
 tier-3 reasoning calls → the circuit breaker (`core/llm.py`) trips and **`circuit-breaker:
 skipped` fires on nearly every step** → constant fallbacks → a build crawls and may not finish.
