@@ -30,6 +30,26 @@ from . import policy
 _COMPACT_KEEP = int(os.environ.get("AGENT_COMPACT_KEEP", "6"))      # recent msgs kept verbatim
 _COMPACT_RATIO = float(os.environ.get("AGENT_COMPACT_RATIO", "0.8"))  # of the context budget
 
+# Structured "anchored summary" template for compaction (design adapted from OpenCode's
+# session compaction — see THIRD_PARTY.md; reimplemented as our own prompt). A fixed
+# section layout preserves the things a long build must not forget — goal, constraints,
+# what's done vs left, key decisions, and exact file paths/commands/errors — far better
+# than a free-form summary, so the agent can resume cleanly after older turns are dropped.
+_COMPACT_SUMMARY_SYS = (
+    "You are compacting an agent work-log so the task can continue after older turns are "
+    "dropped. Output EXACTLY this Markdown structure, every section kept (use '(none)' when "
+    "empty), terse bullets not prose. Preserve exact file paths, commands, error strings, and "
+    "identifiers verbatim. Do not mention that the context was compacted.\n\n"
+    "## Goal\n- [one-sentence task summary]\n\n"
+    "## Constraints & Preferences\n- [requirements/specs or (none)]\n\n"
+    "## Progress\n### Done\n- [completed work or (none)]\n### In Progress\n- [current work or (none)]\n"
+    "### Blocked\n- [blockers or (none)]\n\n"
+    "## Key Decisions\n- [decision and why, or (none)]\n\n"
+    "## Next Steps\n- [ordered next actions or (none)]\n\n"
+    "## Critical Context\n- [important technical facts, errors, open questions, or (none)]\n\n"
+    "## Relevant Files\n- [path: why it matters, or (none)]"
+)
+
 
 def _approx_tokens(messages) -> int:
     total = 0
@@ -82,12 +102,9 @@ def _compact_messages(messages, budget=None, emit=None, label="agent"):
         chain = registry.model_chain("tier1")
         resp, _ = complete_chain(
             chain,
-            [{"role": "system", "content":
-              "Summarize this agent work-log compactly. PRESERVE: files created/edited, "
-              "key decisions, tool results that matter, errors hit, and what REMAINS to do. "
-              "Drop chit-chat. Output a tight summary, no preamble."},
+            [{"role": "system", "content": _COMPACT_SUMMARY_SYS},
              {"role": "user", "content": convo}],
-            max_tokens=600, budget=budget, temperature=0.2)
+            max_tokens=700, budget=budget, temperature=0.2)
         summary = (resp.choices[0].message.content or "").strip()
     except Exception:
         return messages          # budget/provider issue — leave history as-is
@@ -142,6 +159,16 @@ def _strip_toolcall_markup(text: str) -> str:
 # (explore → edit → run tests → fix → re-run) has room to finish; the per-run
 # Budget is still the hard global ceiling. Tunable via env.
 MAX_TOOL_ROUNDS = int(os.environ.get("AGENT_MAX_TOOL_ROUNDS", "14"))
+
+# Forcing prompt injected when the tool-round cap is hit (tools are also dropped from the
+# request). A firm, structured instruction yields a clean text summary instead of the model
+# trying (and failing) to keep calling now-absent tools. Adapted from OpenCode's
+# MAX_STEPS_PROMPT (see THIRD_PARTY.md); our own wording.
+_MAX_STEPS_PROMPT = (
+    "MAXIMUM STEPS REACHED — tools are now disabled for this task. Respond with TEXT ONLY, "
+    "no tool calls of any kind. Give the FINAL answer: summarize what you accomplished, list "
+    "anything still incomplete, and include the key results (files written, how to run/verify "
+    "them). This instruction overrides any earlier request to keep using tools.")
 
 
 class _TC:
@@ -206,8 +233,7 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
         # Compact older turns if the history has grown large (root fix for #2).
         messages = _compact_messages(messages, budget=budget, emit=emit, label=label)
         if force_final and not nudged:
-            messages.append({"role": "user",
-                             "content": "Enough tool use — give me your final answer now."})
+            messages.append({"role": "user", "content": _MAX_STEPS_PROMPT})
             nudged = True
         try:
             if stream:
