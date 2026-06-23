@@ -90,3 +90,12 @@ def test_glob_skips_symlink_escaping_workspace(ws, tmp_path):
         pytest.skip("symlinks not permitted on this platform/run")
     out = tools.glob("**/*.py")
     assert "linked.py" not in out
+
+
+def test_list_files_hides_skills_machinery(ws):
+    import os as _o
+    _o.makedirs(_o.path.join(ws, ".skills", "docx"))
+    open(_o.path.join(ws, "app.py"), "w").write("x=1\n")
+    out = tools.list_files(".")
+    assert "app.py" in out
+    assert ".skills" not in out   # staged machinery hidden from exploration

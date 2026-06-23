@@ -445,7 +445,11 @@ def edit_file(path: str, old_string: str, new_string: str = "",
 
 def list_files(directory: str = ".") -> str:
     try:
-        return "\n".join(sorted(os.listdir(_safe(directory)))) or "(empty)"
+        # Hide the staged skill machinery (.skills/) — it's not the user's project, and
+        # agents told to "explore first" were wasting rounds listing into it. grep/glob
+        # already skip it via _SKIP_DIRS.
+        entries = [f for f in sorted(os.listdir(_safe(directory))) if f != ".skills"]
+        return "\n".join(entries) or "(empty)"
     except Exception as e:
         return f"ERROR listing {directory}: {e}"
 
