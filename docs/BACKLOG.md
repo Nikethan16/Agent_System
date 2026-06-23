@@ -111,12 +111,13 @@ budget, parallel-delegation exception isolation, resilient compaction (fallback 
 near-cap-nudge priority, keystore data-loss guards (refuse-overwrite + atomic write + warnings),
 `acquire()` never serving disabled keys, and grep/glob symlink containment.
 
-**Deferred (tracked recommendations — deliberately NOT changed to avoid regressing tuned
-reliability paths):**
-- **Circuit breaker sensitivity** (`core/llm.py`): a single transient (incl. a benign
-  `EmptyResponse` from a free-tier filter) trips a model fleet-wide for the cooldown. Consider
-  trip-after-N-consecutive-failures and not tripping on `EmptyResponse`. Also record
-  breaker-skips in `metrics` (currently undercounted). Low risk but touches the hang-fix path.
+**Deferred (tracked recommendations):**
+- ✅ **Circuit breaker sensitivity — DONE** (`core/llm.py`, branch `claude/breaker-reliability`):
+  trips only after `AGENT_BREAKER_THRESHOLD` (default 2) consecutive failures; never on
+  `EmptyResponse`; breaker-skips recorded in metrics. Verified: tier-3 build churn dropped from
+  ~15+ skips to 3. Also shipped: read-only-bash auto-allow (`core/policy.py`) + `list_files`
+  hides `.skills` (`core/tools.py`). **Residual is free-tier model speed (~45s/call) — needs
+  more NVIDIA keys / higher `AGENT_LLM_TIMEOUT`, not code.**
 - **Abandoned hard-timeout futures** (`core/llm.py`): a stuck provider call keeps running on a
   worker after we stop waiting; under sustained provider stalls the 16-worker pool could
   saturate. Consider passing the timeout into the HTTP client and/or bounding the queue.
