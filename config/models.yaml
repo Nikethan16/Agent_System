@@ -74,9 +74,13 @@ routing:
   chat:      ["gemini/gemini-2.5-flash-lite",
               "nvidia_nim/deepseek-ai/deepseek-v4-flash",
               "nvidia_nim/z-ai/glm-5.1"]
+  # minimax-m3 DEMOTED below deepseek-v4-pro: a streaming probe (2026-06-22) measured it
+  # at ~230s with a 44s inter-token gap (right at the wall-clock edge), vs deepseek-v4-pro
+  # ~70s and a 13s max gap. deepseek/nemotron stream smoothly, so the streaming per-chunk
+  # watchdog keeps them alive; minimax is a poor fallback. Re-promote only if NIM speeds it up.
   reasoning: ["nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
-              "nvidia_nim/minimaxai/minimax-m3",
-              "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
+              "nvidia_nim/deepseek-ai/deepseek-v4-pro",
+              "nvidia_nim/minimaxai/minimax-m3"]
   coding:    ["nvidia_nim/z-ai/glm-5.1",
               "nvidia_nim/deepseek-ai/deepseek-v4-flash",
               "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
@@ -95,8 +99,8 @@ routing:
   classify:  ["gemini/gemini-2.5-flash-lite",
               "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b"]
   planning:  ["nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
-              "nvidia_nim/minimaxai/minimax-m3",
-              "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
+              "nvidia_nim/deepseek-ai/deepseek-v4-pro",
+              "nvidia_nim/minimaxai/minimax-m3"]
   data:      ["nvidia_nim/qwen/qwen3.5-122b-a10b",
               "nvidia_nim/z-ai/glm-5.1",
               "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
