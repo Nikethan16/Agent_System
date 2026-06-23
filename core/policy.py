@@ -57,6 +57,20 @@ def _load():
 
 _HARD_BLOCK, _REQUIRE_HUMAN = _load()
 
+# Read-only shell commands are safe to run without escalation/approval (mirrors how
+# Claude Code lets `ls`/`cat`/etc. run in every mode). Only a bare, single command from
+# this allowlist with NO shell metacharacters qualifies — anything with pipes,
+# redirects, chaining, or substitution still goes through the normal gate.
+_SAFE_BASH = re.compile(r"^\s*(ls|cat|pwd|head|tail|wc|echo|find|grep|stat|file|tree|which)\b")
+_UNSAFE_SHELL = re.compile(r"[;&|`><]|\$\(|\$\{")
+
+
+def _is_readonly_bash(args: dict) -> bool:
+    cmd = (args.get("command") or "") if isinstance(args, dict) else ""
+    if not cmd or _UNSAFE_SHELL.search(cmd):
+        return False
+    return bool(_SAFE_BASH.match(cmd))
+
 
 def reload():
     global _HARD_BLOCK, _REQUIRE_HUMAN
@@ -73,6 +87,11 @@ def evaluate(tool: Tool, args: dict) -> Decision:
 
     human_by_content = any(pat.search(blob) for pat in _REQUIRE_HUMAN)
     requires_human = bool(tool.requires_human or human_by_content)
+
+    # A safe, bare read-only shell command auto-allows even if run_bash is otherwise
+    # gated (e.g. no Docker -> CRITICAL) — as long as no require-human rule matched it.
+    if tool.name == "run_bash" and not human_by_content and _is_readonly_bash(args):
+        return Decision("allow", "read-only shell command")
 
     if tool.risk == RISK_CRITICAL or requires_human:
         why = "critical tool" if tool.risk == RISK_CRITICAL else "matches require-human rule"
