@@ -43,6 +43,15 @@ MAX_PARALLEL_FANOUT = int(os.environ.get("AGENT_MAX_PARALLEL", "4"))  # concurre
 # Trivial (tier 1) and pure look-up/chat tasks are skipped to save cost + latency.
 _REVIEW_TASK_TYPES = {"coding", "writing", "data", "math"}
 
+# Tier-3 task types a SINGLE strong agent (one tight think→act→observe loop, Claude-Code/
+# OpenCode style) handles BETTER than the multi-agent lead/delegate decomposition.
+# A/B-verified on the VM 2026-06-22: on a hard interpreter build, a single coding agent
+# produced real, fully-tested code (43 pytest passing) in 3.2 min, while the multi-agent
+# tier-3 loop produced 69-byte `# To be implemented` stubs in 14.2 min — dependent build
+# steps can't be parallelized and decomposition fragments the agent's context. The
+# multi-agent loop stays for genuinely-INDEPENDENT work (e.g. multi-topic research).
+_TIER3_SINGLE_AGENT_TYPES = {"coding"}
+
 
 def _auto_review(tier, task_type) -> bool:
     """Decide whether to run the critic when review == 'auto' (the default).
@@ -693,7 +702,43 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
         return result
 
-    # Complex -> the LEAD master loop, seeded with the task's playbook + delegation.
+    # Complex CODING/build -> a SINGLE strong agent in one tight loop (Claude-Code/OpenCode
+    # style), NOT the multi-agent decomposition: for dependent builds it's far faster and
+    # actually produces working code (see _TIER3_SINGLE_AGENT_TYPES). No tier downgrade —
+    # the agent keeps its capable model, and gets the full tier-3 budget/round headroom.
+    if task_type in _TIER3_SINGLE_AGENT_TYPES:
+        agent_id, reason = team.select_agent(task, budget=budget)
+        agent = team.agents.get(agent_id)
+        _emit({"type": "assign", "agent": agent_id, "label": getattr(agent, "label", agent_id),
+               "model": registry.model_for_tier(getattr(agent, "tier", "tier3"), task_type=task_type),
+               "reason": reason})
+        agent_task = task
+        cl = playbook_lib.checklist(task_type)
+        if cl:
+            agent_task = f"{task}\n\n{cl}"
+        if acceptance:
+            agent_task += ("\n\nACCEPTANCE CRITERIA (the definition of done — make sure your "
+                           "result satisfies ALL of these):\n" + acceptance)
+        # This is a SINGLE self-verifying agent (it runs the tests in the sandbox in its
+        # own loop), so apply the SAME sandbox-aware critic gating as tier-2 instead of
+        # tier-3's blanket always-review — a second full critic pass here is redundant and
+        # roughly doubled the wall-clock in testing (7.3 min vs 3.2 min). Critic still runs
+        # when forced (AGENT_ALWAYS_REVIEW) or when no sandbox is available to self-verify.
+        build_review = review and (
+            os.environ.get("AGENT_ALWAYS_REVIEW", "").strip().lower() in ("1", "true", "yes")
+            or not os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip())
+        # Force STREAMING for the build agent (regardless of the caller's `stream`): on the
+        # free tier these models take ~70s/call but stream smoothly (probe 2026-06-22: max
+        # inter-token gap ≤13s). Streaming routes through the PER-CHUNK wall-clock watchdog
+        # (llm._iter_stream_bounded) which only trips on a true stall — instead of the flat
+        # 45s total wall-clock that was guillotining actively-streaming calls (~3 min/run of
+        # spurious timeout fallbacks). Live `agent_token` events are a bonus for the UI.
+        result = _do_subtask(agent_id, agent_task, budget, emit, approve, "", build_review, True,
+                             task_type=task_type, acceptance=acceptance, tier=None, use_skills=True)
+        _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
+        return result
+
+    # Complex (non-coding) -> the LEAD master loop, seeded with the task's playbook + delegation.
     final = _master_loop(task, budget, emit, approve, review, task_type=task_type,
                          acceptance=acceptance, stream=stream)
     _emit({"type": "final", "text": final, "cost": round(budget.spent_usd, 4)})
