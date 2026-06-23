@@ -536,7 +536,10 @@ def generate_image(prompt, model, budget: Budget = None, size="1024x1024", n=1):
     """
     if budget:
         budget.check()
-    resp = litellm.image_generation(model=model, prompt=prompt, n=n, size=size)
+    # Use a pooled key (same as text calls) so image gen works with UI-managed /
+    # encrypted keys, not only an env var. None when the provider needs no key.
+    resp = litellm.image_generation(model=model, prompt=prompt, n=n, size=size,
+                                    api_key=_key_for(model))
     cost = 0.0
     try:
         cost = resp._hidden_params.get("response_cost") or 0.0
