@@ -56,6 +56,41 @@ def _is_transient(err: Exception) -> bool:
             or "rate limit" in text or "429" in text or "503" in text or "overloaded" in text)
 
 
+# Keyword heuristic used ONLY when the LLM classifier fails (transient error / empty
+# response). Previously every failure routed to tier-1/"unknown", which mis-sent real
+# coding builds to a trivial single-shot path (observed 2026-06-22: the same build prompt
+# classified tier-3 once and tier-1/unknown once). The heuristic picks a sane tier+type
+# from the text instead — but NEVER above tier 2 (a single specialist, no planner), so the
+# original guarantee that a failed route can't escalate a message into tool-heavy work holds.
+_CODING_HINTS = ("code", "function", "class ", "implement", "build a", "build an", "script",
+                 "api", "endpoint", "pytest", "unit test", "compiler", "parser", "lexer",
+                 "cli", "refactor", "debug", "fix the", "python", "javascript", "typescript",
+                 "react", "fastapi", "flask", ".py", ".js", ".ts", "html", "css", "sql")
+_RESEARCH_HINTS = ("search", "latest", "news", "look up", "research", "find online",
+                   "who is", "current", "browse")
+_WRITING_HINTS = ("write a", "draft", "essay", "blog", "email", "letter", "summary of",
+                  "report on", "article")
+
+
+def _heuristic_route(task: str, last_err: Exception) -> dict:
+    t = (task or "").lower()
+    raw = _cache_key(task)            # the user's request, minus any context preamble
+    if len(raw.strip()) <= 12:        # trivial / empty -> stay at tier 1 (don't escalate)
+        tier, tt = 1, "chat"
+    elif any(h in t for h in _CODING_HINTS):
+        tier, tt = 2, "coding"
+    elif any(h in t for h in _RESEARCH_HINTS):
+        tier, tt = 2, "research"
+    elif any(h in t for h in _WRITING_HINTS):
+        tier, tt = 2, "writing"
+    else:
+        tier, tt = 2, "general"
+    return {"tier": tier, "task_type": tt,
+            "requires_web": tt == "research",
+            "reason": f"heuristic fallback ({type(last_err).__name__})",
+            "routed_model": registry.model_for_tier(f"tier{tier}")}
+
+
 def classify(task: str, budget: Budget = None) -> dict:
     key = _cache_key(task)
     if key and key in _CACHE:
@@ -103,12 +138,7 @@ def classify(task: str, budget: Budget = None) -> dict:
                 continue
             break
 
-    # Safe fallback: route DOWN to tier 1 (cheap, single specialist) rather than
-    # escalating. The agent loop's own MAX_TOOL_ROUNDS still guards any tool use.
-    return {
-        "tier": 1,
-        "task_type": "unknown",
-        "requires_web": False,
-        "reason": f"fallback ({type(last_err).__name__})",
-        "routed_model": registry.model_for_tier("tier1"),
-    }
+    # Safe fallback: a keyword heuristic picks tier+type (capped at tier 2 — a single
+    # specialist, never the tool-heavy planner) instead of dumping everything to
+    # tier-1/"unknown". The agent loop's own MAX_TOOL_ROUNDS still guards any tool use.
+    return _heuristic_route(task, last_err)
