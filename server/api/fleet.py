@@ -13,7 +13,7 @@ from core import keypool
 from core import metrics
 from core import cache as core_cache
 from core.registry import registry
-from core.llm import complete, Budget
+from core.llm import complete, Budget, breaker_status
 
 router = APIRouter(prefix="/api", tags=["fleet"])
 
@@ -90,6 +90,7 @@ def fleet_health():
     cache hit-rates (web/doc-parse/embeddings). All offline-derived; no secrets."""
     return {"keys": keypool.report_all(),
             "models": metrics.summary(),
+            "breakers": breaker_status(),
             "recent": metrics.recent(60),
             "caches": core_cache.all_stats()}
 

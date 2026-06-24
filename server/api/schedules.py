@@ -26,7 +26,21 @@ class ScheduleIn(BaseModel):
 
 @router.get("")
 def list_schedules(session_id: Optional[str] = None):
-    return scheduler.list_all(session_id)
+    """Each schedule, enriched with its last run's outcome (status + a short result
+    snippet) joined from the job queue via last_job_id — so the UI can show whether the
+    most recent run succeeded, failed, or is still running without a second request."""
+    from .. import jobs
+    rows = scheduler.list_all(session_id)
+    for r in rows:
+        jid = r.get("last_job_id")
+        job = jobs.get_job(jid) if jid else None
+        if job:
+            r["last_status"] = job.get("status")
+            r["last_result"] = (job.get("result") or "")[:200]
+        else:
+            r["last_status"] = None
+            r["last_result"] = ""
+    return rows
 
 
 @router.post("")

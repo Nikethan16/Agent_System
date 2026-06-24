@@ -12,6 +12,29 @@ const SPEC_HINT: Record<string, string> = {
   weekly: "DOW HH:MM (0=Mon..6=Sun), e.g. 0 09:00",
 };
 
+// "in 2h 14m" / "in 45s" / "due now" — a friendlier read than a bare UTC timestamp.
+function countdown(iso: string): string {
+  if (!iso) return "";
+  // Backend may emit either a bare datetime or one with a tz offset (+00:00 / Z).
+  // Only stamp UTC when there's no tz info at all — appending Z to "+00:00" is invalid.
+  const hasTz = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(iso);
+  const ms = new Date(hasTz ? iso : iso + "Z").getTime() - Date.now();
+  if (isNaN(ms)) return "";
+  if (ms <= 0) return "due now";
+  const s = Math.round(ms / 1000);
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d) return `in ${d}d ${h}h`;
+  if (h) return `in ${h}h ${m}m`;
+  if (m) return `in ${m}m`;
+  return `in ${s}s`;
+}
+
+const STATUS_COLOR: Record<string, string> = {
+  done: "text-emerald-500", error: "text-red-500",
+  running: "text-accent-terracotta", queued: "text-amber-500",
+};
+
 // Settings → Schedules: run a saved task on a schedule, in the current chat.
 export default function SchedulesPanel() {
   const currentId = useStore((s) => s.currentId);
@@ -22,7 +45,11 @@ export default function SchedulesPanel() {
   const [msg, setMsg] = useState("");
 
   const load = async () => { try { setList(await api.schedules()); } catch { /* empty */ } };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 15000);   // refresh status + countdown while open
+    return () => clearInterval(t);
+  }, []);
 
   const create = async () => {
     if (!currentId) { setMsg("Open a chat first — the scheduled task runs inside it."); return; }
@@ -32,7 +59,7 @@ export default function SchedulesPanel() {
     catch (e: any) { setMsg(e.message); }
   };
   const toggle = async (id: string) => { try { await api.toggleSchedule(id); load(); } catch (e: any) { setMsg(e.message); } };
-  const runNow = async (id: string) => { try { await api.runSchedule(id); setMsg("queued a run"); } catch (e: any) { setMsg(e.message); } };
+  const runNow = async (id: string) => { try { await api.runSchedule(id); setMsg("queued a run"); load(); } catch (e: any) { setMsg(e.message); } };
   const del = async (id: string) => { try { await api.deleteSchedule(id); load(); } catch (e: any) { setMsg(e.message); } };
 
   return (
@@ -62,8 +89,16 @@ export default function SchedulesPanel() {
           <div className="min-w-0">
             <div className="truncate">{s.text}</div>
             <div className="text-[10px] text-light-muted">
-              {s.kind} {s.spec} · {s.enabled ? `next ${(s.next_run_at || "").replace("T", " ").slice(0, 16)} UTC` : "disabled"}
+              {s.kind} {s.spec} · {s.enabled
+                ? <>next {(s.next_run_at || "").replace("T", " ").slice(0, 16)} UTC{countdown(s.next_run_at) && <span className="text-on-surface dark:text-dark-text"> ({countdown(s.next_run_at)})</span>}</>
+                : "disabled"}
             </div>
+            {s.last_status && (
+              <div className="text-[10px] text-light-muted">
+                last run: <span className={STATUS_COLOR[s.last_status] || ""}>{s.last_status}</span>
+                {s.last_result && <span title={s.last_result}> · {s.last_result.slice(0, 48)}{s.last_result.length > 48 ? "…" : ""}</span>}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <button onClick={() => runNow(s.id)} title="run now" className="material-symbols-outlined text-[16px] text-light-muted hover:text-accent-terracotta">play_arrow</button>
