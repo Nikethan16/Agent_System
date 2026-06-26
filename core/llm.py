@@ -37,7 +37,7 @@ litellm.num_retries = 0
 
 # Hard per-call wall-clock timeout (seconds). Bounds a cold-start/stuck provider so
 # it fails fast and the fallback chain can move on, instead of freezing the run.
-_TIMEOUT = float(os.environ.get("AGENT_LLM_TIMEOUT", "45"))
+_TIMEOUT = float(os.environ.get("AGENT_LLM_TIMEOUT", "60"))
 # How many keys to try for ONE model before giving up on it (then the chain falls
 # back to the next model). At least a couple even with a single key (brief backoff).
 _KEY_ATTEMPTS = int(os.environ.get("AGENT_KEY_ATTEMPTS", "4"))

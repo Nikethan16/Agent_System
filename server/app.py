@@ -79,8 +79,6 @@ def _resume_jobs():
     scheduler.start_scheduler()  # start firing due scheduled tasks
     from . import auth
     auth.warn_if_weak_login()    # nudge: the app is internet-facing — flag a weak login pw
-    from . import telegram
-    telegram.start_telegram()    # mobile control via Telegram (no-op unless a token is set)
     # Wire the LLM observer so Langfuse gets generation spans (model/cost/tokens/latency).
     # core stays offline — it only holds a callback ref; no Langfuse import in core.
     from . import trace as _trace

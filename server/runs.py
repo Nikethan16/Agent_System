@@ -7,7 +7,7 @@ Two SQLite-backed tables so a run no longer lives only in WebSocket memory:
                  is in progress" after a reload, and reattach to it.
   * Approval   — one row per escalated action that needs a human. The request SURVIVES a
                  browser disconnect: it can be answered later from any client (the UI on
-                 reconnect, a second tab, or Telegram), instead of being lost when the
+                 reconnect or a second tab), instead of being lost when the
                  socket that raised it goes away.
 
 This module owns only the data. The live wiring (block the worker thread, unblock it when
@@ -40,7 +40,7 @@ class Approval(SQLModel, table=True):
     reason: str = ""
     manager_reason: str = ""
     status: str = "pending"            # pending | approved | denied | timeout
-    decided_by: str = ""               # who answered (user / telegram / timeout)
+    decided_by: str = ""               # who answered (user / timeout)
     created_at: str = Field(default_factory=_now)
     resolved_at: str = ""
 

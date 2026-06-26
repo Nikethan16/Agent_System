@@ -10,7 +10,7 @@ loop, safety caps) cleanly, so you can grow it without rewrites.
 > **Status (2026-06-14): live in production.** Deployed 24/7 on an Oracle Always-Free VM,
 > reached privately via Tailscale, with push-to-main CI/CD. The web UI is a **Claude.ai-style**
 > client with an **email+password login**, per-response run summaries, a 5-tab Settings, and a
-> ⌘K palette; Telegram phone control is live. New chat? Start with `HANDOFF.md`; remaining work
+> ⌘K palette. New chat? Start with `HANDOFF.md`; remaining work
 > is in `docs/BACKLOG.md`; hosting steps in `docs/SETUP_GUIDE.md`.
 
 ---

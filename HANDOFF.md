@@ -63,8 +63,8 @@ exported will *shadow* `.env` (load_dotenv doesn't override) — start the serve
   on the VM (`.github/workflows/deploy.yml`: reset → pip → npm build → restart). Server
   pulls privately via an SSH deploy key (remote is `git@github.com:...`).
 - **Email+password login is ACTIVE** (now the only thing standing between the public URL and
-  the app — see "Security follow-ups" below); **Telegram bot** runs on the server; **nightly
-  backups** via cron (`scripts/backup.py --keep 14`).
+  the app — see "Security follow-ups" below); **nightly backups** via cron
+  (`scripts/backup.py --keep 14`).
 - **Run/test:** local run `.\run.ps1` → http://localhost:8800. **136 pytest pass (+2 skipped:
   symlink tests need OS symlink perm)** (`python -m pytest tests/ -v`; `pytest` lives in
   `.venv`). Smoke **171/171** (`scripts\smoke_test.py`). Rebuild UI after frontend changes:
