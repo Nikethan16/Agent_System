@@ -89,6 +89,27 @@ def _reset_breaker(model: str) -> None:
         _BREAKER_FAILS.pop(model, None)
 
 
+def breaker_status() -> list:
+    """Read-only snapshot of the circuit breaker, for the Health dashboard. One row
+    per model the breaker is currently tracking (open OR with a non-zero failure
+    streak); models that are healthy and untouched are omitted. No secrets."""
+    now = time.time()
+    out = []
+    with _BREAKER_LOCK:
+        models = set(_BREAKER) | set(_BREAKER_FAILS)
+        for m in models:
+            open_until = _BREAKER.get(m, 0)
+            remaining = max(0, round(open_until - now))
+            fails = _BREAKER_FAILS.get(m, 0)
+            if remaining <= 0 and fails <= 0:
+                continue
+            out.append({"model": m, "open": remaining > 0,
+                        "cooldown_s": remaining, "fails": fails,
+                        "threshold": _BREAKER_THRESHOLD})
+    out.sort(key=lambda r: (not r["open"], -r["cooldown_s"]))
+    return out
+
+
 # Hard wall-clock timeout. litellm's own `timeout=` is NOT reliably enforced for
 # every provider (a slow NVIDIA NIM call was observed running ~139s despite
 # timeout=45s and returning successfully — so no exception was ever raised and the

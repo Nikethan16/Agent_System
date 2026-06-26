@@ -8,6 +8,7 @@ import { api } from "../lib/api";
 type Health = {
   keys: Record<string, any[]>;
   models: any[];
+  breakers: any[];
   recent: any[];
   caches: Record<string, any>;
 };
@@ -40,6 +41,7 @@ export default function HealthPanel() {
   if (!data) return <div className="text-xs text-light-muted">Loading…</div>;
 
   const models = data.models || [];
+  const breakers = data.breakers || [];
   const caches = Object.entries(data.caches || {});
   const keyProviders = Object.entries(data.keys || {});
 
@@ -87,21 +89,49 @@ export default function HealthPanel() {
         )}
       </div>
 
+      {/* circuit breakers — only models the breaker is currently tracking */}
+      {breakers.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-light-muted mb-1.5">Circuit breakers</p>
+          {breakers.map((b) => (
+            <Bar key={b.model} label={shortModel(b.model)}>
+              {b.open ? (
+                <span className="text-red-500">open · {b.cooldown_s}s left</span>
+              ) : (
+                <span className="text-amber-500">{b.fails}/{b.threshold} fails</span>
+              )}
+            </Bar>
+          ))}
+        </div>
+      )}
+
       {/* per-key pool usage */}
       <div>
         <p className="text-[10px] uppercase tracking-widest text-light-muted mb-1.5">API key pool (per-minute usage)</p>
         {keyProviders.length === 0 ? (
           <div className="text-xs text-light-muted">No pooled keys (add some in Fleet &amp; keys).</div>
-        ) : keyProviders.map(([prov, keys]) => (
-          <div key={prov} className="mb-2">
-            <div className="text-[11px] font-medium">{prov}</div>
-            {(keys as any[]).map((k, i) => (
-              <Bar key={i} label={k.key}>
-                {k.used}/{k.rpm} rpm{k.cooldown_s > 0 ? ` · cooldown ${k.cooldown_s}s` : ""}{!k.enabled ? " · disabled" : ""}
-              </Bar>
-            ))}
-          </div>
-        ))}
+        ) : keyProviders.map(([prov, keys]) => {
+          const ks = keys as any[];
+          const live = ks.filter((k) => k.enabled);
+          const used = ks.reduce((n, k) => n + (k.used || 0), 0);
+          const cap = ks.reduce((n, k) => n + (k.rpm || 0), 0);
+          const cooling = ks.filter((k) => k.cooldown_s > 0).length;
+          return (
+            <div key={prov} className="mb-2">
+              <div className="flex items-center justify-between text-[11px] font-medium">
+                <span>{prov}</span>
+                <span className="font-code text-light-muted">
+                  {live.length}/{ks.length} keys · {used}/{cap} rpm{cooling ? ` · ${cooling} cooling` : ""}
+                </span>
+              </div>
+              {ks.map((k, i) => (
+                <Bar key={i} label={k.key}>
+                  {k.used}/{k.rpm} rpm{k.cooldown_s > 0 ? ` · cooldown ${k.cooldown_s}s` : ""}{!k.enabled ? " · disabled" : ""}
+                </Bar>
+              ))}
+            </div>
+          );
+        })}
       </div>
 
       {/* cache hit-rates */}
