@@ -491,20 +491,6 @@ check("run_due advances next_run past now",
 check("toggle disables a schedule", SCH.set_enabled(_sc["id"], False)["enabled"] is False)
 check("delete removes a schedule", SCH.delete(_sc["id"]) and SCH.get(_sc["id"]) is None)
 
-# ---- Telegram control (offline-testable parts; the bot itself needs a token) -
-print("\n[telegram]")
-from server import telegram as TG
-_os.environ.pop("TELEGRAM_BOT_TOKEN", None)
-check("telegram is a no-op without a token (fail-safe)", TG.start_telegram() is False)
-_os.environ["TELEGRAM_ALLOWED_CHAT_IDS"] = "111, 222"
-check("telegram allowlist parses a comma list", TG._allowed() == {"111", "222"})
-_os.environ.pop("TELEGRAM_ALLOWED_CHAT_IDS", None)
-_tsid = TG._session_for("tg-smoke-chat")
-check("telegram maps a chat to a persistent session (find-or-create)",
-      bool(_tsid) and TG._session_for("tg-smoke-chat") == _tsid)
-check("telegram maybe_notify is a no-op without a token (proactive-digest hook)",
-      TG.maybe_notify(_tsid, "digest") is False)
-
 # ---- document intelligence: doc-parser tool + RAG (Wave 4) ------------------
 print("\n[document intelligence]")
 check("parse_document tool registered", "parse_document" in toolbelt.names())
@@ -703,17 +689,6 @@ check("approval: the waiting run received the verdict", _res.get("r", (False,))[
 check("approval: DB row marked approved", (RUNS.get_approval(_areq.get("id")) or {}).get("status") == "approved")
 RUNS.finish_run(_rid, "done", 0.0)
 check("runs: a finished run is no longer active", RUNS.active_run(_runsess.id) is None)
-# Telegram approve-from-chat: "/yes <id>" resolves a pending approval (offline; stub send)
-_orig_tgsend = TG._send
-TG._send = lambda cid, t: None
-_os.environ["TELEGRAM_ALLOWED_CHAT_IDS"] = "424242"
-RUNS.create_approval("tgapprovalreq0000000000000000abc", _runsess.id, "", "run_bash", "{}",
-                     "critical", "why", "mgr")
-TG._handle({"message": {"chat": {"id": 424242}, "text": "/yes tgapprovalreq0000000000000000abc"}})
-TG._send = _orig_tgsend
-_os.environ.pop("TELEGRAM_ALLOWED_CHAT_IDS", None)
-check("telegram: /yes <id> resolves a pending approval from the phone",
-      (RUNS.get_approval("tgapprovalreq0000000000000000abc") or {}).get("status") == "approved")
 
 # ---- server (REST + queue + diff + memory) ----------------------------------
 print("\n[server / app]")

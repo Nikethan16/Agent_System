@@ -8,7 +8,7 @@ These endpoints make a run survive a browser disconnect:
   * POST /api/approvals/{req_id}/resolve — approve/deny later, from any client
 
 Resolution goes through approvals.resolve(), which finds the live waiting run anywhere in
-the process (the originating socket, a second tab, or Telegram) and unblocks it.
+the process (the originating socket or a second tab) and unblocks it.
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel

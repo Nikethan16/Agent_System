@@ -1,113 +1,28 @@
 # SETUP GUIDE — what to do next, step by step
 
-Plain-language walkthrough for the three things left to switch on, in the order
-most people want them:
+Plain-language walkthrough for putting the app on an always-on server.
 
-1. **[Telegram bot](#part-1--control-it-from-your-phone-telegram)** — control the agent from your phone.
-2. **[Oracle free server](#part-2--put-it-on-an-always-on-server-oracle-free-vm)** — keep it running 24/7 so the phone bot always answers.
-3. **[After that](#part-3--what-to-do-after-that-roadmap)** — the roadmap, easiest wins first.
+1. **[Oracle free server](#part-2--put-it-on-an-always-on-server-oracle-free-vm)** — keep it running 24/7 and reach it privately from anywhere.
+2. **[After that](#part-3--what-to-do-after-that-roadmap)** — the roadmap, easiest wins first.
 
-> Everything below is already **built and tested** — you're just turning features on by
-> giving them a key or a home. Nothing here needs new code. The app runs today on your PC
-> at **http://localhost:8800**.
+> Everything below is already **built and tested** — you're just giving the app a home.
+> Nothing here needs new code. The app runs today on your PC at **http://localhost:8800**.
 
 ---
 
 ## Where things stand right now
 
-- The whole system is finished and passes its **158 self-checks**.
+- The whole system is finished and passes its self-checks.
 - It runs on your computer. When your computer is off or the app is closed, it stops.
-- Two things are **coded but switched off**, waiting only on you:
-  - **Phone control (Telegram)** — needs a free bot token (5 minutes).
-  - **Always-on hosting (Oracle)** — needs a free server (about an hour the first time).
-
-Do them in that order: get the phone bot working on your PC first (quick win), then move
-the whole thing to a free server so it's always available.
-
----
-
-## Part 1 — Control it from your phone (Telegram)
-
-**What you get:** text the agent from anywhere like you'd text a person — "research X",
-"write me a doc about Y" — and it replies with the result. When it wants to do something
-risky, it asks you, and you reply **/yes** or **/no** right in the chat.
-
-**Why Telegram:** it needs *no website, no public address, no port-opening*. The app
-quietly checks Telegram for new messages (this is called "long-polling"), so it works even
-from your home PC behind a router. The only requirement is that the app is **running**
-(which is exactly why Part 2 — the always-on server — comes next).
-
-### Step 1 — Create the bot
-
-1. Open Telegram (phone or desktop) and search for **@BotFather** (the official one has a
-   blue checkmark).
-2. Start a chat and send: **/newbot**
-3. It asks for a **name** (anything, e.g. "My Agent") and then a **username** that must end
-   in `bot` (e.g. `my_agent_core_bot`).
-4. It replies with a **token** that looks like `8123456789:AAH...long-random...`. **Copy it.**
-   Treat it like a password — anyone with it can message your bot.
-
-### Step 2 — Give the token to the app
-
-On your PC, open the project's **`.env`** file (it's in `C:\Project\agent_system\.env`) in
-Notepad and add this line (paste your real token):
-
-```
-TELEGRAM_BOT_TOKEN=8123456789:AAH...your-token...
-```
-
-Save the file.
-
-### Step 3 — Restart the app and find your chat id
-
-1. Restart the app (stop it and run **`.\run.ps1`** again). On startup it now picks up the
-   token and the bot wakes up.
-2. In Telegram, open **your new bot** and send it any message (e.g. "hi").
-3. The bot replies with a line like:
-   *"This bot isn't allowlisted yet. Add this to .env and restart: TELEGRAM_ALLOWED_CHAT_IDS=123456789"*
-
-   That number is **your chat id**. This is a safety feature — until you list your own id,
-   the bot refuses to run anything for anyone (so a stranger who guesses your bot can't use it).
-
-### Step 4 — Allow yourself (and set a spend limit)
-
-Back in **`.env`**, add (use the number the bot gave you):
-
-```
-TELEGRAM_ALLOWED_CHAT_IDS=123456789
-TELEGRAM_MAX_USD=0.5
-```
-
-- `TELEGRAM_ALLOWED_CHAT_IDS` — who's allowed to use the bot. Comma-separate to add more
-  people, e.g. `123456789,987654321`.
-- `TELEGRAM_MAX_USD` — the most one message is allowed to spend (a safety cap; 0.5 = 50¢).
-
-Save and **restart the app one more time.**
-
-### Step 5 — Use it
-
-Now from your phone:
-
-| You send | What happens |
-|---|---|
-| any task, e.g. *"summarize the latest news on EVs"* | it runs the task and texts back the answer |
-| **/new** | starts a fresh conversation (clears the running context) |
-| **/help** | shows the quick reference |
-| **/yes `<id>`** | approves a risky action it asked about |
-| **/no `<id>`** | denies it |
-
-Each phone chat keeps its own memory, just like the web app — so you can carry a
-conversation across many messages.
-
-> ⚠️ **The bot only answers while the app is running.** On your PC that means the app must
-> be open. To have it answer 24/7, move it to an always-on server — that's Part 2.
+- **Always-on hosting (Oracle)** is the one thing left to switch on — needs a free server
+  (about an hour the first time) so the app is available 24/7 and reachable from anywhere.
 
 ---
 
 ## Part 2 — Put it on an always-on server (Oracle free VM)
 
-**Goal:** run the app on a small free computer in the cloud that's on all the time, so the
-phone bot always answers and you can reach the web UI from anywhere — **privately and
+**Goal:** run the app on a small free computer in the cloud that's on all the time, so it's
+always available and you can reach the web UI from anywhere — **privately and
 safely**, without exposing anything to the open internet.
 
 **The plan in plain terms:**
@@ -210,14 +125,10 @@ Make the settings file with your keys. Run `nano .env` and paste a block like th
 (fill in your real values), then press **Ctrl+O**, **Enter**, **Ctrl+X** to save:
 
 ```
-# at least one model key (copy from your PC's .env)
+# at least one model key (copy from your PC's .env). Add more NVIDIA keys as
+# NVIDIA_NIM_API_KEY_1, _2, _3 … to pool the rate limit (4 keys ≈ 160 req/min).
 GEMINI_API_KEY=AIza...
 NVIDIA_NIM_API_KEY=nvapi-...
-
-# phone control (same token + your chat id from Part 1)
-TELEGRAM_BOT_TOKEN=8123456789:AAH...
-TELEGRAM_ALLOWED_CHAT_IDS=123456789
-TELEGRAM_MAX_USD=0.5
 
 # REQUIRED on a server: a long random password for the web UI
 AGENT_AUTH_TOKEN=paste-a-long-random-string-here
@@ -286,8 +197,8 @@ To watch its live logs any time: `journalctl -u agentcore -f` (Ctrl+C to stop wa
 The app reads `.env` itself, so after you change `.env` just run
 `sudo systemctl restart agentcore`.
 
-At this point your **Telegram bot is already live 24/7** — try messaging it. The web page
-isn't reachable yet from your devices; that's the next step.
+At this point the app is **running 24/7** on the server. The web page isn't reachable yet
+from your devices; that's the next step.
 
 ### Step H — Reach the web page privately (Tailscale)
 
@@ -337,11 +248,9 @@ Backups land in `backups/`. To copy them off the server automatically (recommend
 ### Step J — Final check
 
 - `sudo systemctl status agentcore` → **active (running)**
-- Message your Telegram bot → it replies
 - Open `http://<tailscale-ip>:8800` on your phone → the UI loads and you can chat
 
-That's it — the system is now always on, controllable from your phone, and reachable
-privately from any of your devices.
+That's it — the system is now always on and reachable privately from any of your devices.
 
 ### Updating it later
 
@@ -426,8 +335,7 @@ install for that run (less secure — only when you trust the task).
 | I want to… | Do this |
 |---|---|
 | Run it on my PC | `.\run.ps1` → http://localhost:8800 |
-| Check nothing's broken | `.venv\Scripts\python.exe scripts\smoke_test.py` (expect 158/158) |
-| Control it from my phone | Part 1 (BotFather → token → chat id → allowlist) |
+| Check nothing's broken | `.venv\Scripts\python.exe scripts\smoke_test.py` |
 | Keep it on 24/7 | Part 2 (Oracle free VM + systemd + Tailscale) |
 | Reach the web UI remotely | Tailscale, then `http://<tailscale-ip>:8800` + paste the access token |
 | Update the server | `git pull` → rebuild if needed → `sudo systemctl restart agentcore` |

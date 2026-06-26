@@ -107,13 +107,6 @@ def _loop():
             budget = Budget(max_usd=job["max_usd"], max_iterations=job["max_iterations"])
             final = chat.run_turn(job["session_id"], job["text"], budget=budget)
             _finish(job["id"], "done", final)
-            # Proactive delivery: if this job's chat is Telegram-linked, push the result
-            # to the phone (so a scheduled "every morning…" digest actually arrives).
-            try:
-                from . import telegram
-                telegram.maybe_notify(job["session_id"], final)
-            except Exception:
-                pass
         except Exception as e:
             _finish(job["id"], "error", f"{type(e).__name__}: {e}")
 

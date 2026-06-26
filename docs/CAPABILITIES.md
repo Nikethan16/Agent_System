@@ -9,7 +9,7 @@ for "how it works under the hood"._
 > **Now live (2026-06-15):** deployed 24/7 on an Oracle Always-Free VM, reached privately via
 > Tailscale, with push-to-main CI/CD. The UI is a **Claude.ai clone** with **email+password
 > login**, per-response **run summaries** (time/tokens/cost/tools/files with `+/-` line counts),
-> a **5-tab Settings**, and a ⌘K command palette. Telegram phone control is live. Repo-engineer
+> a **5-tab Settings**, and a ⌘K command palette. Repo-engineer
 > mode, Docker sandbox, Langfuse tracing, NumPy ANN memory index, trace-viewer panel, and a
 > 55-case pytest suite all shipped 2026-06-15.
 > See `docs/SETUP_GUIDE.md` (hosting) and `docs/BACKLOG.md` (what's left).

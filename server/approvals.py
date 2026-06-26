@@ -21,13 +21,13 @@ from . import runs
 
 # Process-global registry of pending human approvals: req_id -> the broker waiting on it.
 # This is what lets an approval be answered from ANYWHERE in the process (the WS that
-# raised it, a different tab via REST, or Telegram) — not just the originating socket.
+# raised it, or a different tab via REST) — not just the originating socket.
 _GLOBAL_PENDING: dict[str, "ApprovalBroker"] = {}
 _GLOBAL_LOCK = threading.Lock()
 
 
 def resolve(req_id: str, allowed: bool, reason: str = "", decided_by: str = "user") -> bool:
-    """Answer a pending approval from any caller (REST / Telegram / WS). Returns True if
+    """Answer a pending approval from any caller (REST / WS). Returns True if
     a waiting run was found and unblocked."""
     with _GLOBAL_LOCK:
         broker = _GLOBAL_PENDING.get(req_id)
@@ -130,7 +130,7 @@ class ApprovalBroker:
         ev = threading.Event()
         self._pending[req_id] = {"event": ev, "result": (False, "no response")}
         # Persist + register globally BEFORE emitting, so an answer that arrives from a
-        # different client (reconnect / second tab / Telegram) can always find this waiter.
+        # different client (reconnect / second tab) can always find this waiter.
         try:
             runs.create_approval(req_id, self.session_id, self.run_id, tool.name,
                                  json.dumps(args, default=str), tool.risk,
@@ -153,7 +153,7 @@ class ApprovalBroker:
                 _GLOBAL_PENDING.pop(req_id, None)
 
     # called when the client answers — from the WS, OR via the module-level resolve()
-    # (REST / Telegram). Idempotent: the first answer wins.
+    # (REST). Idempotent: the first answer wins.
     def resolve(self, req_id, allowed, reason="", decided_by="user"):
         p = self._pending.get(req_id)
         if p:
