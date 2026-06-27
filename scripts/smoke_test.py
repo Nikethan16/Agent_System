@@ -76,7 +76,11 @@ def fake(**kw):
     sysm = next((m.get("content", "") for m in msgs if m.get("role") == "system"), "").lower()
     user = next((m.get("content", "") for m in msgs if m.get("role") == "user"), "")
     if "task router" in sysm:
-        tier = 3 if "build" in user.lower() else 1
+        u = user.lower()
+        # tier-3 NON-coding -> the LEAD master loop; tier-3 "build" -> single coder agent.
+        if "orchestrate" in u:
+            return _Resp('{"tier":3,"task_type":"general","requires_web":false,"reason":"x"}')
+        tier = 3 if "build" in u else 1
         return _Resp('{"tier": %d, "task_type":"coding","requires_web":false,"reason":"x"}' % tier)
     if "lead engineer" in sysm or "work like claude" in sysm:      # the master loop
         _MASTER["n"] += 1
@@ -186,12 +190,23 @@ final = orch.handle_task("write a function", emit=ev.append, review=True)
 check("simple path returns final", bool(final))
 check("critic ran + retried (fixed)", final == "[fixed]" and _REVIEW["n"] >= 1)
 
+# tier-3 CODING routes to a single self-verifying coder agent (commit 3bcc6a6), NOT the
+# lead master loop — assert that fast path stays intact (one coder, no playbook plan).
 ev = []
 final = orch.handle_task("build a multi part thing", emit=ev.append)
 assigns = [e.get("agent") for e in ev if e["type"] == "assign"]
+check("tier-3 coding runs the single coder agent (not the master loop)",
+      "coder" in assigns and not any(e.get("type") == "plan" and e.get("todos") for e in ev))
+check("tier-3 coding produced a final answer", bool(final))
+
+# tier-3 NON-coding goes through the LEAD master loop: it seeds a playbook todo list,
+# delegates to a specialist, and returns a final answer.
+ev = []
+final = orch.handle_task("orchestrate a multi part thing", emit=ev.append)
+assigns = [e.get("agent") for e in ev if e["type"] == "assign"]
 todos_emitted = any(e.get("type") == "plan" and e.get("todos") for e in ev)
 check("lead master loop wrote a todo list", todos_emitted)
-check("lead loop seeds the task PLAYBOOK (coding path) as its plan",
+check("lead loop seeds the PLAYBOOK (understand-first) as its plan",
       any(e.get("type") == "plan"
           and any("understand" in (t.get("text") or "").lower() for t in (e.get("todos") or []))
           for e in ev))
@@ -576,7 +591,9 @@ def _fake_parallel(**kw):
     msgs = kw.get("messages", [])
     sysm = next((m.get("content", "") for m in msgs if m.get("role") == "system"), "").lower()
     if "task router" in sysm:
-        return _Resp('{"tier":3,"task_type":"coding","requires_web":false,"reason":"x"}')
+        # tier-3 NON-coding so the run reaches the LEAD master loop + delegate_parallel
+        # (tier-3 "coding" now runs a single agent and never delegates in parallel).
+        return _Resp('{"tier":3,"task_type":"general","requires_web":false,"reason":"x"}')
     if "lead engineer" in sysm or "work like claude" in sysm:
         _pm["n"] += 1
         if _pm["n"] == 1:
