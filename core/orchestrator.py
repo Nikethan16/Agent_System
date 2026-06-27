@@ -700,9 +700,15 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
                            "result satisfies ALL of these):\n" + acceptance)
         # #5: trivial tier-1 work skips auto skill-matching so a one-line factual
         # question can't drag in a heavy skill (e.g. the research report).
+        # Verification gate also covers tier-2 coding/data (not just the tier-3 build path):
+        # a moderate "write X and run it" task must still actually execute, or be flagged
+        # UNVERIFIED — otherwise it relies on the model choosing to be honest (testing showed
+        # a complex build routed tier-2 and the gate didn't arm).
+        _verify = tier >= 2 and (task_type or "") in ("coding", "data")
         result = _do_subtask(agent_id, agent_task, budget, emit, approve, "", review, stream,
                              task_type=task_type, acceptance=acceptance, tier=downgrade_tier,
-                             use_skills=(tier >= 2))
+                             use_skills=(tier >= 2),
+                             verify_run=_verify, max_rounds=(22 if _verify else None))
         _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
         return result
 
