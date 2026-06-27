@@ -79,6 +79,35 @@ _READ_MAX_BYTES = int(os.environ.get("AGENT_READ_MAX_BYTES", str(50 * 1024)))
 _READ_MAX_LINE = 2000   # truncate any single very-long line
 
 
+# Read-before-edit staleness guard (Phase 3). We remember the mtime of each file at the
+# moment a tool last touched it (read/write/edit). If a file changed OUT OF BAND between a
+# read and a subsequent edit (e.g. a parallel worker, or the agent's own untracked write),
+# the edit is refused so a stale snippet can't silently clobber newer content. Adapted from
+# OpenCode's FileTime.assert (see THIRD_PARTY.md) — timestamp-based, per-process.
+_FILE_MTIMES: dict = {}
+
+
+def _mtime(full: str):
+    try:
+        return os.path.getmtime(full)
+    except OSError:
+        return None
+
+
+def _record_mtime(full: str):
+    m = _mtime(full)
+    if m is not None:
+        _FILE_MTIMES[full] = m
+
+
+def _stale(full: str) -> bool:
+    """True if the file changed since a tool last recorded it (a genuine read→changed
+    conflict). Files never touched by a tool are not flagged (we can't know)."""
+    prev = _FILE_MTIMES.get(full)
+    cur = _mtime(full)
+    return prev is not None and cur is not None and cur > prev + 1e-6
+
+
 def read_file(path: str, offset: int = 1, limit: int = None) -> str:
     """Read a file from the workspace, returning numbered lines.
 
@@ -132,6 +161,7 @@ def read_file(path: str, offset: int = 1, limit: int = None) -> str:
                   f"Use offset={last + 1} to continue.)")
     else:
         footer = f"\n\n(End of file — {total} lines.)"
+    _record_mtime(full)        # remember this read so a later edit can detect drift
     return _wrap_untrusted(body + footer, "workspace_file", path=path)
 
 
@@ -211,9 +241,13 @@ def _postedit_warning(path: str, content: str) -> str:
 def write_file(path: str, content: str) -> str:
     try:
         full = _safe(path)
+        if os.path.isfile(full) and _stale(full):
+            return (f"ERROR: {path} changed since you last read it — re-read it with read_file "
+                    "before overwriting, so you don't clobber newer content.")
         os.makedirs(os.path.dirname(full), exist_ok=True)
         with open(full, "w") as f:
             f.write(content)
+        _record_mtime(full)        # this tool's own write isn't a stale-conflict next time
         return f"Wrote {len(content)} chars to {path}" + _postedit_warning(path, content)
     except Exception as e:
         return f"ERROR writing {path}: {e}"
@@ -407,6 +441,9 @@ def edit_file(path: str, old_string: str, new_string: str = "",
                 "write_file; to delete text pass the snippet as old_string and \"\" as new_string.")
     if not os.path.isfile(full):
         return f"ERROR editing {path}: file not found (create it with write_file first)."
+    if _stale(full):
+        return (f"ERROR: {path} changed since you last read it — re-read it with read_file "
+                "before editing, so your edit applies to the current content.")
     try:
         # newline="" so we see the TRUE on-disk line endings (no translation),
         # letting us restore them after editing.
@@ -439,6 +476,7 @@ def edit_file(path: str, old_string: str, new_string: str = "",
             f.write(after.replace("\n", ending) if ending == "\r\n" else after)
     except Exception as e:
         return f"ERROR writing {path}: {e}"
+    _record_mtime(full)        # keep our own edit from tripping the staleness guard next time
     n = count if replace_all else 1
     diff = _short_diff(before, after)
     out = f"Edited {path}: replaced {n} occurrence(s)." + (f"\n{diff}" if diff else "")

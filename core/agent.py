@@ -142,6 +142,21 @@ def _looks_like_raw_toolcall(text: str) -> bool:
     return head.startswith(("<tool_call", "<function=", "<｜"))
 
 
+# --- degenerate-output detection (Phase 3) ----------------------------------
+# Reasoning/open models in long sessions sometimes collapse into repeated-character or
+# repeated-word spam ("!!!!!!", "the the the …"). Distinct from the repeated-TOOL-CALL loop
+# guard (G4): this catches garbage in the model's TEXT content. Thresholds are high so normal
+# content (markdown rules, code) doesn't trip it.
+_DEGEN_CHAR = re.compile(r"(\S)\1{79,}")                              # same non-space char 80+x
+_DEGEN_WORD = re.compile(r"(\b\w{1,15}\b)(?:\s+\1\b){24,}", re.I)     # same word 25+x in a row
+
+
+def _looks_degenerate(text: str) -> bool:
+    if not text or len(text) < 80:
+        return False
+    return bool(_DEGEN_CHAR.search(text) or _DEGEN_WORD.search(text))
+
+
 # Patterns to strip from a final answer as a LAST RESORT, so leaked tool-call markup
 # never reaches the user even if a model keeps emitting it after the repair re-prompt.
 _STRIP_PATTERNS = re.compile(
@@ -229,6 +244,7 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
     rounds = 0
     nudged = False
     raw_repaired = False   # one-shot guard for leaked-raw-tool-call repair (#1)
+    degen_repaired = False # one-shot guard for degenerate repeated-output repair
     seen_calls = {}        # tool-call signature -> count (stuck/loop detection, G4)
     denied_sigs = {}       # tool-call signature -> denial reason (denial-spin guard)
     loop_break = False
@@ -299,6 +315,14 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
                     "with run_bash and report the REAL output (the exact command and what it "
                     "printed). Do NOT report results you have not actually run."})
                 continue
+            # Degenerate repeated-character/word spam — re-prompt once for a clean answer.
+            if _looks_degenerate(msg.content) and not degen_repaired and not force_final:
+                degen_repaired = True
+                _emit({"type": "retry", "agent": label, "reason": "degenerate repeated output"})
+                messages.append({"role": "user", "content":
+                    "Your last message collapsed into repeated characters/words. Stop "
+                    "repeating and reply with a concise, correct final answer."})
+                continue
             # #1: the model emitted raw tool-call markup as the answer — don't surface
             # it. Re-prompt once for a clean answer / proper call (OpenCode `invalid`).
             if _looks_like_raw_toolcall(msg.content) and not raw_repaired and not force_final:
@@ -317,6 +341,9 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
                 cleaned = _strip_toolcall_markup(out)
                 out = cleaned or ("(I couldn't format a clean answer this time — "
                                   "please try again.)")
+            # Degenerate spam that survived the repair — don't surface the garbage.
+            if _looks_degenerate(out):
+                out = "(The model produced degenerate repeated output; please try again.)"
             # Never present unrun work as if it were verified.
             if verify_run and not ran_code:
                 out = ("⚠️ UNVERIFIED — the code was NOT executed in this run, so any "
