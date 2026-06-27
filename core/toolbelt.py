@@ -46,8 +46,48 @@ def register_fn(name, func, parameters, description="",
     return register(Tool(name, schema, func, risk, requires_human, description))
 
 
+# Common names weak/open models emit for our tools (wrong word, not just wrong case).
+# Maps an alias -> the real tool name; applied only after exact + case-insensitive miss.
+_TOOL_ALIASES = {
+    "bash": "run_bash", "shell": "run_bash", "sh": "run_bash", "exec": "run_bash",
+    "search": "grep", "search_files": "grep", "find_in_files": "grep",
+    "find": "glob", "find_files": "glob", "ls": "list_files", "cat": "read_file",
+}
+
+
 def get(name: str) -> Optional[Tool]:
-    return _REGISTRY.get(name)
+    """Resolve a tool by name, tolerant of how weak models address tools: exact match
+    first, then trimmed/case-insensitive (so `Write`/`Read ` resolve), then a small alias
+    map (`bash`->`run_bash`, `search`->`grep`, ...). A wrong-case tool name was otherwise
+    an `unknown tool` hard-fail — the single biggest cheap-model failure (OpenCode #234)."""
+    if not name:
+        return None
+    t = _REGISTRY.get(name)
+    if t:
+        return t
+    key = name.strip()
+    t = _REGISTRY.get(key)
+    if t:
+        return t
+    low = key.lower()
+    for n, tool in _REGISTRY.items():          # case-insensitive match
+        if n.lower() == low:
+            return tool
+    alias = _TOOL_ALIASES.get(low)
+    return _REGISTRY.get(alias) if alias else None
+
+
+def signature(tool: "Tool") -> str:
+    """Readable param signature, e.g. 'write_file(path: string*, content: string*)'
+    (* = required). Fed back when a model calls a tool with wrong/missing args so it can
+    self-correct in one shot instead of looping (OpenCode-style repair feedback)."""
+    fn = (tool.schema or {}).get("function", {}) or {}
+    params = fn.get("parameters", {}) or {}
+    props = params.get("properties", {}) or {}
+    required = set(params.get("required", []) or [])
+    parts = [f"{k}: {(spec or {}).get('type', 'any')}{'*' if k in required else ''}"
+             for k, spec in props.items()]
+    return f"{fn.get('name', '?')}({', '.join(parts)})"
 
 
 def all_tools() -> dict[str, Tool]:
@@ -86,6 +126,12 @@ def validate_args(tool: "Tool", args) -> Optional[str]:
             return f"argument '{k}' should be an array"
         if t == "object" and not isinstance(v, dict):
             return f"argument '{k}' should be an object"
+    # Unknown keys = the model used a WRONG name (e.g. fileContent for content). Reject so
+    # it doesn't reach the tool (which would TypeError on an unexpected kwarg) and the model
+    # gets told the real param names via the signature in the loop's feedback.
+    unknown = [k for k in args if props and k not in props]
+    if unknown:
+        return f"unknown argument(s): {', '.join(unknown)}"
     return None
 
 

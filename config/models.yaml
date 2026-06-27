@@ -181,6 +181,9 @@ catalog:
     cost: 0
     tier_hint: 3
     good_for: [research, analysis, web]
+    # Qwen loops/repeats at temp 0; Qwen team + Unsloth recommend temp ~0.55 + a small
+    # repeat penalty. LiteLLM forwards what the provider supports, drops the rest.
+    sampling: { temperature: 0.55, top_p: 0.95, repeat_penalty: 1.1 }
 
   # --- Reasoning alternates / fallbacks ---
   - id: "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
@@ -245,6 +248,7 @@ catalog:
     tier_hint: 3
     timeout_s: 120          # 397B frontier — slow on the free tier
     good_for: [reasoning, research, analysis, hard]
+    sampling: { temperature: 0.55, top_p: 0.95, repeat_penalty: 1.1 }
   - id: "nvidia_nim/mistralai/mistral-large-3-675b-instruct-2512"
     provider: "nvidia_nim"
     requires_env: "NVIDIA_NIM_API_KEY"
