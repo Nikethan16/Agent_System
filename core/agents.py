@@ -86,7 +86,7 @@ def _effective_tier(agent_tier, routed_tier) -> str:
 # ---- running an agent -------------------------------------------------------
 def run(agent_id, task, budget=None, emit=None, approve=None, context="",
         max_tokens=None, stream=False, task_type=None, skills=None, tier=None,
-        use_skills=True):
+        use_skills=True, verify_run=False, max_rounds=None):
     a = agents.get(agent_id) or agents.get(agents.fallback_id())
     # Cost-first selection prefers a cheap model good at this task / the agent's specialty.
     tt = task_type or (a.capabilities[0] if a.capabilities else None)
@@ -120,6 +120,7 @@ def run(agent_id, task, budget=None, emit=None, approve=None, context="",
     return run_agent(
         full, a.prompt, models[0], max_tokens=mt, budget=b, models=models,
         label=a.id, emit=emit, allowed_tools=a.tools, approve=approve, stream=stream,
+        verify_run=verify_run, max_rounds=max_rounds,
     )
 
 

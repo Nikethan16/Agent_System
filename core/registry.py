@@ -146,6 +146,17 @@ class ModelRegistry:
             by_id[m["id"]] = m
         return list(by_id.values())
 
+    def sampling_for(self, model: str) -> dict:
+        """Per-model sampling params from the catalog entry's optional `sampling:` block
+        (temperature/top_p/top_k/repeat_penalty/min_p). Empty when none is set, so the
+        caller keeps its own default. Lets a model that needs e.g. temp 0.55 + a repeat
+        penalty (Qwen, to avoid loops) override the generic default WITHOUT a code change;
+        LiteLLM drops any keys the provider doesn't support."""
+        for m in self.catalog():
+            if m.get("id") == model:
+                return dict(m.get("sampling") or {})
+        return {}
+
     # ---- cost-first selection -------------------------------------------
     @staticmethod
     def _level(name) -> int:

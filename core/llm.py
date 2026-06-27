@@ -454,6 +454,22 @@ def complete(model, messages, tools=None, max_tokens=4096,
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
 
+    # Per-model sampling overlay (models.yaml `sampling:`). Extra knobs (top_p/top_k/
+    # repeat_penalty/min_p) fill in; the model's temperature applies ONLY when the caller
+    # left the generic default (0.2), so an explicit temperature=0 classifier call is kept.
+    # Local import avoids any import cycle; litellm.drop_params handles unsupported keys.
+    try:
+        from .registry import registry as _reg
+        _samp = _reg.sampling_for(model)
+    except Exception:
+        _samp = {}
+    for _k, _v in _samp.items():
+        if _k == "temperature":
+            if temperature == 0.2:
+                kwargs["temperature"] = _v
+        else:
+            kwargs.setdefault(_k, _v)
+
     pool = keypool.pool_for_model(model)
     last_exc = None
     for attempt in range(_KEY_ATTEMPTS):

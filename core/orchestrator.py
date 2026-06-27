@@ -211,10 +211,13 @@ def _looks_failed(r) -> bool:
 
 
 def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=False,
-                task_type=None, acceptance="", tier=None, use_skills=True):
+                task_type=None, acceptance="", tier=None, use_skills=True,
+                verify_run=False, max_rounds=None):
+    # verify_run / max_rounds are set by the caller (only the tier-3 build path turns the
+    # verification gate on + raises the round cap) — a trivial snippet isn't forced to run.
     r = team.run(agent_id, task, budget=budget, emit=emit, approve=approve,
                  context=context, stream=stream, task_type=task_type, tier=tier,
-                 use_skills=use_skills)
+                 use_skills=use_skills, verify_run=verify_run, max_rounds=max_rounds)
     # A2: if the agent errored / gave up / returned nothing, retry once with a nudge
     # (the model fallback chain has already handled provider-down within the run).
     if _looks_failed(r):
@@ -223,14 +226,15 @@ def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=F
         r = team.run(agent_id, task + "\n\n(Your previous attempt failed or was cut off — "
                      "try again and give a focused, complete result.)",
                      budget=budget, emit=emit, approve=approve, context=context,
-                     stream=stream, task_type=task_type, tier=tier, use_skills=use_skills)
+                     stream=stream, task_type=task_type, tier=tier, use_skills=use_skills,
+                     verify_run=verify_run, max_rounds=max_rounds)
     if review:
         passed, feedback = _review(task, r, budget, emit, approve, acceptance=acceptance)
         if not passed:
             fix = f"{task}\n\nA QA reviewer found issues — fix them:\n{feedback}"
             r = team.run(agent_id, fix, budget=budget, emit=emit, approve=approve,
                          context=context, stream=stream, task_type=task_type, tier=tier,
-                         use_skills=use_skills)
+                         use_skills=use_skills, verify_run=verify_run, max_rounds=max_rounds)
     return r
 
 
@@ -734,7 +738,8 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         # 45s total wall-clock that was guillotining actively-streaming calls (~3 min/run of
         # spurious timeout fallbacks). Live `agent_token` events are a bonus for the UI.
         result = _do_subtask(agent_id, agent_task, budget, emit, approve, "", build_review, True,
-                             task_type=task_type, acceptance=acceptance, tier=None, use_skills=True)
+                             task_type=task_type, acceptance=acceptance, tier=None, use_skills=True,
+                             verify_run=True, max_rounds=22)
         _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
         return result
 

@@ -191,18 +191,25 @@ class _StreamMsg:
 
 def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
               label="agent", emit=None, allowed_tools=None, approve=None, stream=False,
-              models=None):
+              models=None, verify_run=False, max_rounds=None):
     """
     allowed_tools: list of tool names this agent may use (None = all registered).
     approve(tool, args, decision) -> (allowed: bool, reason: str): called only for
         escalated (critical / requires-human) actions. None = auto-approve them.
-    stream=True: stream this agent's tokens as `agent_token` events (opt-in).
+    stream=True: stream this agent's tokens as `agent_token` events (opt-in). NOTE: a
+        request carrying tools is ALWAYS sent non-streamed (NIM/vLLM streaming tool-parsers
+        can return tool calls as raw text) — only the final no-tools answer streams.
     models: the ordered fallback chain (primary first). Defaults to [model]. If a
         model is rate-limited across its keys / down, the loop falls back down the
         chain and emits a `fallback` event.
+    verify_run=True: this is an execution task (coding/data) — the agent may not FINISH
+        until it has actually run code via run_bash; otherwise it gets nudged, and a
+        result that never ran is labelled UNVERIFIED (no fabricated-as-real results).
+    max_rounds: tool-round cap for this run (default MAX_TOOL_ROUNDS).
     """
     budget = budget or Budget()
     chain = [m for m in (models or [model]) if m] or [model]
+    round_cap = max_rounds or MAX_TOOL_ROUNDS
 
     def _emit(ev):
         if emit:
@@ -225,10 +232,12 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
     seen_calls = {}        # tool-call signature -> count (stuck/loop detection, G4)
     denied_sigs = {}       # tool-call signature -> denial reason (denial-spin guard)
     loop_break = False
+    ran_code = False       # did run_bash actually execute? (verification gate)
+    verify_nudges = 0      # how many times we've pushed an unverified run to execute
     while True:
         # Loop guard: after too many tool rounds (or a detected stuck loop), drop tools
         # so the model MUST produce a final answer. Prevents weaker models spinning.
-        force_final = rounds >= MAX_TOOL_ROUNDS or loop_break
+        force_final = rounds >= round_cap or loop_break
         active_tools = None if force_final else (schemas or None)
         # Compact older turns if the history has grown large (root fix for #2).
         messages = _compact_messages(messages, budget=budget, emit=emit, label=label)
@@ -236,7 +245,10 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
             messages.append({"role": "user", "content": _MAX_STEPS_PROMPT})
             nudged = True
         try:
-            if stream:
+            # Stream ONLY when there are no tools on the request (the final answer). A
+            # tools= request always goes non-streamed: NIM/vLLM streaming tool-parsers can
+            # emit tool calls as raw text, which breaks the loop on weak models.
+            if stream and not active_tools:
                 try:
                     md, _ = stream_complete_tools(
                         chain[0], messages, tools=active_tools,
@@ -274,6 +286,19 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
 
         tool_calls = getattr(msg, "tool_calls", None)
         if not tool_calls:
+            # Verification gate (coding/data): the model may NOT finish by narrating results
+            # it never ran. If nothing has executed yet, push it to actually run + verify
+            # (up to 2 nudges) instead of accepting a plausible-but-fabricated answer.
+            if verify_run and not ran_code and not force_final and verify_nudges < 2:
+                verify_nudges += 1
+                _emit({"type": "retry", "agent": label,
+                       "reason": "must run & verify the code before finishing"})
+                messages.append({"role": "user", "content":
+                    "You have NOT executed anything yet. You have a working sandbox via the "
+                    "run_bash tool. Before finishing you MUST run the code and/or its tests "
+                    "with run_bash and report the REAL output (the exact command and what it "
+                    "printed). Do NOT report results you have not actually run."})
+                continue
             # #1: the model emitted raw tool-call markup as the answer — don't surface
             # it. Re-prompt once for a clean answer / proper call (OpenCode `invalid`).
             if _looks_like_raw_toolcall(msg.content) and not raw_repaired and not force_final:
@@ -292,6 +317,10 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
                 cleaned = _strip_toolcall_markup(out)
                 out = cleaned or ("(I couldn't format a clean answer this time — "
                                   "please try again.)")
+            # Never present unrun work as if it were verified.
+            if verify_run and not ran_code:
+                out = ("⚠️ UNVERIFIED — the code was NOT executed in this run, so any "
+                       "results below are unconfirmed and may be wrong.\n\n" + out)
             _emit({"type": "done", "agent": label, "text": out})
             return out
 
@@ -326,6 +355,11 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
                     denied_sigs[sig] = str(result)
                     loop_break = True
 
+            # Verification gate: run_bash that actually executed (any exit code) counts as
+            # "ran" — the critic judges correctness; this only proves it didn't fabricate.
+            if name == "run_bash" and str(result).startswith("exit="):
+                ran_code = True
+
             messages.append({
                 "role": "tool", "tool_call_id": tc.id, "content": str(result),
             })
@@ -348,8 +382,9 @@ def _run_one_tool(name, args, label, approve, emit):
     # validation can only reject, never bypass security.
     arg_err = toolbelt.validate_args(tool, args)
     if arg_err:
-        return (f"INVALID_ARGS for {name}: {arg_err}. Re-issue the call with arguments "
-                "that match the tool's schema.")
+        return (f"INVALID_ARGS for {name}: {arg_err}. Correct signature: "
+                f"{toolbelt.signature(tool)} (* = required). Re-issue the call with "
+                "arguments that match exactly.")
 
     decision = policy.evaluate(tool, args)
 
