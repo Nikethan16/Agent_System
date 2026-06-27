@@ -84,6 +84,19 @@ def _effective_tier(agent_tier, routed_tier) -> str:
 
 
 # ---- running an agent -------------------------------------------------------
+# Persistence overlay (Phase 3, OpenCode `beast.txt`-style): appended to EXECUTION-capable
+# agents (those granted run_bash) to counter the #1 weak/open-model failure after tool-calling
+# — bailing out early / claiming success without running anything. Frontier models don't need
+# it, but we only run open models, so it's applied to any run_bash-holding agent.
+_PERSIST_OVERLAY = (
+    "\n\nPERSISTENCE: Keep working until the task is genuinely DONE and VERIFIED — do not stop "
+    "early or hand back partial work. If you wrote or changed code you MUST run it (run_bash) "
+    "and confirm it works; when a command or test fails, read the error, fix it, and re-run "
+    "until it passes. Never say something works without having actually executed it. Prefer "
+    "making one concrete edit and running it over describing what you would do."
+)
+
+
 def run(agent_id, task, budget=None, emit=None, approve=None, context="",
         max_tokens=None, stream=False, task_type=None, skills=None, tier=None,
         use_skills=True, verify_run=False, max_rounds=None):
@@ -117,8 +130,9 @@ def run(agent_id, task, budget=None, emit=None, approve=None, context="",
     # Each agent runs under its OWN sub-budget (caps it locally; still counts
     # against the shared run budget so the global cap can't be bypassed).
     b = budget.child(max_usd=a.max_usd, max_iterations=a.max_iterations) if budget is not None else None
+    system = a.prompt + (_PERSIST_OVERLAY if "run_bash" in (a.tools or []) else "")
     return run_agent(
-        full, a.prompt, models[0], max_tokens=mt, budget=b, models=models,
+        full, system, models[0], max_tokens=mt, budget=b, models=models,
         label=a.id, emit=emit, allowed_tools=a.tools, approve=approve, stream=stream,
         verify_run=verify_run, max_rounds=max_rounds,
     )
