@@ -9,6 +9,7 @@ When the agent loop escalates a risky tool, this broker:
 The worker runs in a thread; we bridge to the async WebSocket with an Event.
 """
 import os
+import re
 import json
 import uuid
 import threading
@@ -73,11 +74,24 @@ def _manager_review(tool, args, task_context, budget):
             timeout=_MANAGER_REVIEW_TIMEOUT,
         )
         txt = (resp.choices[0].message.content or "").strip()
-        data = json.loads(txt[txt.find("{"): txt.rfind("}") + 1])
-        return bool(data.get("approve")), data.get("reason", "")
+        # Parse the JSON verdict if present. Cheap free-tier models often return an
+        # empty body or plain prose instead of JSON, so guard the parse and fall back
+        # to reading a plain yes/no BEFORE treating it as an infra failure — otherwise
+        # every empty completion becomes a spurious fail-closed DENY (which, for a
+        # require-human action, wrongly blocks the human from ever seeing the card).
+        if "{" in txt and "}" in txt:
+            data = json.loads(txt[txt.find("{"): txt.rfind("}") + 1])
+            return bool(data.get("approve")), data.get("reason", "")
+        low = txt.lower()
+        if low and re.search(r"\b(deny|denied|reject|refuse|block|unsafe|no)\b", low):
+            return False, txt[:80]
+        if low and re.search(r"\b(approve|approved|allow|yes|ok|safe|fine)\b", low):
+            return True, txt[:80]
+        raise ValueError("no parseable verdict")
     except Exception as e:
-        # Infra failure (timeout, rate-limit) — fail closed but flag as transient so
-        # the agent knows a retry won't change the outcome and stops spinning.
+        # Infra failure (timeout, rate-limit, empty/garbled body) — the manager did NOT
+        # actually judge the action. Flagged '[infra]' so the caller does NOT fail closed
+        # on a require-human action but falls through to the human (the real gate).
         return False, f"[infra] manager unavailable: {type(e).__name__}"
 
 
@@ -114,7 +128,12 @@ class ApprovalBroker:
             m_ok, m_reason = _manager_review(tool, args, self.task_context, self.budget)
             self.emit({"type": "manager_review", "tool": tool.name,
                        "approved": m_ok, "reason": m_reason})
-            if not m_ok:
+            # A GENUINE manager denial (it judged and said no) blocks. But an '[infra]'
+            # failure means it never judged — don't fail closed on that, or a flaky free
+            # model silently denies every escalated action and the human never gets asked.
+            # Every manager-invoking path below also asks the human, so fall through to it.
+            infra_fail = isinstance(m_reason, str) and m_reason.startswith("[infra]")
+            if not m_ok and not infra_fail:
                 return False, f"manager denied: {m_reason}"
         else:
             m_reason = "auto-approved (policy gate passed)"
