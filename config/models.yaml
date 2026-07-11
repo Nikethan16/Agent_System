@@ -108,7 +108,7 @@ routing:
   # Free floor keeps main's order: NIM GLM-5.1 (10/10), qwen3.5-122b (9/10), nemotron.
   coding:    ["deepseek/deepseek-v4-flash",
               "deepinfra/Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
-              "deepinfra/zai-org/GLM-4.6",
+              "deepinfra/zai-org/GLM-5.1",
               "nvidia_nim/z-ai/glm-5.1",
               "nvidia_nim/qwen/qwen3.5-122b-a10b",
               "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"]
@@ -117,18 +117,18 @@ routing:
   # curated builder fleet, not the generic cheapest-capable pool.
   frontend:  ["deepseek/deepseek-v4-flash",
               "deepinfra/Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
-              "deepinfra/zai-org/GLM-4.6",
+              "deepinfra/zai-org/GLM-5.1",
               "nvidia_nim/z-ai/glm-5.1",
               "nvidia_nim/qwen/qwen3.5-122b-a10b"]
   # REVIEW/QA: short outputs, high judgment, must reliably run_bash the tests -> GLM's
   # tool-calling leads. Both the critic (capability 'qa') and code-reviewer (capability
   # 'review') route here, so 'review' is defined as an alias of this chain.
-  qa:        ["deepinfra/zai-org/GLM-4.6",
+  qa:        ["deepinfra/zai-org/GLM-5.1",
               "deepseek/deepseek-v4-pro",
               "deepinfra/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
               "nvidia_nim/z-ai/glm-5.1",
               "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"]
-  review:    ["deepinfra/zai-org/GLM-4.6",
+  review:    ["deepinfra/zai-org/GLM-5.1",
               "deepseek/deepseek-v4-pro",
               "deepinfra/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
               "nvidia_nim/z-ai/glm-5.1",
@@ -146,7 +146,7 @@ routing:
               "nvidia_nim/z-ai/glm-5.1",
               "nvidia_nim/meta/llama-4-maverick-17b-128e-instruct"]
   writing:   ["deepseek/deepseek-v4-flash",
-              "deepinfra/zai-org/GLM-4.6",
+              "deepinfra/zai-org/GLM-5.1",
               "nvidia_nim/z-ai/glm-5.1"]
   classify:  ["gemini/gemini-2.5-flash-lite",
               "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b"]
@@ -234,6 +234,26 @@ catalog:
     cost: 9
     tier_hint: 3
     timeout_s: 90
+    good_for: [qa, review, coding, agentic, frontend, debugging, writing]
+  # GLM 5.1 / 5.2 — newer generations (DeepInfra hosts both). Catalogued so they're
+  # selectable for the A/B bake-off; the winner becomes the review/coding GLM primary.
+  - id: "deepinfra/zai-org/GLM-5.1"
+    provider: "deepinfra"
+    requires_env: "DEEPINFRA_API_KEY"
+    free: false
+    open_source: true
+    cost: 10
+    tier_hint: 3
+    timeout_s: 120
+    good_for: [qa, review, coding, agentic, frontend, debugging, writing]
+  - id: "deepinfra/zai-org/GLM-5.2"
+    provider: "deepinfra"
+    requires_env: "DEEPINFRA_API_KEY"
+    free: false
+    open_source: true
+    cost: 11
+    tier_hint: 3
+    timeout_s: 120
     good_for: [qa, review, coding, agentic, frontend, debugging, writing]
 
   # Research lead: first-class tool-caller (our benchmark: 10/10) at a low

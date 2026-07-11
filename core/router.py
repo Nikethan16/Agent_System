@@ -101,14 +101,15 @@ def _heuristic_route(task: str, last_err: Exception) -> dict:
     return {"tier": tier, "task_type": tt,
             "requires_web": tt == "research",
             "reason": f"heuristic fallback ({type(last_err).__name__})",
-            "routed_model": registry.model_for_tier(f"tier{tier}")}
+            "routed_model": registry.model_for_tier(f"tier{tier}", task_type=tt)}
 
 
 def classify(task: str, budget: Budget = None) -> dict:
     key = _cache_key(task)
     if key and key in _CACHE:
         cached = dict(_CACHE[key])
-        cached["routed_model"] = registry.model_for_tier(f"tier{cached['tier']}")
+        cached["routed_model"] = registry.model_for_tier(
+            f"tier{cached['tier']}", task_type=cached.get("task_type"))
         return cached
     tier_name = registry.classifier_tier()
     # Route through the classify fallback CHAIN (NVIDIA-first), so a down/rate-limited
@@ -136,7 +137,11 @@ def classify(task: str, budget: Budget = None) -> dict:
             data["task_type"] = data.pop("type", data.get("task_type", "unknown"))
             data.setdefault("requires_web", False)
             data.setdefault("reason", "")
-            data["routed_model"] = registry.model_for_tier(f"tier{data['tier']}")
+            # Show the model the AGENT will actually use (task-aware chain primary), not
+            # the tier-cheapest — otherwise the UI displays e.g. a free NIM model while a
+            # coding task really runs on the paid DeepSeek chain.
+            data["routed_model"] = registry.model_for_tier(
+                f"tier{data['tier']}", task_type=data.get("task_type"))
             if key:                                  # cache only successful classifications
                 if len(_CACHE) >= _CACHE_MAX:
                     _CACHE.pop(next(iter(_CACHE)))   # FIFO eviction
