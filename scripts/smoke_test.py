@@ -295,9 +295,14 @@ check("keypool penalize benches a key (cooldown)", any(r["cooldown_s"] > 0 for r
 _pool.disable(_k2)
 check("keypool disable removes a bad key", any(not r["enabled"] for r in _pool.report()))
 
-# model_chain: with a provider key present, routing picks the configured primary.
+# model_chain: routing picks the configured primary for the AVAILABLE fleet. We test the
+# FREE-fleet floor deterministically by isolating the paid keys (which, when present, lead
+# each chain by design) — so the check verifies the curated free order regardless of what's
+# in the developer's .env.
 import os as _os
 from core.registry import registry as _reg
+_PAID = ("DEEPSEEK_API_KEY", "DEEPINFRA_API_KEY", "ZAI_API_KEY", "GEMINI_API_KEY")
+_saved = {k: _os.environ.pop(k, None) for k in _PAID}
 _os.environ["NVIDIA_NIM_API_KEY"] = "smoke-nvidia-key"   # make NVIDIA models "available"
 try:
     _chain = _reg.model_chain("tier3", task_type="reasoning")
@@ -309,6 +314,9 @@ try:
     check("model_chain has no duplicates", len(_chain) == len(set(_chain)))
 finally:
     _os.environ.pop("NVIDIA_NIM_API_KEY", None)
+    for _k, _v in _saved.items():
+        if _v is not None:
+            _os.environ[_k] = _v
 
 # complete_chain: falls back to the next model when one fails (+ emits a fallback event).
 _seen, _fbev = [], []
@@ -340,6 +348,7 @@ from core import agents as _team4
 for _role in ("architect", "data-analyst", "code-reviewer", "fast-coder"):
     check(f"role registered + dispatcher-selectable: {_role}",
           _role in _team4.agents.agents and _role in [a.id for a in _team4.agents.catalog()])
+_saved2 = {k: _os.environ.pop(k, None) for k in _PAID}
 _os.environ["NVIDIA_NIM_API_KEY"] = "smoke-nvidia-key"
 try:
     check("routing: planning primary = nemotron-super",
@@ -348,6 +357,9 @@ try:
           _reg.model_chain("tier2", "data")[0] == "nvidia_nim/qwen/qwen3.5-122b-a10b")
 finally:
     _os.environ.pop("NVIDIA_NIM_API_KEY", None)
+    for _k, _v in _saved2.items():
+        if _v is not None:
+            _os.environ[_k] = _v
 
 # fleet management: UI-managed key store + editable routing overrides (Phase 5 backend)
 _testkey = "smoke-openrouter-key-abcdef123456"
@@ -356,9 +368,14 @@ check("keypool add_key: pool picks up a UI-added key",
       any(r["key"] == KP.mask(_testkey) for r in KP.get_pool("openrouter").report()))
 check("keypool remove_key: removes it again",
       KP.remove_key("openrouter", KP.mask(_testkey)) and not KP.get_pool("openrouter").keys)
-_reg.set_routing("smoke_tt", ["m-alpha", "m-beta"])
+# Use REAL catalog ids — set_routing now drops unknown ids so a UI edit can't save a
+# chain that would evaporate at model_chain() time.
+_rt_ids = ["nvidia_nim/z-ai/glm-5.1", "gemini/gemini-2.5-flash-lite"]
+_reg.set_routing("smoke_tt", _rt_ids)
 check("routing override persists + merges into routing()",
-      _reg.routing().get("smoke_tt") == ["m-alpha", "m-beta"])
+      _reg.routing().get("smoke_tt") == _rt_ids)
+_reg.reset_routing("smoke_tt")
+check("routing override reset reverts to default", "smoke_tt" not in _reg.routing())
 
 # ---- skills ----
 from core import skills as sk

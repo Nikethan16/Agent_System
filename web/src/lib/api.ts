@@ -81,6 +81,12 @@ export const api = {
   spend: () => GET("/api/spend"),
   spendOverview: () => GET("/api/spend/overview"),
   setTier: (tier: string, model: string) => POST("/api/models/tier", { tier, model }),
+  // Per-use-case routing: which ordered model chain serves each task type (editable,
+  // persisted to data/routing.json, survives deploys).
+  getRouting: () => GET("/api/models/routing"),
+  setRouting: (task_type: string, chain: string[]) =>
+    POST("/api/models/routing", { task_type, chain }),
+  resetRouting: (task_type: string) => DELETE(`/api/models/routing/${encodeURIComponent(task_type)}`),
   scout: () => POST("/api/models/scout", {}),
   applyCatalog: (models: any[]) => POST("/api/models/catalog", { models }),
 

@@ -33,6 +33,49 @@ def set_tier(u: TierUpdate):
     return {"ok": True, "tier": u.tier, "config": updated}
 
 
+# ---- per-use-case routing: choose which model(s) serve each task type, from the UI ----
+# Persisted to data/routing.json (merged over models.yaml, survives deploys) so model
+# selection is fully customizable with NO code/YAML edit. Only catalog-known ids are kept.
+@router.get("/models/routing")
+def get_routing():
+    """Every routable use case with its EFFECTIVE chain, the yaml DEFAULT, whether it's
+    been customized, and the catalog to choose from. task_types come from both the yaml
+    routing keys and any override, so the editor lists them all."""
+    base = registry.base_routing()
+    overrides = registry.routing_overrides()
+    effective = registry.routing()
+    task_types = sorted(set(base) | set(overrides))
+    return {
+        "routing": {t: effective.get(t, []) for t in task_types},
+        "defaults": base,
+        "customized": sorted(overrides.keys()),
+        "catalog": [{"id": m.get("id"), "free": bool(m.get("free")),
+                     "tier_hint": m.get("tier_hint", 2),
+                     "requires_env": m.get("requires_env"),
+                     "available": registry._available(m),
+                     "good_for": m.get("good_for", [])}
+                    for m in registry.catalog()],
+    }
+
+
+class RoutingUpdate(BaseModel):
+    task_type: str
+    chain: list[str]
+
+
+@router.post("/models/routing")
+def set_routing(u: RoutingUpdate):
+    routing = registry.set_routing(u.task_type, u.chain)
+    return {"ok": True, "task_type": u.task_type, "routing": routing}
+
+
+@router.delete("/models/routing/{task_type}")
+def reset_routing(task_type: str):
+    """Revert a use case to its models.yaml default."""
+    routing = registry.reset_routing(task_type)
+    return {"ok": True, "task_type": task_type, "routing": routing}
+
+
 # ---- model-scout: research cheap/free models and propose catalog entries ----
 @router.post("/models/scout")
 def scout():
