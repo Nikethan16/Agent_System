@@ -85,8 +85,8 @@ def test_paid_keys_activate_finalized_plan(reg, monkeypatch):
     assert r.model_chain("tier3", task_type="frontend")[0] == "deepseek/deepseek-v4-flash"
     assert r.model_chain("tier2", task_type="qa")[0] == "deepinfra/zai-org/GLM-4.6"
     assert r.model_chain("tier2", task_type="review")[0] == "deepinfra/zai-org/GLM-4.6"
-    assert r.model_chain("tier2", task_type="research")[0] == "deepinfra/nvidia/nemotron-3-super-120b"
-    assert r.model_chain("tier2", task_type="data")[0] == "deepinfra/qwen/qwen3-coder-480b"
+    assert r.model_chain("tier2", task_type="research")[0] == "deepinfra/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B"
+    assert r.model_chain("tier2", task_type="data")[0] == "deepinfra/Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
     assert r.model_chain("tier1", task_type="chat")[0] == "deepseek/deepseek-v4-flash"
     # Router stays on the free reliable classifier even with paid keys.
     assert r.model_chain("tier1", task_type="classify")[0] == "gemini/gemini-2.5-flash-lite"
