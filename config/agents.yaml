@@ -42,7 +42,7 @@ agents:
   - id: coder
     label: Coder
     tier: tier2
-    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, run_bash, see_image]
+    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, diagnostics, run_bash, see_image]
     capabilities: [coding, testing, debugging, scripts]
     when_to_use: "Write, run, or debug code; create project files; run tests/commands."
     prompt: |
@@ -67,7 +67,7 @@ agents:
   - id: frontend
     label: Frontend Engineer
     tier: tier2
-    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, run_bash, see_image]
+    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, diagnostics, run_bash, see_image]
     capabilities: [frontend, html, css, javascript, react, ui, design]
     when_to_use: "Build web UI — HTML/CSS/JS or React — that can be previewed."
     prompt: |
@@ -151,7 +151,7 @@ agents:
   - id: data-analyst
     label: Data Analyst
     tier: tier2
-    tools: [read_file, parse_document, write_file, edit_file, apply_patch, list_files, grep, glob, run_bash]
+    tools: [read_file, parse_document, write_file, edit_file, apply_patch, list_files, grep, glob, diagnostics, run_bash]
     capabilities: [data, analysis, math, finance, csv]
     when_to_use: "Analyze data / CSV / spreadsheets, compute metrics, or model scenarios with Python + pandas."
     prompt: |
@@ -180,7 +180,7 @@ agents:
   - id: fast-coder
     label: Fast Coder
     tier: tier2
-    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, run_bash, see_image]
+    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, diagnostics, run_bash, see_image]
     capabilities: [coding, scripts, quickfix]
     when_to_use: "Small, well-scoped code changes or quick scripts/one-liners where speed matters more than depth."
     prompt: |
@@ -223,7 +223,7 @@ agents:
   - id: repo-engineer
     label: Repo Engineer
     tier: tier2
-    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, run_bash,
+    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, diagnostics, run_bash,
             git_clone, git_status, git_diff, git_log, git_checkout_branch,
             git_commit, git_push, create_pull_request]
     capabilities: [git, github, repository, coding, pr, patch]

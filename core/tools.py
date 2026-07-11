@@ -261,31 +261,6 @@ def project_notes_block(max_chars: int = 4000) -> str:
 # subprocess, NO network, so core stays offline + sandboxed. Richer language checks
 # (tsc/node/ruff) belong in the Docker run_bash loop, not here. Toggle with
 # AGENT_POSTEDIT_VERIFY=0.
-def _pyflakes_warning(path: str, content: str) -> str:
-    """Optional deeper Python diagnostics via pyflakes (pure-Python, IN-PROCESS — no
-    subprocess, so core stays offline). Catches the classic LLM bugs a syntax check
-    can't: undefined names, unused/duplicate imports. Silently skipped if pyflakes
-    isn't installed."""
-    try:
-        from pyflakes.api import check as _pyf_check
-        from pyflakes.reporter import Reporter as _PyfReporter
-    except ImportError:
-        return ""
-    import io
-    out, err = io.StringIO(), io.StringIO()
-    try:
-        n = _pyf_check(content, os.path.basename(path), _PyfReporter(out, err))
-    except Exception:
-        return ""
-    if not n:
-        return ""
-    issues = [ln for ln in out.getvalue().splitlines() if ln.strip()][:3]
-    if not issues:
-        return ""
-    return ("\n\n⚠️ DIAGNOSTICS: " + " | ".join(issues) +
-            ". Likely bugs (undefined names / bad imports) — fix them before continuing.")
-
-
 # ---- formatter-on-edit (opt-in) ---------------------------------------------
 # After a write/edit, optionally auto-format the file so the agent's output matches the
 # project's style (OpenCode-parity). IN-PROCESS + gated: only runs when AGENT_FORMAT_ON_EDIT
@@ -316,7 +291,10 @@ def _postedit_warning(path: str, content: str) -> str:
     try:
         if ext == ".py":
             compile(content, os.path.basename(path), "exec")
-            return _pyflakes_warning(path, content)   # syntax OK -> deeper lint (optional)
+            # syntax OK -> deeper diagnostics via the real analyser (ruff) when present,
+            # else the in-process pyflakes fallback. Lazy import: lint imports tools.
+            from . import lint
+            return lint.postedit_python(path, content)
         elif ext == ".json":
             if content.strip():
                 import json as _json
@@ -854,6 +832,20 @@ def glob(pattern: str, path: str = ".") -> str:
     if truncated:
         out += f"\n... (capped at {_SEARCH_CAP} — narrow the pattern)"
     return out
+
+
+def diagnostics(path: str = ".") -> str:
+    """Static diagnostics for a workspace file or directory (real analyser when present,
+    pyflakes fallback otherwise). Never executes the code — it's an LSP-style check."""
+    from . import lint          # lazy: lint imports tools
+    try:
+        _safe(path)             # workspace containment (raises on escape)
+        diags = lint.diagnose_path(path)
+    except ValueError as e:
+        return f"ERROR: {e}"
+    except Exception as e:
+        return f"ERROR running diagnostics: {type(e).__name__}: {e}"
+    return lint.format_diagnostics(path, diags)
 
 
 # Cap each bash stream so verbose output (pip install, pytest -v) can't balloon the
