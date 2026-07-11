@@ -11,6 +11,7 @@ sqlmodel>=0.0.14,<0.1
 httpx>=0.27,<1       # used by the test client (scripts/smoke_test.py)
 python-multipart>=0.0.9,<0.1   # file uploads (attachments)
 pypdf>=4.0,<6        # extract text from attached PDFs
+pyflakes>=3.0,<4     # post-edit diagnostics: in-process lint (undefined names) after write/edit
 
 # --- Document skills (pdf/docx/xlsx/pptx) -----------------------------------
 # Pure-Python libraries the Anthropic document skills use to CREATE/EDIT real

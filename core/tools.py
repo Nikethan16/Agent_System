@@ -206,6 +206,31 @@ def parse_document(path: str) -> str:
     return out
 
 
+# ---- project notes (OpenCode-style AGENTS.md awareness) --------------------------
+# If the workspace carries project rule files (AGENTS.md, the emerging cross-tool
+# convention, or CLAUDE.md), agents should FOLLOW them — build/test commands, style
+# rules, gotchas — instead of rediscovering them each run. Read-only, workspace-
+# confined, size-capped; returns "" when absent so injection is zero-cost.
+_PROJECT_NOTE_FILES = ("AGENTS.md", "CLAUDE.md")
+
+
+def project_notes(max_chars: int = 4000) -> str:
+    for name in _PROJECT_NOTE_FILES:
+        p = os.path.join(current_workspace(), name)
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, encoding="utf-8", errors="replace") as f:
+                txt = f.read().strip()
+        except OSError:
+            continue
+        if txt:
+            if len(txt) > max_chars:
+                txt = txt[:max_chars] + "\n… (truncated — read the full file if you need more)"
+            return f"[{name}]\n{txt}"
+    return ""
+
+
 # ---- post-edit syntax verifier (phase 2 — the realistic, SAFE stand-in for LSP) ---
 # After a write/edit, do an IN-PROCESS syntax check of common code/config files and
 # surface a warning so a cheap model fixes a broken file immediately instead of
@@ -213,6 +238,31 @@ def parse_document(path: str) -> str:
 # subprocess, NO network, so core stays offline + sandboxed. Richer language checks
 # (tsc/node/ruff) belong in the Docker run_bash loop, not here. Toggle with
 # AGENT_POSTEDIT_VERIFY=0.
+def _pyflakes_warning(path: str, content: str) -> str:
+    """Optional deeper Python diagnostics via pyflakes (pure-Python, IN-PROCESS — no
+    subprocess, so core stays offline). Catches the classic LLM bugs a syntax check
+    can't: undefined names, unused/duplicate imports. Silently skipped if pyflakes
+    isn't installed."""
+    try:
+        from pyflakes.api import check as _pyf_check
+        from pyflakes.reporter import Reporter as _PyfReporter
+    except ImportError:
+        return ""
+    import io
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        n = _pyf_check(content, os.path.basename(path), _PyfReporter(out, err))
+    except Exception:
+        return ""
+    if not n:
+        return ""
+    issues = [ln for ln in out.getvalue().splitlines() if ln.strip()][:3]
+    if not issues:
+        return ""
+    return ("\n\n⚠️ DIAGNOSTICS: " + " | ".join(issues) +
+            ". Likely bugs (undefined names / bad imports) — fix them before continuing.")
+
+
 def _postedit_warning(path: str, content: str) -> str:
     if os.environ.get("AGENT_POSTEDIT_VERIFY", "").strip().lower() in ("0", "false", "no"):
         return ""
@@ -220,10 +270,14 @@ def _postedit_warning(path: str, content: str) -> str:
     try:
         if ext == ".py":
             compile(content, os.path.basename(path), "exec")
+            return _pyflakes_warning(path, content)   # syntax OK -> deeper lint (optional)
         elif ext == ".json":
             if content.strip():
                 import json as _json
                 _json.loads(content)
+        elif ext == ".toml":
+            import tomllib as _toml
+            _toml.loads(content)
         elif ext in (".yaml", ".yml"):
             import yaml as _yaml
             _yaml.safe_load(content)

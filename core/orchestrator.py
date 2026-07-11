@@ -32,7 +32,7 @@ from . import skills as skill_lib
 from . import playbooks as playbook_lib
 from .agent import _run_one_tool, _looks_like_raw_toolcall, _compact_messages
 from .blackboard import Blackboard
-from .tools import current_workspace, using_workspace
+from .tools import current_workspace, using_workspace, project_notes
 
 MAX_MASTER_ROUNDS = 16     # hard cap on lead loop iterations
 MAX_DELEGATIONS = 10       # hard cap on subagent spawns per run (depth-limited too)
@@ -299,6 +299,12 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     menu = "\n".join(f"- {a.id}: {a.when_to_use}" for a in team.agents.catalog())
     skill_menu = "\n".join(f"- {s['name']}: {s['description'][:140]}" for s in skill_lib.catalog()) or "(none)"
     system = MASTER_SYS.replace("{menu}", menu).replace("{skills}", skill_menu)
+    # Project rules (AGENTS.md / CLAUDE.md in the workspace): the lead follows the
+    # project's own commands/conventions and passes the relevant ones into delegations.
+    _notes = project_notes()
+    if _notes:
+        system += ("\n\nPROJECT NOTES (rules from the project itself — follow them and "
+                   "include the relevant ones in your delegations):\n" + _notes)
     if acceptance:
         system += ("\n\nACCEPTANCE CRITERIA (the user's definition of done — the result MUST "
                    "satisfy ALL of these; have the critic verify them):\n" + acceptance)

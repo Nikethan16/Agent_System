@@ -15,6 +15,7 @@ import yaml
 from .registry import registry as model_registry
 from .agent import run_agent
 from .llm import complete_chain, Budget
+from .tools import project_notes
 from . import skills as skill_lib
 
 _PATH = os.environ.get(
@@ -122,6 +123,15 @@ def run(agent_id, task, budget=None, emit=None, approve=None, context="",
             emit({"type": "skill", "agent": a.id, "skills": [s.name for s in chosen]})
 
     extra = []
+    # Project rules (AGENTS.md / CLAUDE.md in the workspace, OpenCode-style): agents
+    # follow the project's own build/test commands and conventions instead of
+    # rediscovering them each run. Tool-less chat agents skip it (no files to obey);
+    # empty workspace = empty string = zero cost.
+    if a.tools:
+        notes = project_notes()
+        if notes:
+            extra.append("--- PROJECT NOTES (rules from the project itself — follow them) ---\n"
+                         + notes)
     if skctx:
         extra.append(skctx)
     if context:
