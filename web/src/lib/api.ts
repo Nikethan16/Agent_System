@@ -68,7 +68,16 @@ export const api = {
 
   models: () => GET("/api/models"),
   agents: () => GET("/api/agents"),
-  skills: () => GET("/api/skills"),
+  // Skills Hub: list local skills (with enabled/source), the allowlisted sources, and
+  // sync/enable/disable controls. Synced skills arrive disabled (review gate).
+  skills: () => GET("/api/skills").then((r: any) => r?.skills || []),
+  skillSources: () => GET("/api/skills/sources").then((r: any) => r?.sources || []),
+  skillsAvailable: (source: string) =>
+    GET(`/api/skills/available?source=${encodeURIComponent(source)}`).then((r: any) => r?.available || []),
+  skillView: (name: string) => GET(`/api/skills/${encodeURIComponent(name)}`),
+  skillSync: (source: string, name: string) => POST("/api/skills/sync", { source, name }),
+  skillEnable: (name: string) => POST(`/api/skills/${encodeURIComponent(name)}/enable`, {}),
+  skillDisable: (name: string) => POST(`/api/skills/${encodeURIComponent(name)}/disable`, {}),
   spend: () => GET("/api/spend"),
   spendOverview: () => GET("/api/spend/overview"),
   setTier: (tier: string, model: string) => POST("/api/models/tier", { tier, model }),

@@ -1,0 +1,26 @@
+# ============================================================================
+#  SKILL SOURCES — the ALLOWLIST the Skills Hub may sync skills from.
+# ============================================================================
+#  ONLY repos listed here can be fetched (core/skill_sync.py refuses anything
+#  else) — a hard boundary against pulling arbitrary code off the internet.
+#  Synced skills land DISABLED and must be reviewed + enabled by a human in the
+#  Skills tab before they can influence any task (a skill body is injected as
+#  agent guidance, so review-before-enable is the security gate).
+#
+#  Each source:
+#    name   : short label shown in the UI
+#    repo   : "owner/repo" on GitHub
+#    branch : the branch/ref to fetch from
+#    path   : subdirectory under which skill folders live ("" = repo root)
+# ============================================================================
+sources:
+  - name: anthropic-skills
+    repo: anthropics/skills
+    branch: main
+    path: ""
+
+  # Add your own curated sources here, e.g.:
+  # - name: my-team-skills
+  #   repo: myorg/agent-skills
+  #   branch: main
+  #   path: skills

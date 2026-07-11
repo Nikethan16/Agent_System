@@ -7,7 +7,6 @@ from pydantic import BaseModel
 from core.registry import registry
 from core.agents import agents as agent_registry
 from core import agents as team
-from core import skills as core_skills
 from core.llm import Budget
 
 router = APIRouter(prefix="/api", tags=["models"])
@@ -66,11 +65,6 @@ def apply_catalog(body: CatalogIn):
 @router.delete("/models/catalog/{model_id:path}")
 def delete_catalog(model_id: str):
     return {"ok": True, "catalog": registry.remove_from_catalog(model_id)}
-
-
-@router.get("/skills")
-def get_skills():
-    return core_skills.catalog()
 
 
 @router.get("/agents")
