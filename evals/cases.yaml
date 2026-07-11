@@ -75,3 +75,57 @@ cases:
     graders:
       - { type: contains, all: ["108"] }
       - { type: contains, any: ["18", "average", "mean", "avg"] }
+
+  # ---- Harder build/tool cases (added 2026-07-11 for the model/prompt A/B) ----
+  # These exercise the tool-critical paths where the paid fleet is meant to shine:
+  # multi-file build + real test execution, bug-fix-and-verify, and compute-with-code.
+  # A weaker planner/prompt shows up here as a failing bash_check, not a vibe.
+
+  - id: build-cli-with-tests
+    task: >
+      In the workspace build a tiny CLI calculator: calc.py exposes add, sub, mul,
+      div functions and a main() that reads "<a> <op> <b>" from argv and prints the
+      result. Also write test_calc.py — a pytest suite covering all four ops plus
+      division-by-zero raising ValueError. Run the tests with pytest and make sure
+      they all pass; fix anything that fails.
+    budget: { max_usd: 0.80, max_iterations: 22 }
+    expect_tier: 3
+    graders:
+      - { type: file_exists, path: calc.py }
+      - { type: file_exists, path: test_calc.py }
+      - { type: file_contains, path: calc.py, all: ["def add", "def div"] }
+      - { type: bash_check, command: "python -m pytest test_calc.py -q", expect_exit: 0 }
+
+  - id: fix-broken-function
+    task: >
+      A file buggy.py in the workspace defines factorial(n) but returns the wrong
+      value for n = 0 (it returns 0; it should return 1). Read the file, fix the
+      bug with a precise edit, and verify by running
+      `python -c "import buggy; assert buggy.factorial(0)==1 and buggy.factorial(5)==120; print('ok')"`.
+    budget: { max_usd: 0.60, max_iterations: 16 }
+    expect_tier: 3
+    setup:
+      files:
+        buggy.py: |
+          def factorial(n):
+              if n == 0:
+                  return 0
+              result = 1
+              for i in range(1, n + 1):
+                  result *= i
+              return result
+    graders:
+      - { type: file_contains, path: buggy.py, all: ["return 1"] }
+      - { type: bash_check, command: "python -c \"import buggy; assert buggy.factorial(0)==1 and buggy.factorial(5)==120; print('ok')\"", expect_exit: 0 }
+
+  - id: compute-with-code
+    task: >
+      Using the workspace, compute the standard deviation (population) of the
+      numbers 2, 4, 4, 4, 5, 5, 7, 9 by writing and RUNNING a short Python script,
+      then state the numeric result. Do not estimate — run code and report what it
+      printed.
+    budget: { max_usd: 0.60, max_iterations: 14 }
+    expect_tier: 3
+    graders:
+      - { type: contains, any: ["2.0", "2.00", " 2 "] }
+      - { type: not_contains, all: ["as an ai", "i cannot", "unverified"] }

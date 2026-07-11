@@ -32,7 +32,7 @@ from . import skills as skill_lib
 from . import playbooks as playbook_lib
 from .agent import _run_one_tool, _looks_like_raw_toolcall, _compact_messages
 from .blackboard import Blackboard
-from .tools import current_workspace, using_workspace
+from .tools import current_workspace, using_workspace, project_notes_block
 
 MAX_MASTER_ROUNDS = 16     # hard cap on lead loop iterations
 MAX_DELEGATIONS = 10       # hard cap on subagent spawns per run (depth-limited too)
@@ -151,8 +151,11 @@ MASTER_SYS = (
     "Write SELF-CONTAINED delegations: a specialist sees ONLY your instruction plus shared "
     "results — never this conversation. Every instruction MUST state (a) the exact "
     "deliverable, (b) the inputs/files to use, (c) key constraints/requirements, and (d) the "
-    "acceptance check. A vague one-line delegation produces vague work. Keep the plan tight "
-    "and finish.\n\n"
+    "acceptance check. A vague one-line delegation produces vague work. Once you have "
+    "delegated a step, do NOT redo that work yourself — build on the result. Keep the plan "
+    "tight and finish: ending with steps still unchecked is a failure, and if you say you "
+    "are about to do something, do it in this same turn rather than ending on an "
+    "announcement.\n\n"
     "When a step matches a SKILL below, pass its name in delegate's `skill` field so the "
     "specialist loads that expertise (e.g. a Word doc → 'docx', a spreadsheet → 'xlsx', "
     "slides → 'pptx', a PDF → 'pdf').\n\n"
@@ -299,6 +302,13 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     menu = "\n".join(f"- {a.id}: {a.when_to_use}" for a in team.agents.catalog())
     skill_menu = "\n".join(f"- {s['name']}: {s['description'][:140]}" for s in skill_lib.catalog()) or "(none)"
     system = MASTER_SYS.replace("{menu}", menu).replace("{skills}", skill_menu)
+    # Project rules (AGENTS.md / CLAUDE.md in the workspace): the lead follows the
+    # project's own commands/conventions and passes the relevant ones into delegations.
+    # Wrapped as untrusted DATA (the file is workspace-writable / may come from a cloned
+    # repo) — benign conventions may be followed, but it can't override task or safety.
+    _notes = project_notes_block()
+    if _notes:
+        system += "\n\n" + _notes
     if acceptance:
         system += ("\n\nACCEPTANCE CRITERIA (the user's definition of done — the result MUST "
                    "satisfy ALL of these; have the critic verify them):\n" + acceptance)
@@ -719,6 +729,17 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     if task_type in _TIER3_SINGLE_AGENT_TYPES:
         agent_id, reason = team.select_agent(task, budget=budget)
         agent = team.agents.get(agent_id)
+        # The build agent MUST be able to build AND verify (edit + execute). The
+        # dispatcher sometimes picks a non-building specialist for a big build (live
+        # test 2026-07: `architect` — no edit_file/run_bash — flailed for 18 writes and
+        # finished UNVERIFIED). Keep a capable pick (coder/frontend/fast-coder); anything
+        # that can't edit+run is repinned to `coder`.
+        _need = {"edit_file", "run_bash"}
+        if not (agent and _need.issubset(set(agent.tools or []))):
+            fallback = team.agents.get("coder")
+            if fallback and _need.issubset(set(fallback.tools or [])):
+                agent_id, reason = "coder", f"repinned: {agent_id} can't build+verify"
+                agent = fallback
         _emit({"type": "assign", "agent": agent_id, "label": getattr(agent, "label", agent_id),
                "model": registry.model_for_tier(getattr(agent, "tier", "tier3"), task_type=task_type),
                "reason": reason})

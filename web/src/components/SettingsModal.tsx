@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useStore } from "../lib/store";
 import { getAuthToken, setAuthToken } from "../lib/api";
 import ModelRail from "./ModelRail";
+import RoutingEditor from "./RoutingEditor";
 import MemoryPanel from "./MemoryPanel";
 import FleetPanel from "./FleetPanel";
 import HealthPanel from "./HealthPanel";
@@ -21,6 +22,7 @@ const TABS = [
 // "Models & keys" gathers everything model-related (was 3 separate tabs).
 const MODEL_SUBS = [
   { id: "tiers", label: "Tiers" },
+  { id: "routing", label: "Routing" },
   { id: "keys", label: "Keys & fleet" },
   { id: "health", label: "Health" },
 ];
@@ -143,6 +145,7 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
                     <ModelRail />
                   </div>
                 )}
+                {modelSub === "routing" && <RoutingEditor />}
                 {modelSub === "keys" && <FleetPanel />}
                 {modelSub === "health" && <HealthPanel />}
               </div>

@@ -198,15 +198,36 @@ class ModelRegistry:
         return base
 
     def set_routing(self, task_type: str, chain: list):
-        """Persist a UI-edited fallback chain for a task_type (override file)."""
+        """Persist a UI-edited fallback chain for a task_type (override file). Only
+        catalog-known model ids are kept, so the UI can't save a chain that would
+        silently evaporate at model_chain() time."""
         if not isinstance(chain, list):
             raise ValueError("chain must be a list of model ids")
+        known = {m.get("id") for m in self.catalog()}
+        clean = [str(m) for m in chain if str(m) in known]
         with self._lock:
-            self._routing_override[task_type] = [str(m) for m in chain if m]
+            self._routing_override[task_type] = clean
             os.makedirs(os.path.dirname(ROUTING_PATH), exist_ok=True)
             with open(ROUTING_PATH, "w", encoding="utf-8") as f:
                 json.dump(self._routing_override, f)
         return self.routing()
+
+    def reset_routing(self, task_type: str):
+        """Drop the UI override for a task_type -> revert to the models.yaml default."""
+        with self._lock:
+            self._routing_override.pop(task_type, None)
+            os.makedirs(os.path.dirname(ROUTING_PATH), exist_ok=True)
+            with open(ROUTING_PATH, "w", encoding="utf-8") as f:
+                json.dump(self._routing_override, f)
+        return self.routing()
+
+    def base_routing(self) -> dict:
+        """The models.yaml routing (NO overrides) — the 'default' the UI resets to."""
+        return dict(self.cfg.get("routing") or {})
+
+    def routing_overrides(self) -> dict:
+        """Which task_types currently have a UI override (for the 'customized' badge)."""
+        return dict(self._routing_override or {})
 
     def _by_id(self, mid: str):
         for m in self.catalog():

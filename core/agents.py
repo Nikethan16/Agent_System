@@ -15,6 +15,7 @@ import yaml
 from .registry import registry as model_registry
 from .agent import run_agent
 from .llm import complete_chain, Budget
+from .tools import project_notes_block
 from . import skills as skill_lib
 
 _PATH = os.environ.get(
@@ -84,17 +85,48 @@ def _effective_tier(agent_tier, routed_tier) -> str:
 
 
 # ---- running an agent -------------------------------------------------------
-# Persistence overlay (Phase 3, OpenCode `beast.txt`-style): appended to EXECUTION-capable
-# agents (those granted run_bash) to counter the #1 weak/open-model failure after tool-calling
-# — bailing out early / claiming success without running anything. Frontier models don't need
-# it, but we only run open models, so it's applied to any run_bash-holding agent.
-_PERSIST_OVERLAY = (
+# Behavior overlays (patterns ported from OpenCode's MIT-licensed prompts — adapted
+# wording, tuned for open models; attribution in THIRD_PARTY.md). Composed onto an
+# agent's YAML prompt by capability, so the role prompt stays declarative and the
+# hard-won behavioral rules live in ONE place:
+#   _EDIT_OVERLAY  -> any agent that can write/edit files
+#   _EXEC_OVERLAY  -> any agent that can execute (run_bash)
+# Each rule targets a NAMED open-model failure mode (the OpenCode research, 2026-07):
+# answering with code blocks instead of tool calls, phantom imports, drive-by
+# rewrites, ending the turn on an announcement, and claiming success untested.
+_EDIT_OVERLAY = (
+    "\n\nFILE RULES: Code that only appears in your reply is NOT saved and has no "
+    "effect — every file change must go through write_file/edit_file. If a request "
+    "could be read as either a question or a job to do, treat it as a job and use "
+    "your tools. Make the smallest correct change that achieves the goal — no "
+    "drive-by refactors or unrequested rewrites. Never assume a library is "
+    "available, even a famous one: before importing it, confirm the project already "
+    "uses it (dependency file or neighboring imports). Read a file before you edit "
+    "it. Debug to the root cause, not the symptom — never patch around an error you "
+    "don't understand; if a result surprises you, revise your assumptions before "
+    "editing more code."
+)
+_EXEC_OVERLAY = (
     "\n\nPERSISTENCE: Keep working until the task is genuinely DONE and VERIFIED — do not stop "
     "early or hand back partial work. If you wrote or changed code you MUST run it (run_bash) "
     "and confirm it works; when a command or test fails, read the error, fix it, and re-run "
     "until it passes. Never say something works without having actually executed it. Prefer "
-    "making one concrete edit and running it over describing what you would do."
+    "making one concrete edit and running it over describing what you would do. "
+    "The single most common failure on tasks like yours is declaring done without rigorous "
+    "testing — assume your first version has a bug until a real run proves otherwise. If you "
+    "say you are about to run a command or take a step, actually do it in this same turn; "
+    "never end your turn on an announcement."
 )
+
+
+def _overlays_for(a) -> str:
+    tools = set(a.tools or [])
+    out = ""
+    if tools & {"write_file", "edit_file"}:
+        out += _EDIT_OVERLAY
+    if "run_bash" in tools:
+        out += _EXEC_OVERLAY
+    return out
 
 
 def run(agent_id, task, budget=None, emit=None, approve=None, context="",
@@ -122,6 +154,14 @@ def run(agent_id, task, budget=None, emit=None, approve=None, context="",
             emit({"type": "skill", "agent": a.id, "skills": [s.name for s in chosen]})
 
     extra = []
+    # Project rules (AGENTS.md / CLAUDE.md in the workspace, OpenCode-style): agents
+    # follow the project's own build/test commands and conventions instead of
+    # rediscovering them each run. Tool-less chat agents skip it (no files to obey);
+    # empty workspace = empty string = zero cost.
+    if a.tools:
+        notes = project_notes_block()
+        if notes:
+            extra.append(notes)
     if skctx:
         extra.append(skctx)
     if context:
@@ -130,7 +170,7 @@ def run(agent_id, task, budget=None, emit=None, approve=None, context="",
     # Each agent runs under its OWN sub-budget (caps it locally; still counts
     # against the shared run budget so the global cap can't be bypassed).
     b = budget.child(max_usd=a.max_usd, max_iterations=a.max_iterations) if budget is not None else None
-    system = a.prompt + (_PERSIST_OVERLAY if "run_bash" in (a.tools or []) else "")
+    system = a.prompt + _overlays_for(a)
     return run_agent(
         full, system, models[0], max_tokens=mt, budget=b, models=models,
         label=a.id, emit=emit, allowed_tools=a.tools, approve=approve, stream=stream,

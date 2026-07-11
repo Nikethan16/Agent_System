@@ -4,7 +4,7 @@ import { downloadBlob } from "./util";
 
 export type Ev = any;
 export type FileChange = { path: string; status: string; added: number; removed: number };
-export type RunMeta = { durationMs?: number; tokens?: number; cost?: number; iterations?: number; files?: FileChange[] };
+export type RunMeta = { durationMs?: number; tokens?: number; cost?: number; iterations?: number; cachedTokens?: number; files?: FileChange[] };
 export type Msg = { id: string; role: "user" | "assistant"; content: string; events: Ev[]; pending?: boolean; live?: string; local?: boolean; meta?: RunMeta };
 
 // Stable client id for a message (used as the React key so edit/branch can't
@@ -709,7 +709,7 @@ function handleEvent(set: any, get: any, ev: Ev) {
       patchLastAssistant(set, get, (m) => ({
         ...m, live: "",
         meta: { durationMs, tokens: ev.tokens, cost: ev.cost, iterations: ev.iterations,
-                files: ev.files || [] },
+                cachedTokens: ev.cached_tokens, files: ev.files || [] },
       }));
       closeSocket();
       get().loadFiles().catch((e: any) => reportError(get, e));

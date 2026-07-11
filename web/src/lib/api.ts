@@ -68,10 +68,27 @@ export const api = {
 
   models: () => GET("/api/models"),
   agents: () => GET("/api/agents"),
-  skills: () => GET("/api/skills"),
+  // Skills Hub: list local skills (with enabled/source), the allowlisted sources, and
+  // sync/enable/disable controls. Synced skills arrive disabled (review gate).
+  skills: () => GET("/api/skills").then((r: any) => r?.skills || []),
+  skillSources: () => GET("/api/skills/sources").then((r: any) => r?.sources || []),
+  skillsAvailable: (source: string) =>
+    GET(`/api/skills/available?source=${encodeURIComponent(source)}`).then((r: any) => r?.available || []),
+  skillView: (name: string) => GET(`/api/skills/${encodeURIComponent(name)}`),
+  skillSync: (source: string, name: string) => POST("/api/skills/sync", { source, name }),
+  // enable is gated: a 'risky' skill returns 409 unless force=true (security override).
+  skillEnable: (name: string, force = false) =>
+    POST(`/api/skills/${encodeURIComponent(name)}/enable${force ? "?force=true" : ""}`, {}),
+  skillDisable: (name: string) => POST(`/api/skills/${encodeURIComponent(name)}/disable`, {}),
   spend: () => GET("/api/spend"),
   spendOverview: () => GET("/api/spend/overview"),
   setTier: (tier: string, model: string) => POST("/api/models/tier", { tier, model }),
+  // Per-use-case routing: which ordered model chain serves each task type (editable,
+  // persisted to data/routing.json, survives deploys).
+  getRouting: () => GET("/api/models/routing"),
+  setRouting: (task_type: string, chain: string[]) =>
+    POST("/api/models/routing", { task_type, chain }),
+  resetRouting: (task_type: string) => DELETE(`/api/models/routing/${encodeURIComponent(task_type)}`),
   scout: () => POST("/api/models/scout", {}),
   applyCatalog: (models: any[]) => POST("/api/models/catalog", { models }),
 

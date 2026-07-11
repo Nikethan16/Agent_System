@@ -13,7 +13,9 @@ into skills/. No code change needed.
 """
 import os
 import re
+import json
 import shutil
+import threading
 
 import yaml
 
@@ -21,6 +23,30 @@ from .tools import current_workspace
 
 _DIR = os.environ.get("SKILLS_DIR", os.path.join(os.path.dirname(__file__), "..", "skills"))
 _WORD = re.compile(r"[a-z0-9]+")
+
+# Enable/disable + provenance state for the Skills Hub. Skills synced from GitHub
+# (skill_sync) land DISABLED and must be reviewed + enabled by a human before they can
+# influence a task — a skill body is injected as agent guidance, so an unvetted one is
+# an instruction-injection vector. Bundled repo skills (no state entry) default ENABLED.
+_STATE_PATH = os.environ.get(
+    "SKILLS_STATE",
+    os.path.join(os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "..", "data")),
+                 "skills_state.json"))
+_state_lock = threading.Lock()
+
+
+def _load_state() -> dict:
+    try:
+        with open(_STATE_PATH, encoding="utf-8") as f:
+            return json.load(f) or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_state(state: dict):
+    os.makedirs(os.path.dirname(_STATE_PATH), exist_ok=True)
+    with open(_STATE_PATH, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
 
 
 class Skill:
@@ -31,6 +57,8 @@ class Skill:
         self.keywords = [str(k).lower() for k in (meta.get("keywords") or [])]
         self.agents = meta.get("agents") or []        # restrict to these agent ids (optional)
         self.body = body
+        self.enabled = True         # set from state in load()
+        self.source = meta.get("source", "")          # e.g. "github:anthropics/skills" if synced
 
 
 def _parse(skill_md: str) -> Skill:
@@ -51,15 +79,79 @@ _SKILLS: list = []
 def load():
     global _SKILLS
     out = []
+    state = _load_state()
     if os.path.isdir(_DIR):
         for name in sorted(os.listdir(_DIR)):
             md = os.path.join(_DIR, name, "SKILL.md")
             if os.path.isfile(md):
                 try:
-                    out.append(_parse(md))
+                    s = _parse(md)
+                    # Bundled skills (no state entry) default enabled; synced skills are
+                    # written into state as False on sync until a human reviews + enables.
+                    s.enabled = bool(state.get(s.name, True))
+                    # Provenance sidecar (written by skill_sync) marks a GitHub-synced skill.
+                    src_file = os.path.join(os.path.dirname(md), ".source")
+                    if os.path.isfile(src_file):
+                        try:
+                            with open(src_file, encoding="utf-8") as sf:
+                                s.source = sf.read().strip() or s.source
+                        except OSError:
+                            pass
+                    out.append(s)
                 except Exception:
                     pass
     _SKILLS = out
+    _scan_cache.clear()          # skills changed -> re-scan lazily
+    return out
+
+
+# Security-scan cache, keyed by skill path (skills change rarely; scanning the docx/pptx
+# schema bundles every list call would be wasteful). Cleared on load().
+_scan_cache: dict = {}
+
+
+def scan(name: str) -> dict:
+    """The security scan for a skill (cached). {risk: safe|caution|risky, findings, scanned}."""
+    from . import skill_scan
+    s = get(name)
+    if not s:
+        return {"risk": "safe", "findings": [], "scanned": 0}
+    if s.path not in _scan_cache:
+        _scan_cache[s.path] = skill_scan.scan_skill(s)
+    return _scan_cache[s.path]
+
+
+class SkillBlocked(Exception):
+    """Raised when enabling a skill the scan flags 'risky' without an override."""
+
+
+def set_enabled(name: str, enabled: bool, force: bool = False) -> bool:
+    """Enable/disable a skill (persisted). ENABLING a skill the scanner flags 'risky' is
+    BLOCKED unless force=True — the security gate on top of the review gate. Returns the
+    new state."""
+    if enabled and not force and scan(name).get("risk") == "risky":
+        raise SkillBlocked(
+            f"'{name}' has HIGH-risk findings — review them, then enable with override if intended.")
+    with _state_lock:
+        state = _load_state()
+        state[name] = bool(enabled)
+        _save_state(state)
+    for s in _SKILLS:
+        if s.name == name:
+            s.enabled = bool(enabled)
+    return bool(enabled)
+
+
+def all_catalog() -> list:
+    """Every skill (enabled AND disabled) with its state, source + security scan — for the
+    Skills tab. (catalog() below returns only ENABLED skills, for the lead's menu.)"""
+    out = []
+    for s in _SKILLS:
+        sc = scan(s.name)
+        out.append({"name": s.name, "description": s.description,
+                    "enabled": s.enabled, "source": s.source,
+                    "has_scripts": os.path.isdir(os.path.join(s.path, "scripts")),
+                    "risk": sc["risk"], "findings": len(sc["findings"])})
     return out
 
 
@@ -86,8 +178,9 @@ _SIGNALS = {
 
 
 def catalog() -> list:
-    """Always-cheap metadata (the progressive-disclosure layer 1)."""
-    return [{"name": s.name, "description": s.description} for s in _SKILLS]
+    """Always-cheap metadata (the progressive-disclosure layer 1) — ENABLED skills only,
+    so a synced-but-unreviewed skill is never offered to the lead."""
+    return [{"name": s.name, "description": s.description} for s in _SKILLS if s.enabled]
 
 
 def get(name: str):
@@ -95,6 +188,10 @@ def get(name: str):
         if s.name == name:
             return s
     return None
+
+
+def _enabled_skills() -> list:
+    return [s for s in _SKILLS if s.enabled]
 
 
 def _score(task_words: set, raw_task: str, s: Skill) -> int:
@@ -130,16 +227,20 @@ def select(task: str, agent=None, k: int = 2, min_score: int = 2, names=None,
     if agent is not None:
         tw |= set(str(c).lower() for c in getattr(agent, "capabilities", []) or [])
 
+    # Only ENABLED skills are selectable — a synced skill can't influence a task until a
+    # human has reviewed and enabled it (even if the lead explicitly names it).
+    pool = _enabled_skills()
+
     forced = []
     if names:
         wanted = {str(n).strip().lower() for n in names}
-        forced = [s for s in _SKILLS if s.name.lower() in wanted]
+        forced = [s for s in pool if s.name.lower() in wanted]
 
     if not auto:
         return forced[:max(k, len(forced))] if forced else []
 
     cands = []
-    for s in _SKILLS:
+    for s in pool:
         if s in forced:
             continue
         if s.agents and agent is not None and agent.id not in s.agents:

@@ -43,8 +43,12 @@ def test_normal_edit_not_flagged():
 
 # ---- 3.1 persistence overlay wiring ----------------------------------------
 def test_persistence_overlay_applies_to_execution_agents():
-    assert "PERSISTENCE" in team._PERSIST_OVERLAY
+    assert "PERSISTENCE" in team._EXEC_OVERLAY
     coder = team.agents.get("coder")
     assert "run_bash" in coder.tools          # so the overlay is appended for it
     doc = team.agents.get("doc")
     assert "run_bash" not in doc.tools        # tool-less writer doesn't get it
+    # Composition: coder (edit+exec tools) gets BOTH overlays; general gets none.
+    both = team._overlays_for(coder)
+    assert "FILE RULES" in both and "PERSISTENCE" in both
+    assert team._overlays_for(team.agents.get("general")) == ""

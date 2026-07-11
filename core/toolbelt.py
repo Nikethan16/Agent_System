@@ -151,7 +151,7 @@ def _obj(props, required=None):
 
 # ---- built-in OFFLINE sandboxed tools (file/shell) --------------------------
 from .tools import (read_file, write_file, edit_file, list_files, run_bash,  # noqa: E402
-                    parse_document, grep, glob)
+                    parse_document, grep, glob, apply_patch)
 
 register_fn(
     "read_file", lambda path, offset=1, limit=None: read_file(path, offset, limit),
@@ -208,6 +208,17 @@ register_fn(
     "Make a precise edit to an EXISTING file by replacing an exact snippet. Prefer this "
     "over write_file for changes so you don't rewrite (and risk breaking) the whole file. "
     "Read the file first to copy the exact old_string.", RISK_WRITE,
+)
+register_fn(
+    "apply_patch", lambda patch: apply_patch(patch),
+    _obj({"patch": {"type": "string",
+                    "description": "a unified diff (git-style `diff -u`): '--- a/path', "
+                                   "'+++ b/path', '@@' hunks with ' '/'-'/'+' lines. Can touch "
+                                   "multiple files."}}, ["patch"]),
+    "Apply a multi-file unified diff in ONE call — the efficient way to make a change that "
+    "spans several files or several spots. Each hunk is located tolerantly (like edit_file); "
+    "an unmatchable hunk is refused and reported. Use write_file for a brand-new file.",
+    RISK_WRITE,
 )
 import os as _os
 _docker_configured = bool(_os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip())

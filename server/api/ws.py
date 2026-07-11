@@ -135,6 +135,7 @@ async def run_socket(websocket: WebSocket, session_id: str):
                             files = []
                         emit({"type": "run_complete", "cost": round(budget.spent_usd, 6),
                               "tokens": budget.tokens, "iterations": budget.iterations,
+                              "cached_tokens": budget.cached_tokens,
                               "files": files})
 
                 threading.Thread(target=worker, daemon=True).start()

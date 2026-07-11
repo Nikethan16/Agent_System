@@ -16,20 +16,33 @@ from .registry import registry
 
 CLASSIFIER_SYS = (
     "You are a task router. Output ONLY valid JSON, no prose, no code fences:\n"
-    '{"tier": 1|2|3, "task_type": "coding"|"writing"|"research"|"math"|"data", '
+    '{"tier": 1|2|3, "task_type": '
+    '"chat"|"general"|"coding"|"writing"|"research"|"math"|"data", '
     '"requires_web": true|false, "reason": "<=8 words"}\n\n'
-    "TIER RULES — bias STRONGLY toward tier 2 for any build/write/code task:\n"
-    "Tier 1 — trivial only: greeting, single factual lookup, format/classify/summarize a snippet.\n"
-    "Tier 2 — DEFAULT for almost all real work: writing ONE file or script, ONE component, "
-    "ONE focused feature, fixing a bug, building an app that fits in a single session (a "
-    "calculator, landing page, form, CLI tool, etc.), drafting a document, analyzing data. "
-    "A single specialist handles this in one loop — no planner, no delegation needed.\n"
-    "Tier 3 — RARE. Only for genuinely multi-component systems where independent parts "
-    "MUST be built and coordinated separately (e.g. full-stack app with backend + DB + "
-    "frontend + tests as separate deliverables, multi-step research requiring 3+ distinct "
-    "sources). Do NOT use tier 3 for anything one skilled engineer can finish in one session.\n\n"
-    "Examples: 'build a calculator' → tier 2 coding. 'hi' → tier 1 chat. "
-    "'build a REST API with auth, PostgreSQL, tests, and React frontend' → tier 3 coding."
+    "TASK_TYPE RULES — pick the one that fits; do NOT force a Q&A into 'coding':\n"
+    "  chat     — greetings, small talk, thanks.\n"
+    "  general  — a plain question / explanation / factual lookup / opinion where the answer "
+    "is just TEXT and NO file, code, or document is produced (e.g. 'what is the capital of "
+    "France?', 'explain how caching works'). This is the default for questions.\n"
+    "  coding   — ONLY when NEW code/scripts/tests must be written or run.\n"
+    "  writing  — producing a document/essay/email/report as a deliverable.\n"
+    "  research — needs looking things up online / current info / multiple sources.\n"
+    "  math     — a calculation/proof.   data — analyzing a dataset/CSV.\n\n"
+    "TIER RULES — bias toward tier 1 for pure Q&A, tier 2 for real build/write work:\n"
+    "Tier 1 — trivial: greeting, a single factual/explanatory question, format/classify/"
+    "summarize a snippet. Most 'chat' and 'general' tasks are tier 1.\n"
+    "Tier 2 — DEFAULT for real work: writing ONE file or script, ONE component, ONE focused "
+    "feature, fixing a bug, building an app that fits in a single session (a calculator, "
+    "landing page, form, CLI tool, etc.), drafting a document, analyzing data. A single "
+    "specialist handles this in one loop — no planner, no delegation needed.\n"
+    "Tier 3 — RARE. Only genuinely multi-component systems whose independent parts MUST be "
+    "built and coordinated separately (full-stack app with backend + DB + frontend + tests "
+    "as separate deliverables, multi-step research needing 3+ distinct sources). Do NOT use "
+    "tier 3 for anything one skilled engineer can finish in one session.\n\n"
+    "Examples: 'hi' → tier 1 chat. 'what is the capital of France?' → tier 1 general. "
+    "'explain why AI routes tasks into tiers' → tier 1 general. 'build a calculator' → tier 2 "
+    "coding. 'write a blog post about X' → tier 2 writing. 'build a REST API with auth, "
+    "PostgreSQL, tests, and React frontend' → tier 3 coding."
 )
 
 _RETRIES = 1          # extra attempts after the first, on transient/rate-limit errors
@@ -88,14 +101,15 @@ def _heuristic_route(task: str, last_err: Exception) -> dict:
     return {"tier": tier, "task_type": tt,
             "requires_web": tt == "research",
             "reason": f"heuristic fallback ({type(last_err).__name__})",
-            "routed_model": registry.model_for_tier(f"tier{tier}")}
+            "routed_model": registry.model_for_tier(f"tier{tier}", task_type=tt)}
 
 
 def classify(task: str, budget: Budget = None) -> dict:
     key = _cache_key(task)
     if key and key in _CACHE:
         cached = dict(_CACHE[key])
-        cached["routed_model"] = registry.model_for_tier(f"tier{cached['tier']}")
+        cached["routed_model"] = registry.model_for_tier(
+            f"tier{cached['tier']}", task_type=cached.get("task_type"))
         return cached
     tier_name = registry.classifier_tier()
     # Route through the classify fallback CHAIN (NVIDIA-first), so a down/rate-limited
@@ -123,7 +137,11 @@ def classify(task: str, budget: Budget = None) -> dict:
             data["task_type"] = data.pop("type", data.get("task_type", "unknown"))
             data.setdefault("requires_web", False)
             data.setdefault("reason", "")
-            data["routed_model"] = registry.model_for_tier(f"tier{data['tier']}")
+            # Show the model the AGENT will actually use (task-aware chain primary), not
+            # the tier-cheapest — otherwise the UI displays e.g. a free NIM model while a
+            # coding task really runs on the paid DeepSeek chain.
+            data["routed_model"] = registry.model_for_tier(
+                f"tier{data['tier']}", task_type=data.get("task_type"))
             if key:                                  # cache only successful classifications
                 if len(_CACHE) >= _CACHE_MAX:
                     _CACHE.pop(next(iter(_CACHE)))   # FIFO eviction

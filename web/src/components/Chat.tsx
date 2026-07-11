@@ -113,51 +113,129 @@ function PlanChecklist({ todos }: { todos?: { text: string; status?: string }[] 
   );
 }
 
-function Activity({ events, running }: { events: Ev[]; running?: boolean }) {
-  const { submit } = useStore();
-  const [open, setOpen] = useState(false);   // collapsed by default — keep the chat clean
-  // The latest plan drives a single updating checklist; individual plan events are NOT
-  // shown as repeated timeline rows.
-  const lastPlan = [...events].reverse().find((e) => e.type === "plan") as any;
-  const steps = events.map(describe).map((d, i) => ({ d, ev: events[i] }))
-    .filter((x) => x.d && x.ev.type !== "plan");
-  // Only surface the timeline when the team actually did work (tools, a plan, QA, etc.),
-  // or while a run is in progress. Simple Q&A turns show nothing.
-  const worthShowing = events.some((e) => MEANINGFUL.includes(e.type)) ||
-    events.filter((e) => e.type === "assign").length > 1 || running;
-  if (!steps.length || !worthShowing) return null;
+// ---- Run flow: group a run's events into Steps, each a collapsible card ------
+type Step = { agent: string; label: string; subtask?: string; model?: string;
+              tools: Ev[]; notes: Ev[] };
+
+function groupSteps(events: Ev[]): Step[] {
+  const steps: Step[] = [];
+  let cur: Step | null = null;
+  const ensure = (a: string, label?: string) => {
+    if (!cur) { cur = { agent: a, label: label || a, tools: [], notes: [] }; steps.push(cur); }
+    return cur;
+  };
+  for (const ev of events) {
+    if (ev.type === "assign") {
+      cur = { agent: ev.agent, label: ev.label || ev.agent, subtask: ev.subtask,
+              model: ev.model, tools: [], notes: [] };
+      steps.push(cur);
+    } else if (ev.type === "tool") {
+      ensure((ev as any).agent || "agent").tools.push(ev);
+    } else if (["skill", "memory", "fallback", "retry", "critic", "blocked", "denied", "error"].includes(ev.type)) {
+      ensure((ev as any).agent || "agent").notes.push(ev);
+    }
+  }
+  return steps;
+}
+
+const WRITE_TOOLS = ["write_file", "edit_file", "apply_patch", "create_file"];
+const READ_TOOLS = ["read_file", "list_files", "grep", "glob", "parse_document"];
+
+function stepSummary(s: Step): string {
+  const paths = (names: string[]) => s.tools.filter((t) => names.includes(t.name))
+    .map((t) => t.args?.path).filter(Boolean);
+  const wrote = paths(WRITE_TOOLS);
+  const ran = s.tools.filter((t) => t.name === "run_bash").length;
+  const searched = s.tools.filter((t) => ["web_search", "web_fetch", "internet_search", "search"].includes(t.name)).length;
+  const parts: string[] = [];
+  if (wrote.length) parts.push(`wrote ${[...new Set(wrote)].slice(0, 3).join(", ")}${wrote.length > 3 ? "…" : ""}`);
+  if (ran) parts.push(`ran ${ran} command${ran > 1 ? "s" : ""}`);
+  if (searched) parts.push(`${searched} web search${searched > 1 ? "es" : ""}`);
+  if (!parts.length) {
+    const read = s.tools.filter((t) => READ_TOOLS.includes(t.name)).length;
+    if (read) parts.push(`explored ${read} file${read > 1 ? "s" : ""}`);
+  }
+  return parts.join(" · ") || s.subtask || "working";
+}
+
+function StepCard({ step, defaultOpen }: { step: Step; defaultOpen: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const failed = step.notes.find((n) => ["error", "blocked", "denied"].includes(n.type));
   return (
-    <div className="mt-3 border border-light-border dark:border-dark-border rounded-xl overflow-hidden">
-      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-3 py-2 hover:bg-surface-container-low dark:hover:bg-dark-bg/50 transition">
-        <div className="flex items-center gap-2 text-light-muted">
-          <span className={`w-1.5 h-1.5 rounded-full ${running ? "bg-accent-terracotta animate-pulse" : "bg-light-muted"}`} />
-          <span className="text-[11px] uppercase tracking-wide">Agent activity · {steps.length} steps</span>
-        </div>
-        <span className="material-symbols-outlined text-light-muted text-[16px]">{open ? "expand_less" : "expand_more"}</span>
+    <div className={`border rounded-lg overflow-hidden ml-6 ${failed ? "border-red-400/50" : "border-light-border dark:border-dark-border"}`}>
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface-container-low dark:hover:bg-dark-bg/40 transition">
+        <span className="material-symbols-outlined text-light-muted text-[15px]">{open ? "expand_more" : "chevron_right"}</span>
+        <span className="text-[10px] font-code font-semibold px-1.5 py-0.5 rounded bg-emerald-500/12 text-emerald-700 dark:text-emerald-400">{step.label}</span>
+        <span className="text-[12px] flex-1 truncate text-on-surface dark:text-dark-text">{stepSummary(step)}</span>
+        {step.tools.length > 0 && <span className="text-[10px] font-code text-light-muted">{step.tools.length} tool{step.tools.length > 1 ? "s" : ""}</span>}
       </button>
-      <AgentStatus events={events} running={running} />
       {open && (
-        <div className="px-5 pb-5 pt-3 border-t border-light-border/40 dark:border-dark-border">
-          <PlanChecklist todos={lastPlan?.todos} />
-          <div className="space-y-4 relative before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-light-border dark:before:bg-dark-border">
-            {steps.map(({ d, ev }, i) => (
-              <div key={i} className="relative pl-6 fadeup">
-                <span className="absolute left-0 top-1.5 w-[11px] h-[11px] rounded-full bg-white dark:bg-dark-surface border-2 border-light-border dark:border-dark-border" />
-                <div className="flex items-center gap-2 mb-0.5">
-                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight ${PILL[ev.type] || "bg-surface-container text-on-surface-variant"}`}>{d!.label}</span>
-                </div>
-                <div className="text-xs text-on-surface-variant dark:text-light-muted">{d!.text}</div>
-                {FIXABLE.includes(ev.type) && !running && (
-                  <button onClick={() => submit(`The previous attempt hit an error: "${ev.reason || ev.text || ev.name}". Please diagnose and fix it, then try again.`)}
-                    className="mt-1 text-[10px] uppercase tracking-wide text-accent-terracotta hover:brightness-110 flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[13px]">build</span> Try fixing
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
+        <div className="border-t border-light-border/50 dark:border-dark-border px-3 py-2 bg-surface-container-low/60 dark:bg-dark-bg/40 space-y-1">
+          {step.tools.map((t, i) => (
+            <div key={i} className="text-[11px] font-code text-on-surface-variant dark:text-light-muted flex items-start gap-1.5">
+              <span className="text-accent-terracotta">{t.name}</span>
+              <span className="truncate opacity-80">{Object.entries(t.args || {}).map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 32)}`).join(" ")}</span>
+              {t.result != null && String(t.result).startsWith("exit=") && (
+                <span className="ml-auto text-emerald-600 dark:text-emerald-400">{String(t.result).split("\n")[0]}</span>
+              )}
+            </div>
+          ))}
+          {step.notes.map((n, i) => {
+            const d = describe(n);
+            if (!d) return null;
+            return <div key={`n${i}`} className="text-[11px] text-light-muted flex items-center gap-1.5">
+              <span className={`px-1 py-px rounded text-[8px] font-bold uppercase ${PILL[n.type] || "bg-surface-container"}`}>{d.label}</span>
+              <span className="truncate">{d.text}</span></div>;
+          })}
         </div>
       )}
+    </div>
+  );
+}
+
+function PhaseLabel({ icon, color, children }: { icon: string; color: string; children: any }) {
+  return (
+    <div className="flex items-center gap-2 mt-3 mb-1.5">
+      <span className={`w-4 h-4 rounded grid place-items-center text-white text-[11px] ${color}`}>
+        <span className="material-symbols-outlined text-[12px]">{icon}</span></span>
+      <span className="text-[10px] uppercase tracking-widest text-light-muted font-medium">{children}</span>
+    </div>
+  );
+}
+
+function Activity({ events, running }: { events: Ev[]; running?: boolean }) {
+  const lastPlan = [...events].reverse().find((e) => e.type === "plan") as any;
+  const steps = groupSteps(events);
+  const critic = events.filter((e) => e.type === "critic");
+  const worthShowing = events.some((e) => MEANINGFUL.includes(e.type)) ||
+    events.filter((e) => e.type === "assign").length > 1 || running;
+  const hasWork = steps.some((s) => s.tools.length || s.notes.length) || lastPlan?.todos?.length;
+  if (!hasWork || !worthShowing) return null;
+  return (
+    <div className="mt-3 border border-light-border dark:border-dark-border rounded-xl overflow-hidden">
+      <div className="flex items-center gap-2 px-3.5 py-2 border-b border-light-border/50 dark:border-dark-border bg-surface-container-low/60 dark:bg-dark-bg/40">
+        <span className={`w-1.5 h-1.5 rounded-full ${running ? "bg-accent-terracotta animate-pulse" : "bg-emerald-500"}`} />
+        <span className="text-[11px] uppercase tracking-widest text-light-muted font-medium">{running ? "Working" : "Run"}</span>
+      </div>
+      <AgentStatus events={events} running={running} />
+      <div className="px-4 pb-4 pt-1">
+        {lastPlan?.todos?.length > 0 && (<><PhaseLabel icon="checklist" color="bg-accent-terracotta">Plan</PhaseLabel><PlanChecklist todos={lastPlan.todos} /></>)}
+        {steps.length > 0 && (
+          <><PhaseLabel icon="settings" color="bg-accent-terracotta">Steps</PhaseLabel>
+          <div className="space-y-2">
+            {steps.map((s, i) => <StepCard key={i} step={s} defaultOpen={!!running && i === steps.length - 1} />)}
+          </div></>
+        )}
+        {critic.length > 0 && (
+          <><PhaseLabel icon="verified" color="bg-emerald-600">Verify</PhaseLabel>
+          {critic.map((c, i) => (
+            <div key={i} className="ml-6 text-[12px] flex items-center gap-2">
+              <span className={c.passed ? "text-emerald-600" : "text-amber-600"}>{c.passed ? "✓" : "⚠"}</span>
+              <span className="text-on-surface-variant dark:text-light-muted">{c.summary || (c.passed ? "checks passed" : "issues found")}</span>
+            </div>
+          ))}</>
+        )}
+      </div>
     </div>
   );
 }
@@ -257,6 +335,10 @@ function ResponseFooter({ m, last }: { m: Msg; last?: boolean }) {
   const stats: string[] = [];
   if (dur) stats.push(dur);
   if (meta?.tokens) stats.push(`${meta.tokens.toLocaleString()} tokens`);
+  // Provider-reported prompt-cache reads (cache-hit input is ~50-98% cheaper) — shown
+  // as a share of all tokens so the savings from a stable prompt prefix are visible.
+  if (meta?.cachedTokens && meta?.tokens)
+    stats.push(`${Math.round((meta.cachedTokens / meta.tokens) * 100)}% cached`);
   if (meta?.cost) stats.push(`$${meta.cost.toFixed(4)}`);
   if (tools.length) stats.push(`${tools.length} tool${tools.length > 1 ? "s" : ""}`);
 

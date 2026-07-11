@@ -69,6 +69,7 @@ export default function HealthPanel() {
                   <th className="py-1 px-2 font-medium text-right">errors</th>
                   <th className="py-1 px-2 font-medium text-right">avg s</th>
                   <th className="py-1 px-2 font-medium text-right">fallbk</th>
+                  <th className="py-1 px-2 font-medium text-right">cache</th>
                   <th className="py-1 pl-2 font-medium text-right">cost $</th>
                 </tr>
               </thead>
@@ -80,6 +81,7 @@ export default function HealthPanel() {
                     <td className={`py-1 px-2 text-right ${m.errors ? "text-red-500" : ""}`}>{m.errors}</td>
                     <td className="py-1 px-2 text-right">{m.avg_latency ?? "–"}</td>
                     <td className={`py-1 px-2 text-right ${m.fallbacks ? "text-amber-500" : ""}`}>{m.fallbacks}</td>
+                    <td className="py-1 px-2 text-right">{m.cache_hit_rate != null ? `${Math.round(m.cache_hit_rate * 100)}%` : "–"}</td>
                     <td className="py-1 pl-2 text-right">{(m.cost || 0).toFixed(4)}</td>
                   </tr>
                 ))}

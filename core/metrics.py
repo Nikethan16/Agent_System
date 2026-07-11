@@ -21,19 +21,21 @@ _recent = deque(maxlen=_MAX)
 
 def _blank():
     return {"calls": 0, "errors": 0, "fallbacks": 0, "latency_sum": 0.0,
-            "latency_n": 0, "cost": 0.0}
+            "latency_n": 0, "cost": 0.0, "prompt_tokens": 0, "cached_tokens": 0}
 
 
 _agg = defaultdict(_blank)
 
 
 def record(model: str, latency: float, ok: bool = True, cost: float = 0.0,
-           fallback: bool = False, error: str = None) -> None:
+           fallback: bool = False, error: str = None,
+           prompt_tokens: int = 0, cached_tokens: int = 0) -> None:
     """Record one model-call outcome. Never raises (telemetry must not break a run)."""
     try:
         rec = {"ts": time.time(), "model": model, "provider": provider_of(model),
                "latency": round(latency or 0.0, 3), "ok": bool(ok),
-               "cost": round(cost or 0.0, 6), "fallback": bool(fallback), "error": error}
+               "cost": round(cost or 0.0, 6), "fallback": bool(fallback), "error": error,
+               "cached_tokens": int(cached_tokens or 0)}
         with _lock:
             _recent.append(rec)
             a = _agg[model]
@@ -46,6 +48,8 @@ def record(model: str, latency: float, ok: bool = True, cost: float = 0.0,
                 a["latency_sum"] += latency
                 a["latency_n"] += 1
             a["cost"] += cost or 0.0
+            a["prompt_tokens"] += int(prompt_tokens or 0)
+            a["cached_tokens"] += int(cached_tokens or 0)
     except Exception:
         pass
 
@@ -62,6 +66,7 @@ def summary() -> list:
         rows = []
         for model, a in _agg.items():
             n = a["latency_n"]
+            pt = a["prompt_tokens"]
             rows.append({
                 "model": model, "provider": provider_of(model),
                 "calls": a["calls"], "errors": a["errors"],
@@ -69,6 +74,11 @@ def summary() -> list:
                 "fallbacks": a["fallbacks"],
                 "avg_latency": round(a["latency_sum"] / n, 3) if n else None,
                 "cost": round(a["cost"], 6),
+                # Prompt-cache effectiveness: what share of prompt tokens the provider
+                # served from cache (cache-hit input is ~50-98% cheaper). None until
+                # the provider reports token details.
+                "cached_tokens": a["cached_tokens"],
+                "cache_hit_rate": round(a["cached_tokens"] / pt, 3) if pt else None,
             })
     rows.sort(key=lambda r: -r["calls"])
     return rows
