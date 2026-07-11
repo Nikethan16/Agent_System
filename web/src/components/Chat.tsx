@@ -257,6 +257,10 @@ function ResponseFooter({ m, last }: { m: Msg; last?: boolean }) {
   const stats: string[] = [];
   if (dur) stats.push(dur);
   if (meta?.tokens) stats.push(`${meta.tokens.toLocaleString()} tokens`);
+  // Provider-reported prompt-cache reads (cache-hit input is ~50-98% cheaper) — shown
+  // as a share of all tokens so the savings from a stable prompt prefix are visible.
+  if (meta?.cachedTokens && meta?.tokens)
+    stats.push(`${Math.round((meta.cachedTokens / meta.tokens) * 100)}% cached`);
   if (meta?.cost) stats.push(`$${meta.cost.toFixed(4)}`);
   if (tools.length) stats.push(`${tools.length} tool${tools.length > 1 ? "s" : ""}`);
 

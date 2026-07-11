@@ -246,6 +246,7 @@ class Budget:
     spent_usd: float = 0.0
     iterations: int = 0
     tokens: int = 0          # cumulative LLM tokens used this run (prompt + completion)
+    cached_tokens: int = 0   # prompt tokens served from the provider's prompt cache
 
     def __post_init__(self):
         # Thread-safe: parallel subtasks share one run budget.
@@ -268,6 +269,10 @@ class Budget:
         with self._lock:
             self.tokens += int(n or 0)
 
+    def add_cached_tokens(self, n: int):
+        with self._lock:
+            self.cached_tokens += int(n or 0)
+
     def tick(self):
         with self._lock:
             self.iterations += 1
@@ -288,6 +293,7 @@ class _SubBudget(Budget):
         self.spent_usd = 0.0
         self.iterations = 0
         self.tokens = 0
+        self.cached_tokens = 0
         self._lock = threading.Lock()
 
     def check(self):
@@ -301,6 +307,10 @@ class _SubBudget(Budget):
     def add_tokens(self, n):
         Budget.add_tokens(self, n)
         self.parent.add_tokens(n)
+
+    def add_cached_tokens(self, n):
+        Budget.add_cached_tokens(self, n)
+        self.parent.add_cached_tokens(n)
 
     def tick(self):
         Budget.tick(self)
@@ -424,6 +434,39 @@ def _completion_tokens(resp) -> int:
         return 0
 
 
+def _uget(obj, key):
+    """usage sub-objects arrive as dicts OR attribute objects depending on provider."""
+    return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
+
+def _cached_tokens_of(resp) -> int:
+    """Prompt tokens served from the provider's PROMPT CACHE for this call, 0 if none.
+
+    Providers report this differently; we check all shapes LiteLLM passes through:
+      * OpenAI-format (normalized): usage.prompt_tokens_details.cached_tokens
+      * DeepSeek first-party:       usage.prompt_cache_hit_tokens
+      * Anthropic-style:            usage.cache_read_input_tokens
+    Cache-hit input is ~50-98% cheaper (DeepSeek: 98% off), so surfacing this is how
+    the run summary / dashboard show the REAL savings — counted from provider-reported
+    reads, not inferred (the mistake that made OpenCode Go's cost counter wrong)."""
+    try:
+        u = getattr(resp, "usage", None)
+        if u is None:
+            return 0
+        details = _uget(u, "prompt_tokens_details")
+        if details is not None:
+            n = _uget(details, "cached_tokens")
+            if n:
+                return int(n)
+        for key in ("prompt_cache_hit_tokens", "cache_read_input_tokens"):
+            n = _uget(u, key)
+            if n:
+                return int(n)
+        return 0
+    except Exception:
+        return 0
+
+
 def _key_for(model):
     """Acquire one pooled API key value for `model` (None if no pool/keys)."""
     pool = keypool.pool_for_model(model)
@@ -496,10 +539,13 @@ def complete(model, messages, tools=None, max_tokens=4096,
             raise EmptyResponse(f"{model} returned no choices")
         cost = _cost_of(resp)
         _elapsed = time.time() - _t0
-        metrics.record(model, _elapsed, ok=True, cost=cost)
+        metrics.record(model, _elapsed, ok=True, cost=cost,
+                       prompt_tokens=_prompt_tokens(resp),
+                       cached_tokens=_cached_tokens_of(resp))
         if budget:
             budget.add_cost(cost)
             budget.add_tokens(_tokens_of(resp))
+            budget.add_cached_tokens(_cached_tokens_of(resp))
             budget.tick()
         if _llm_observer:
             try:
@@ -620,7 +666,7 @@ def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
         stream_options={"include_usage": True}, api_key=_key_for(model),
     )
     resp = _iter_stream_bounded(_kw)
-    pieces, cost, tokens = [], 0.0, 0
+    pieces, cost, tokens, cached = [], 0.0, 0, 0
     for chunk in resp:
         try:
             piece = chunk.choices[0].delta.content
@@ -636,9 +682,11 @@ def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
             except Exception:
                 pass
             tokens = _tokens_of(chunk) or tokens
+            cached = _cached_tokens_of(chunk) or cached
     if budget:
         budget.add_cost(cost)
         budget.add_tokens(tokens)
+        budget.add_cached_tokens(cached)
         budget.tick()
     return "".join(pieces), cost
 
@@ -697,7 +745,7 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
     # between tokens longer than the default 45s; it should fail over only on a true stall).
     resp = _iter_stream_bounded(kwargs, timeout=to)
 
-    content, tcs, cost, tokens = [], {}, 0.0, 0
+    content, tcs, cost, tokens, cached = [], {}, 0.0, 0, 0
     for chunk in resp:
         ch = chunk.choices[0] if getattr(chunk, "choices", None) else None
         delta = getattr(ch, "delta", None) if ch else None
@@ -724,6 +772,7 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
             except Exception:
                 pass
             tokens = _tokens_of(chunk) or tokens
+            cached = _cached_tokens_of(chunk) or cached
 
     tool_calls = [
         {"id": s["id"] or f"call_{i}", "type": "function",
@@ -736,6 +785,7 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
     if budget:
         budget.add_cost(cost)
         budget.add_tokens(tokens)
+        budget.add_cached_tokens(cached)
         budget.tick()
     return msg, cost
 
