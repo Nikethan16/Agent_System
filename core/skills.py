@@ -174,6 +174,11 @@ _SIGNALS = {
     "docx": ("docx", "word", "letter", "memo", "letterhead"),
     "pptx": ("powerpoint", "pptx", "slide", "slides", "deck", "presentation"),
     "pdf": ("pdf",),
+    # web-frontend is also intent-gated: it kept firing on backend/CLI/library tasks (a
+    # bank module, a bare `echo`) on generic word overlap. Only fire when the task is
+    # actually about a web UI, not any task that happens to share a couple of dev words.
+    "web-frontend": ("html", "css", "frontend", "front-end", "webpage", "web page",
+                     "website", "landing page", "responsive", "browser", "ui ", "dom"),
 }
 
 
