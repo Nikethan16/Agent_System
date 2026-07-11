@@ -16,6 +16,21 @@ function iconFor(ext?: string) {
   return "draft";
 }
 
+const CODE_EXT = [".py", ".js", ".ts", ".tsx", ".jsx", ".json", ".yaml", ".yml", ".sh", ".css"];
+const LANG: Record<string, string> = {
+  ".py": "Python", ".js": "JavaScript", ".ts": "TypeScript", ".tsx": "TypeScript",
+  ".jsx": "JavaScript", ".md": "Markdown", ".html": "HTML", ".json": "JSON",
+  ".yaml": "YAML", ".yml": "YAML", ".css": "CSS", ".sh": "Shell", ".svg": "SVG",
+};
+const typeLabel = (ext?: string) => LANG[ext || ""] || (ext ? ext.replace(".", "").toUpperCase() : "File");
+
+function fmtBytes(n?: number): string {
+  if (!n && n !== 0) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function DiffView({ text }: { text: string }) {
   if (!text.trim()) return <div className="text-light-muted text-xs">No changes vs the last checkpoint.</div>;
   return (
@@ -94,7 +109,20 @@ function HistoryView({ id, path }: { id: string; path: string }) {
 }
 
 export default function FilesPanel() {
-  const { files, selected, openFile, loadFiles, currentId } = useStore();
+  const { files, selected, openFile, loadFiles, currentId, messages } = useStore();
+
+  // Files touched by the most recent run (with +/- deltas) get their own section so
+  // "what changed just now" is separated from the rest of the workspace.
+  const lastChanges = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const f = messages[i]?.meta?.files;
+      if (f && f.length) return f;
+    }
+    return [] as { path: string; status: string; added: number; removed: number }[];
+  })();
+  const changeMap = new Map(lastChanges.map((c) => [c.path, c]));
+  const changed = files.filter((f) => changeMap.has(f.path));
+  const context = files.filter((f) => !changeMap.has(f.path));
   const [view, setView] = useState<"source" | "preview" | "diff" | "history">("source");
   const [diff, setDiff] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -128,7 +156,10 @@ export default function FilesPanel() {
 
   const Tab = ({ id, label }: { id: any; label: string }) => (
     <button onClick={() => setView(id)}
-      className={`px-2.5 py-1 text-[10px] uppercase tracking-wide rounded-md transition ${view === id ? "bg-surface-container dark:bg-dark-bg text-on-surface dark:text-dark-text" : "text-light-muted hover:text-on-surface dark:hover:text-dark-text"}`}>{label}</button>
+      className={`px-2.5 py-1 text-[11px] capitalize rounded-md transition ${view === id ? "bg-white dark:bg-dark-surface text-on-surface dark:text-dark-text shadow-sm font-semibold" : "text-light-muted hover:text-on-surface dark:hover:text-dark-text"}`}>{label}</button>
+  );
+  const TabGroup = ({ children }: { children: any }) => (
+    <div className="flex items-center gap-0.5 bg-surface-container-low dark:bg-dark-bg rounded-lg p-0.5">{children}</div>
   );
   const IconBtn = ({ icon, on, title }: { icon: string; on: () => void; title: string }) => (
     <button onClick={on} title={title} className="p-1 rounded-md text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg transition">
@@ -136,37 +167,66 @@ export default function FilesPanel() {
     </button>
   );
 
+  const Section = ({ label, count }: { label: string; count: number }) => (
+    <div className="flex items-center gap-2 px-4 pt-3 pb-1">
+      <span className="text-[10px] uppercase tracking-[0.12em] text-light-muted font-semibold">{label}</span>
+      <span className="text-[10px] font-code text-light-muted">{count}</span>
+      <span className="flex-1 h-px bg-light-border/60 dark:bg-dark-border" />
+    </div>
+  );
+
+  const FileRow = ({ f }: { f: any }) => {
+    const isCode = CODE_EXT.includes(f.ext || "");
+    const ch = changeMap.get(f.path);
+    return (
+      <div onClick={() => openFile(f.path)}
+        className={`group flex items-center gap-3 px-4 py-2 cursor-pointer transition ${selected?.path === f.path ? "bg-accent-terracotta/8" : "hover:bg-surface-container-low dark:hover:bg-dark-bg"}`}>
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isCode ? "bg-accent-terracotta/12 text-accent-terracotta" : "bg-surface-container dark:bg-dark-bg text-light-muted"}`}>
+          <span className="material-symbols-outlined text-[16px]">{iconFor(f.ext)}</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className={`text-[13px] truncate ${selected?.path === f.path ? "font-semibold" : "font-medium"}`}>{f.path}</div>
+          <div className="text-[11px] text-light-muted truncate">{fmtBytes(f.size)} · {typeLabel(f.ext)}</div>
+        </div>
+        {ch && (ch.added > 0 || ch.removed > 0) && (
+          <div className="font-code text-[11px] text-right shrink-0 tabular-nums">
+            {ch.added > 0 && <span className="text-emerald-600 dark:text-emerald-400">+{ch.added}</span>}
+            {ch.added > 0 && ch.removed > 0 && " "}
+            {ch.removed > 0 && <span className="text-red-500">−{ch.removed}</span>}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-5 pt-4 pb-2">
-        <h4 className="text-[11px] uppercase tracking-widest text-light-muted">Artifacts</h4>
+        <h4 className="text-[13px] font-semibold">Artifacts</h4>
         <IconBtn icon="refresh" on={() => loadFiles()} title="Refresh" />
       </div>
-      <div className="px-4 space-y-2 overflow-y-auto scrollbar" style={{ maxHeight: selected ? "45%" : "100%" }}>
-        {files.length === 0 && <div className="text-light-muted text-xs px-1 py-2">No files yet.</div>}
-        {files.map((f) => (
-          <div key={f.path} onClick={() => openFile(f.path)}
-            className={`group border rounded-xl p-3 bg-white dark:bg-dark-surface cursor-pointer transition ${selected?.path === f.path ? "border-accent-terracotta/50" : "border-light-border dark:border-dark-border hover:border-accent-terracotta/30"}`}>
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-surface-container dark:bg-dark-bg rounded-lg flex items-center justify-center">
-                <span className="material-symbols-outlined text-accent-terracotta text-[20px]">{iconFor(f.ext)}</span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-semibold truncate">{f.path}</h3>
-                <p className="text-[10px] text-light-muted uppercase tracking-tight">{f.size} bytes</p>
-              </div>
-            </div>
-          </div>
-        ))}
+      <div className="overflow-y-auto scrollbar" style={{ maxHeight: selected ? "45%" : "100%" }}>
+        {files.length === 0 && <div className="text-light-muted text-xs px-5 py-3">No files yet.</div>}
+        {changed.length > 0 && <Section label="Changed this run" count={changed.length} />}
+        {changed.map((f) => <FileRow key={f.path} f={f} />)}
+        {context.length > 0 && changed.length > 0 && <Section label="Context" count={context.length} />}
+        {context.map((f) => <FileRow key={f.path} f={f} />)}
       </div>
 
       {selected && (
         <div className="flex-1 border-t border-light-border dark:border-dark-border mt-2 flex flex-col min-h-0">
+          <div className="flex items-center gap-2 px-4 pt-2.5 pb-0.5">
+            <span className="material-symbols-outlined text-[15px] text-accent-terracotta">{iconFor(selected.ext)}</span>
+            <span className="text-[12.5px] font-code font-medium truncate">{selected.path}</span>
+            <span className="text-[10px] text-light-muted ml-auto shrink-0">{typeLabel(selected.ext)}</span>
+          </div>
           <div className="flex items-center gap-1 px-4 py-2 border-b border-light-border dark:border-dark-border">
-            <Tab id="source" label="source" />
-            {previewable && <Tab id="preview" label="preview" />}
-            <Tab id="diff" label="diff" />
-            <Tab id="history" label="history" />
+            <TabGroup>
+              <Tab id="source" label="source" />
+              {previewable && <Tab id="preview" label="preview" />}
+              <Tab id="diff" label="diff" />
+              <Tab id="history" label="history" />
+            </TabGroup>
             <div className="ml-auto flex items-center gap-0.5">
               <IconBtn icon="content_copy" on={copy} title="Copy" />
               <IconBtn icon="download" on={download} title="Download" />
@@ -198,7 +258,7 @@ export default function FilesPanel() {
             <div className="flex-1 overflow-auto scrollbar p-6">
               {view === "history" && currentId
                 ? <HistoryView id={currentId} path={selected.path} />
-                : <Body sel={selected} view={view} diff={diff} />}
+                : <Body sel={selected} view={view} diff={diff} id={currentId} />}
             </div>
           </div>
         </div>
