@@ -4,46 +4,74 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## ⚡ LATEST (2026-06-20) — big upgrade merged to `main` + deployed; one open issue
-A large two-branch effort (PR #6, merged to `main`, auto-deployed to the VM) absorbed
-OpenCode's coding-engine design into our Python and hardened the app. **All on `main` now**
-(stale branches deleted — repo is `main`-only). Shipped: fuzzy `edit_file`, `read_file`
-paging, `grep`/`glob`, tool-arg validation, all 7 orchestration fixes, within-run compaction,
-post-edit syntax verifier, **API-key encryption at rest** (`AGENT_SECRET_KEY`), **per-project
-budgets + a Usage & Cost dashboard**, mobile fixes, a **live plan checklist** (✓/●/○), audit
-perf fixes (SQL spend aggregation, indexes), and regression fixes (UI rate-limit storm;
-**research routed to Gemini 2.5 Flash** since free qwen3.5 was flaky at tool-calling).
+## ⚡ LATEST (2026-07-11) — cost/quality + paid fleet + Skills Hub + UI flow (branch `claude/cost-quality-config`, PUSHED, NOT merged)
+Big multi-part session on branch **`claude/cost-quality-config`** — **20 commits, all
+validated (230 pytest + 170 smoke green, frontend builds).** PUSHED to origin so it can be
+pulled on another machine; **NOT merged to `main`** (main auto-deploys → held for the owner).
+**To go live: merge to `main` → auto-deploy, then do the VM steps in "Next tasks".**
 
-**✅ UPDATE (2026-06-20, branch `claude/breaker-reliability`):** the circuit-breaker churn is
-FIXED — the breaker now trips only after `AGENT_BREAKER_THRESHOLD` (default 2) **consecutive**
-failures (not 1), never trips on a benign `EmptyResponse`, and breaker-skips show in metrics.
-Plus: read-only shell commands (`ls`/`cat`/…) auto-allow in the policy gate, and `list_files`
-hides the staged `.skills/` machinery. **Verified live:** a tier-3 calc build went from ~15+
-`circuit-breaker: skipped` events down to **3**, and wrote the full module set (lexer/parser/
-evaluator/CLI) vs only the lexer before. **RESIDUAL (not a bug): free-tier models are still
-~45s/call**, so big builds may not finish in one window — the real speed lever is **more NVIDIA
-keys** (`NVIDIA_NIM_API_KEY_1..3`) and/or raising `AGENT_LLM_TIMEOUT` to ~75s on the VM. (Branch
-pushed, not merged.)
+**Paid model fleet (BYOK, fit→reliability→cost).** Finalized 2-key paid fleet behind
+`requires_env`, cost-first routing (`config/models.yaml`):
+- **DeepSeek direct** (`DEEPSEEK_API_KEY`): V4-Pro plans/lead, V4-Flash builds/chat — call
+  DIRECT so its automatic prompt cache stays warm (75-85% cache seen live → near-free builds).
+- **DeepInfra** (`DEEPINFRA_API_KEY`): GLM-5.1 review/QA, Nemotron-Super research, Qwen3-Coder
+  data, Qwen3-VL vision. **Model IDs were verified live** — the guessed ids were wrong; correct
+  ones are in `models.yaml` (e.g. `deepinfra/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B`,
+  `deepinfra/Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo`, `deepinfra/zai-org/GLM-5.1`).
+- **GLM 4.6→5.1** chosen after a live bake-off (5.1 = cheapest/fewest-tokens/verified; 5.2
+  slower but more defensive; both catalogued + selectable in the UI routing editor).
+- Every chain lists paid leads first, then the FULL free NIM/Gemini floor → **keyless = exact
+  old behavior**. NVIDIA (4 pooled keys) is the free fallback floor.
+- **Rollout tool:** `python -m scripts.verify_models` (one cheap probe per keyed model — run
+  it whenever a key lands; catalogs rename models within weeks). `docs/MODEL_PLAN.md` = the ref.
 
-**🔴 ORIGINAL OPEN ISSUE (now mitigated, see UPDATE above): heavy tier-3 builds are SLOW on the free tier.** Live
-trace shows the free NVIDIA models time out (~45s, the `AGENT_LLM_TIMEOUT` wall-clock) on big
-tier-3 reasoning calls → the circuit breaker (`core/llm.py`) trips and **`circuit-breaker:
-skipped` fires on nearly every step** → constant fallbacks → a build crawls and may not finish.
-The *logic is correct* (it wrote real, correct files: lexer/test); it's a **model-speed**
-problem. Levers to try (NOT yet done — discuss before changing tuned reliability paths):
-(1) tune the breaker — trip only after N **consecutive** failures (not 1) + don't trip on a
-benign `EmptyResponse` (audit item, `docs/BACKLOG.md`); (2) more NVIDIA NIM keys
-(`NVIDIA_NIM_API_KEY_1..3` → pooled RPM — currently only **1** NVIDIA + **1** Gemini key are
-configured); (3) route the coder (tier2) to Gemini Flash. Secondary: the `architect` wandered
-into `.skills/` exploration (skill staging/selection for tier-3 worth a look); the
-security-manager denied a harmless `ls` (auto-allow read-only bash).
+**UI-editable routing** (`RoutingEditor.tsx` under Settings › Models › Routing) — pick the
+model chain per use case; persists to `data/routing.json` (merged over models.yaml, survives
+deploys). No hardcoded models. Backend: `registry.set_routing/reset_routing`, `/api/models/routing`.
 
-**Local Docker sandbox:** built `agent-verify:latest` on this dev laptop
-(`./docker/build-verify-image.sh`) and verified `pytest` runs offline in it. To run builds
-locally set `AGENT_BASH_DOCKER_IMAGE=agent-verify:latest`. NOTE: on a fresh laptop you must
-rebuild that image. Also seen: a bash shell with **blank** `GEMINI_API_KEY`/`NVIDIA_NIM_API_KEY`
-exported will *shadow* `.env` (load_dotenv doesn't override) — start the server so it loads
-`.env` cleanly (PowerShell `.\run.ps1` is fine; the VM is fine).
+**Reliability/correctness fixes** (live-testing found these): router now has **chat/general**
+task types (a factual Q was misrouted to tier-2 coding → burned 20k tokens; fixed); tier-3
+coding **repins to `coder`** if the dispatcher picks a non-builder; the run's **model display
+now shows the real task-aware model** (was tier-cheapest); **prompt-cache hits surfaced**
+(`prompt_cache_hit_tokens` → run-summary "% cached" + Health panel); sampling overlay + per-
+model timeout now applied on the **streaming** paths too.
+
+**Skills Hub + security** (`core/skill_sync.py`, `core/skill_scan.py`): sync skills from an
+**allowlisted** GitHub repo (`config/skill_sources.yaml` → anthropics/skills), bounded +
+path-safe + provenance-tracked; each lands **DISABLED + static-security-scanned** (exec/eval/
+subprocess/.env/credential/network → safe/caution/risky); **enabling a "risky" skill is
+BLOCKED without override**. UI: Skills tab with add-from-GitHub, risk badges, scan findings,
+override. Verified live (synced webapp-testing/mcp-builder/skill-creator → all disabled+risky).
+
+**OpenCode parity** (it's MIT — gap analysis in `docs/OPENCODE_GAP.md`): `apply_patch`
+(multi-file unified diff, granted to the 5 code agents), opt-in formatter-on-edit
+(`AGENT_FORMAT_ON_EDIT=1`, black), post-edit pyflakes lint, AGENTS.md project-notes injection
+(wrapped as untrusted data), ported OpenCode prompt-behavior overlays, and the **`@file`
+mention** picker in the composer. **Still missing (next batch): user `/commands`, real LSP.**
+
+**UI run-flow redesign** (`Chat.tsx`): a run renders as **Plan → Steps → Verify** with
+collapsible step cards (agent + summary + tools/output) instead of one long bubble. A
+[mockups artifact](https://claude.ai/code/artifact/2c6dbd22-3b10-4a8d-8b91-b74c353056e7) shows
+the full intended direction; only the run-flow + @file are built so far.
+
+**New scripts:** `verify_models.py`, `sync_skills.py`, `perf_battery.py` (live task battery +
+GLM bake-off). **New docs:** `MODEL_PLAN.md`, `OPENCODE_GAP.md`. **New optional env:**
+`AGENT_FORMAT_ON_EDIT`, `AGENT_BASH_DOCKER_IMAGE` (now in local .env).
+
+**🟡 LOCAL-ONLY work NOT on the branch (won't transfer to another laptop unless committed):**
+`config/agents.yaml` (news-agents: finance-news, tech-scout), `tools/feeds.py`,
+`config/feeds.yaml`, `tests/test_feeds.py`, `tools/__init__.py`+`tools/github.py` mods,
+`AGENTS.md`, `docs/NEWS_AGENTS_PLAN.md`, `docs/RELIABILITY_PLAN.md`. Owner chose to keep these
+local (news-agents deferred). Synced skills (`skills/mcp-builder` etc.) are gitignored — re-sync
+on the other laptop via the Skills tab / `python -m scripts.sync_skills`.
+
+**Keys:** `DEEPSEEK_API_KEY` + `DEEPINFRA_API_KEY` are now in the **local** `.env` (live +
+verified). On the other laptop / the VM they must be added there too. Langfuse: **not needed**
+(local traces + Health + Usage cover it).
+
+**Local Docker sandbox:** `agent-verify:latest` built on this dev laptop
+(`./docker/build-verify-image.sh`); `AGENT_BASH_DOCKER_IMAGE=agent-verify:latest` in local .env.
+On a fresh laptop you must rebuild that image.
 
 ## Current state — LIVE in production, now PUBLIC
 - **Deployed 24/7** on an **Oracle Always-Free ARM VM** (Ubuntu 24.04, 2 OCPU / 12 GB, at
@@ -179,25 +207,30 @@ Replicated the Claude Code workflow and fixed the root causes of multi-minute ha
    always registered, CRITICAL+human when no Docker), missing `os` import in `approvals.py`,
    stale MASTER_SYS / deepseek-primary test assertions.
 
-## Next tasks (immediate — full list in `docs/BACKLOG.md`)
-1. **Decide which of the 7 orchestration issues to fix** *(owner decision, not yet made)* —
-   full list + evidence in `docs/BACKLOG.md` "Orchestration issues found via live trace
-   analysis". The owner explicitly wants to observe real runs before prioritizing fixes;
-   re-run `scripts/inspect_run.py <session_id>` on more sessions if more evidence is wanted.
-2. **Investigate the zero-trace session** `6dc676e500a541e9b966849004545c70` — `inspect_run.py`
-   found no trace file at all for it; unclear if it never ran or traces failed to write.
-3. **Validate the perf fixes** *(VM, pending — the one thing not yet confirmed)* — run
-   `python3 scripts/flow_benchmark.py` and compare to the 53m/130k-token baseline (greeting
-   should be ~1-2s; the REST-API build should finish under cap with no rate-limit cascade).
-4. **Add 3 NVIDIA NIM keys** *(UI Settings or server `.env`: `NVIDIA_NIM_API_KEY_1..3`)* →
-   ~160 RPM pooled, removes the rate-limit contention that dominated the slow runs.
-5. **Activate repo mode on the server** *(SSH, ~5 min)* — add `GITHUB_TOKEN` to server `.env`;
-   run `python scripts/test_repo_mode.py --repo nikethan16/agent_system` to confirm E2E.
-6. **Off-site backups** *(one line, SSH)* — set `BACKUP_UPLOAD_CMD` in server `.env` so
-   nightly backups leave the VM (rclone/s3/rsync to a second location).
-7. **Mobile responsive pass** — Claude-style UI verified on desktop; phone drawers/panels need
-   a look and CSS tweaks.
-8. *(minor)* bump CI actions off deprecated Node-20 (`actions/checkout@v4`, `setup-python@v5`).
+## Next tasks (immediate — the `claude/cost-quality-config` branch is the active work)
+1. **Ship the branch to prod** *(owner decision — main auto-deploys)*: merge
+   `claude/cost-quality-config` → `main`. THEN on the VM: add `DEEPSEEK_API_KEY` +
+   `DEEPINFRA_API_KEY` to server `.env`; `sudo systemctl restart agentcore`; run
+   `python -m scripts.verify_models` (confirm the paid model ids resolve — they were verified
+   locally but re-check on the VM); ensure `agent-verify:latest` Docker image exists on the VM
+   (rebuild via `docker/build-verify-image.sh` if not); set `AGENT_DAILY_USD_CAP` (~$2-3/day)
+   now that paid keys are live.
+2. **Remaining OpenCode parity** (design in `docs/OPENCODE_GAP.md`): user-authored `/commands`
+   (config-dir templates, `$ARGUMENTS`/`!shell`/`@file`) and **real LSP** (language-server
+   diagnostics into the agent loop — the biggest coding-quality lever, and the one heavy item).
+3. **Self-engineering dogfood test** (not yet run): seed an existing multi-file project in the
+   workspace, ask the platform to "add feature X + a test, run it" and confirm the read→edit→
+   run loop works on a live codebase (proves "point it at a repo, ask for a feature").
+4. **Finish the UI redesign** per the mockups artifact — the run-flow + @file are built;
+   remaining polish: right-panel hierarchy, always-visible run-summary header refinements.
+5. **A/B validation on `evals/cases.yaml`** once comfortable — V4-Pro-plan vs GLM-plan, and the
+   ported prompt overlays on/off, on real numbers (harness gained `setup.files` seeding).
+6. *(carried)* off-site backups (`BACKUP_UPLOAD_CMD`), CI actions bump off Node-20, mobile pass.
+
+**Decide re local-only work:** the news-agents (finance-news/tech-scout, `tools/feeds.py`,
+`AGENTS.md`, `docs/NEWS_AGENTS_PLAN.md`, `docs/RELIABILITY_PLAN.md`) are uncommitted and won't
+be on another laptop. Either commit them to a branch, `git stash` + carry the patch, or leave
+them (they were deferred). Ask the owner before committing — they chose to keep these local.
 
 ## Context for the next chat (don't re-discover)
 - **`.env` (local + server, gitignored)** has working keys: `GEMINI_API_KEY`,
