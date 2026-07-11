@@ -719,6 +719,17 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     if task_type in _TIER3_SINGLE_AGENT_TYPES:
         agent_id, reason = team.select_agent(task, budget=budget)
         agent = team.agents.get(agent_id)
+        # The build agent MUST be able to build AND verify (edit + execute). The
+        # dispatcher sometimes picks a non-building specialist for a big build (live
+        # test 2026-07: `architect` — no edit_file/run_bash — flailed for 18 writes and
+        # finished UNVERIFIED). Keep a capable pick (coder/frontend/fast-coder); anything
+        # that can't edit+run is repinned to `coder`.
+        _need = {"edit_file", "run_bash"}
+        if not (agent and _need.issubset(set(agent.tools or []))):
+            fallback = team.agents.get("coder")
+            if fallback and _need.issubset(set(fallback.tools or [])):
+                agent_id, reason = "coder", f"repinned: {agent_id} can't build+verify"
+                agent = fallback
         _emit({"type": "assign", "agent": agent_id, "label": getattr(agent, "label", agent_id),
                "model": registry.model_for_tier(getattr(agent, "tier", "tier3"), task_type=task_type),
                "reason": reason})
