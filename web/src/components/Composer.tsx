@@ -36,7 +36,7 @@ function RunOptions({ onClose, onQueue, canQueue }: { onClose: () => void; onQue
   const help = mode === "auto" ? "Asks only for irreversible actions." : mode === "careful" ? "Asks before every risky action." : "Auto-approves all but hard-blocks.";
   const field = "w-full mt-1 bg-surface-container-low dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-2.5 py-1.5 text-sm text-on-surface dark:text-dark-text outline-none focus:border-accent-terracotta/40 transition";
   return (
-    <div className="absolute bottom-14 left-0 w-80 bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-xl p-4 z-20 fadeup">
+    <div className="absolute bottom-14 left-0 w-80 max-w-[calc(100vw-2.5rem)] bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-xl p-4 z-20 fadeup">
       <div className="flex items-center justify-between mb-1">
         <span className="text-sm font-medium">Run options</span>
         <button onClick={onClose} aria-label="Close run options" className="material-symbols-outlined text-[18px] text-light-muted hover:text-on-surface dark:hover:text-dark-text">close</button>
@@ -177,7 +177,7 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
       )}
       {/* /command menu — opens while typing a bare /command */}
       {cmdMatches.length > 0 && (
-        <div className="absolute bottom-full left-2 mb-1 w-80 max-h-56 overflow-y-auto scrollbar bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl shadow-xl z-30 p-1 fadeup">
+        <div className="absolute bottom-full left-2 mb-1 w-80 max-w-[calc(100vw-2rem)] max-h-56 overflow-y-auto scrollbar bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl shadow-xl z-30 p-1 fadeup">
           <p className="text-[9px] uppercase tracking-widest text-light-muted px-2 py-1">Commands</p>
           {cmdMatches.map((c) => (
             <button key={c.name} type="button" onMouseDown={(e) => { e.preventDefault(); pickCommand(c.name); }}
@@ -192,7 +192,7 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
       )}
       {/* @file mention picker — opens when you type @ before the caret */}
       {mention && matches.length > 0 && (
-        <div className="absolute bottom-full left-2 mb-1 w-72 max-h-56 overflow-y-auto scrollbar bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl shadow-xl z-30 p-1 fadeup">
+        <div className="absolute bottom-full left-2 mb-1 w-72 max-w-[calc(100vw-2rem)] max-h-56 overflow-y-auto scrollbar bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl shadow-xl z-30 p-1 fadeup">
           <p className="text-[9px] uppercase tracking-widest text-light-muted px-2 py-1">Reference a file</p>
           {matches.map((p) => (
             <button key={p} type="button" onMouseDown={(e) => { e.preventDefault(); pickFile(p); }}

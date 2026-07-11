@@ -71,13 +71,14 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 md:p-6" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label="Settings"
-        className="w-full max-w-3xl h-[600px] max-h-[88vh] bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-2xl flex overflow-hidden" onClick={(e) => e.stopPropagation()}>
-        {/* Left nav */}
-        <div className="w-44 md:w-52 shrink-0 border-r border-light-border dark:border-dark-border p-3 bg-claude-sidebar dark:bg-dark-bg/40 flex flex-col">
-          <h3 className="font-headline text-lg font-semibold px-2 mb-4">Settings</h3>
+        className="w-full max-w-3xl h-[600px] max-h-[88vh] bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-2xl flex flex-col md:flex-row overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        {/* Nav — a vertical rail on desktop, a horizontal scrollable tab bar on mobile
+            so the content area isn't squeezed on a narrow phone. */}
+        <div className="shrink-0 border-b md:border-b-0 md:border-r border-light-border dark:border-dark-border p-2 md:p-3 bg-claude-sidebar dark:bg-dark-bg/40 flex flex-row md:flex-col md:w-52 gap-1 md:gap-0 overflow-x-auto md:overflow-visible scrollbar">
+          <h3 className="hidden md:block font-headline text-lg font-semibold px-2 mb-4">Settings</h3>
           {TABS.map((t) => (
             <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm text-left transition mb-0.5 ${tab === t.id ? "bg-white dark:bg-dark-surface text-accent-terracotta font-medium shadow-sm" : "text-on-surface-variant dark:text-light-muted hover:bg-white/60 dark:hover:bg-dark-surface"}`}>
+              className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm text-left transition shrink-0 whitespace-nowrap md:mb-0.5 ${tab === t.id ? "bg-white dark:bg-dark-surface text-accent-terracotta font-medium shadow-sm" : "text-on-surface-variant dark:text-light-muted hover:bg-white/60 dark:hover:bg-dark-surface"}`}>
               <span className="material-symbols-outlined text-[18px]">{t.icon}</span>{t.label}
             </button>
           ))}
