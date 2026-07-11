@@ -89,11 +89,36 @@ function RunOptions({ onClose, onQueue, canQueue }: { onClose: () => void; onQue
 // welcome screen (`variant="center"`), and pinned to the bottom during a conversation
 // (`variant="bottom"`). The input card itself is identical in both.
 export default function Composer({ variant = "bottom" }: { variant?: "center" | "bottom" }) {
-  const { submit, stop, running, enqueueJob, attachments, addAttachment, removeAttachment } = useStore();
+  const { submit, stop, running, enqueueJob, attachments, addAttachment, removeAttachment,
+          files, loadFiles } = useStore();
   const [text, setText] = useState("");
   const [opts, setOpts] = useState(false);
+  const [mention, setMention] = useState<{ query: string; start: number } | null>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // @file mention: workspace file paths that match the current @token (top 7).
+  const filePaths: string[] = (files || []).map((f: any) => typeof f === "string" ? f : f?.path).filter(Boolean);
+  const matches = mention
+    ? filePaths.filter((p) => p.toLowerCase().includes(mention.query.toLowerCase())).slice(0, 7)
+    : [];
+
+  // On every keystroke, detect an @token immediately before the caret -> open the picker.
+  const onType = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value; setText(val);
+    const caret = e.target.selectionStart ?? val.length;
+    const m = val.slice(0, caret).match(/(?:^|\s)@([\w./\-]*)$/);
+    if (m) { setMention({ query: m[1], start: caret - m[1].length - 1 }); if (!filePaths.length) loadFiles(); }
+    else if (mention) setMention(null);
+  };
+
+  const pickFile = (path: string) => {
+    const ta = taRef.current; if (!ta || !mention) return;
+    const caret = ta.selectionStart ?? text.length;
+    const next = text.slice(0, mention.start) + "@" + path + " " + text.slice(caret);
+    setText(next); setMention(null);
+    requestAnimationFrame(() => { ta.focus(); const pos = mention.start + path.length + 2; ta.setSelectionRange(pos, pos); });
+  };
 
   // Auto-grow the textarea up to a cap (Claude-style), then scroll.
   useEffect(() => {
@@ -119,7 +144,7 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
     : "Reply to the team…";
 
   const box = (
-    <div className="w-full bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-[26px] shadow-sm p-2.5 focus-within:border-accent-terracotta/40 focus-within:shadow-md transition-all">
+    <div className="relative w-full bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-[26px] shadow-sm p-2.5 focus-within:border-accent-terracotta/40 focus-within:shadow-md transition-all">
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-2 pt-1 pb-2">
           {attachments.map((a) => (
@@ -131,11 +156,28 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
           ))}
         </div>
       )}
+      {/* @file mention picker — opens when you type @ before the caret */}
+      {mention && matches.length > 0 && (
+        <div className="absolute bottom-full left-2 mb-1 w-72 max-h-56 overflow-y-auto scrollbar bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl shadow-xl z-30 p-1 fadeup">
+          <p className="text-[9px] uppercase tracking-widest text-light-muted px-2 py-1">Reference a file</p>
+          {matches.map((p) => (
+            <button key={p} type="button" onMouseDown={(e) => { e.preventDefault(); pickFile(p); }}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-surface-container-low dark:hover:bg-dark-bg transition">
+              <span className="material-symbols-outlined text-[15px] text-accent-terracotta">description</span>
+              <span className="text-[12px] font-code truncate">{p}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <textarea
         ref={taRef}
         value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } }}
+        onChange={onType}
+        onKeyDown={(e) => {
+          if (mention && matches.length && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); pickFile(matches[0]); return; }
+          if (mention && e.key === "Escape") { setMention(null); return; }
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); }
+        }}
         placeholder={placeholder}
         rows={1}
         className="w-full px-3 pt-2 pb-1 bg-transparent resize-none outline-none text-[15px] leading-6 min-h-[40px] placeholder-light-muted"
