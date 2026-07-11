@@ -624,16 +624,17 @@ function startRun(set: any, get: any, payload: any, userText: string) {
   closeSocket();
   const userMsg: Msg = { id: newMid(), role: "user", content: userText, events: [] };
   const asst: Msg = { id: newMid(), role: "assistant", content: "", events: [], pending: true };
-  // Optimistically title an untitled chat from this first message, so RECENTS updates
-  // instantly (the server does the same in db.add_message — this just avoids the lag).
-  const cur = get().sessions.find((s: any) => s.id === id);
-  const titlePatch = cur && (cur.title === "New chat" || !cur.title)
-    ? { sessions: get().sessions.map((s: any) => s.id === id ? { ...s, title: deriveTitle(userText) } : s) }
-    : {};
+  // Optimistically bump this chat to "now" (so it sorts into Today, newest-first) and
+  // title it if it's still untitled — the server does the same in db, this just avoids
+  // the lag so RECENTS updates the instant you send.
+  const nowIso = new Date().toISOString();
+  const sessionsPatch = get().sessions.map((s: any) => s.id === id
+    ? { ...s, updated_at: nowIso, ...((s.title === "New chat" || !s.title) ? { title: deriveTitle(userText) } : {}) }
+    : s);
   set({
     messages: [...get().messages, userMsg, asst],
     running: true, cost: 0, pendingApproval: null, pendingPlan: null,
-    ...titlePatch,
+    sessions: sessionsPatch,
   });
   _runStart = Date.now();
   let completed = false;
