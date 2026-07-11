@@ -107,9 +107,24 @@ def _routed_tier(events):
     return None
 
 
+def _seed_workspace(case):
+    """Pre-create files a case needs BEFORE the agent runs (`setup.files:` in the case:
+    a {relative_path: content} map). Lets a case test 'fix this existing file' instead of
+    only 'build from scratch'. Paths are confined to the eval workspace."""
+    files = ((case.get("setup") or {}).get("files")) or {}
+    for rel, content in files.items():
+        full = os.path.normpath(os.path.join(WORKSPACE, rel))
+        if not full.startswith(os.path.abspath(WORKSPACE)):
+            raise ValueError(f"setup file escapes workspace: {rel}")
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as f:
+            f.write(content if isinstance(content, str) else str(content))
+
+
 def run_case(case, suite):
     """Run one case (assumes any dry-run patch is already active) and grade it."""
     _clean_workspace()
+    _seed_workspace(case)
     cb = case.get("budget", {}) or {}
     budget = Budget(
         max_usd=cb.get("max_usd", suite.get("default_max_usd", 0.50)),

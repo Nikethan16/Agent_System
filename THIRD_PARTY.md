@@ -35,5 +35,12 @@ These took the *idea* from OpenCode but were written fresh against our architect
   `core/toolbelt.py` + `core/agent.py`; cf. OpenCode `tool/tool.ts`.
 - **Routing malformed/raw tool-call output to a repair path instead of surfacing it** —
   `core/agent.py` + `core/orchestrator.py`; cf. OpenCode `session/llm.ts` (`invalid` tool).
+- **Agent-prompt behavior patterns** — `core/agents.py` (`_EDIT_OVERLAY` / `_EXEC_OVERLAY`).
+  We studied OpenCode's MIT-licensed prompt files (`session/prompt/default.txt`, `kimi.txt`,
+  `beast.txt` — the latter two tuned for open-weight models) and re-authored the transferable
+  *patterns* in our own words for our open-model fleet: reply-code-is-not-saved,
+  question-vs-task-defaults-to-action, smallest-correct-change, never-assume-a-library,
+  root-cause-debugging, name-the-#1-failure-mode, and announce-means-execute. **No prompt text
+  is copied verbatim** — the wording is ours; only the behavioral ideas are shared.
 
 The full MIT license text for OpenCode is available at the URL above.
