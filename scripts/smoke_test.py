@@ -270,11 +270,26 @@ check("playbook: guidance names preferred agents + gates",
 check("playbook: tier-2 checklist is a compact one-line path", "→" in PB.checklist("coding"))
 
 # ---- auto-review decision (A5) ----
-check("auto-review on for complex (tier3)", orch._auto_review(3, "research") is True)
-check("auto-review on for tier2 coding", orch._auto_review(2, "coding") is True)
-check("auto-review off for trivial (tier1)", orch._auto_review(1, "coding") is False)
-check("auto-review off for tier2 lookup", orch._auto_review(2, "research") is False)
-check("resolve-review honours explicit False", orch._resolve_review(False, 3, "coding") is False)
+# _auto_review for tier-2 substantive work depends on whether a run_bash SANDBOX is
+# configured (with one, the agent self-verifies -> skip the redundant critic). Isolate
+# that env var so these checks test the documented NO-sandbox behavior deterministically
+# (the dev .env may set AGENT_BASH_DOCKER_IMAGE for live build testing).
+_ar_saved = (os.environ.pop("AGENT_BASH_DOCKER_IMAGE", None),
+             os.environ.pop("AGENT_ALWAYS_REVIEW", None))
+try:
+    check("auto-review on for complex (tier3)", orch._auto_review(3, "research") is True)
+    check("auto-review on for tier2 coding (no sandbox)", orch._auto_review(2, "coding") is True)
+    check("auto-review off for trivial (tier1)", orch._auto_review(1, "coding") is False)
+    check("auto-review off for tier2 lookup", orch._auto_review(2, "research") is False)
+    check("resolve-review honours explicit False", orch._resolve_review(False, 3, "coding") is False)
+    # With a sandbox configured, tier-2 coding self-verifies -> critic is skipped.
+    os.environ["AGENT_BASH_DOCKER_IMAGE"] = "agent-verify:latest"
+    check("auto-review off for tier2 coding WHEN sandbox present", orch._auto_review(2, "coding") is False)
+finally:
+    os.environ.pop("AGENT_BASH_DOCKER_IMAGE", None)
+    for _k, _v in zip(("AGENT_BASH_DOCKER_IMAGE", "AGENT_ALWAYS_REVIEW"), _ar_saved):
+        if _v is not None:
+            os.environ[_k] = _v
 
 # ---- resilience: key pool + fallback chains (Phase 2) -----------------------
 print("\n[core / resilience]")
