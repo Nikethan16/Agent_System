@@ -30,21 +30,21 @@ of them is ours to port; not doing so is a choice, not a limitation.
 | session management | ✅ | **HAVE** | SQLite sessions/projects/jobs |
 | web UI | basic | **HAVE (stronger)** | full React app |
 | memory | ❌ | **HAVE** | 4-type semantic memory |
-| **apply_patch (multi-file diff)** | ✅ | **MISSING** | — |
-| **real LSP (diagnostics)** | ✅ | **PARTIAL** | only post-edit syntax + pyflakes |
-| **formatter-on-edit** | ✅ | **MISSING** | — |
-| **user `/commands`** | ✅ | **MISSING** | ⌘K has fixed actions only |
-| **`@file` mention in composer** | ✅ | **MISSING** | — |
+| **apply_patch (multi-file diff)** | ✅ | **HAVE** | core/tools.py apply_patch |
+| **real LSP (diagnostics)** | ✅ | **HAVE** | core/lint.py (ruff, pyflakes fallback) + `diagnostics` tool + post-edit hook |
+| **formatter-on-edit** | ✅ | **HAVE** | AGENT_FORMAT_ON_EDIT (black) |
+| **user `/commands`** | ✅ | **HAVE** | core/commands.py, config/commands, `/` menu + palette |
+| **`@file` mention in composer** | ✅ | **HAVE** | Composer.tsx @ picker |
 | **session sharing (public link)** | ✅ | **MISSING** | markdown export only |
 | **TUI / CLI / SDK** | ✅ | **PARTIAL** | API + run.ps1; no unified CLI |
 | **git-bot (webhook trigger)** | ✅ | **PARTIAL** | repo-engineer exists; no webhook |
 
 ## Prioritized gaps to close (reach parity)
 
-**High value**
-1. **`@file` mention in the composer** — low effort, highest daily-use UX affordance. Picker in `web/src/components/Composer.tsx` that inlines a file path/content.
-2. **User-authored `/commands`** — low-med effort. Load `.md`/YAML command templates (`$ARGUMENTS`, `!shell`, `@file`) from a config dir; parse in `server/chat.py`; surface in Composer + ⌘K palette.
-3. **Real LSP tool** — med-high effort, biggest *coding-quality* lever. An `lsp` tool + per-language server feeding diagnostics into the agent loop, upgrading the syntax/pyflakes stand-in in `core/tools.py`.
+**High value — ✅ all closed**
+1. ~~**`@file` mention in the composer**~~ — DONE. Picker in `web/src/components/Composer.tsx` inlines a file path.
+2. ~~**User-authored `/commands`**~~ — DONE. `core/commands.py` loads `.md` templates (`$ARGUMENTS`/`$1..$9`, `!shell` via the sandbox, `@file`) from `config/commands` (+ `AGENT_COMMANDS_DIR`); expanded in `server/chat.py`; surfaced in the composer `/` menu + ⌘K palette (`GET /api/commands`).
+3. ~~**Real LSP tool**~~ — DONE. `core/lint.py` runs a real analyser (ruff, pyflakes+compile fallback) as the `diagnostics` tool (granted to the 5 code agents) and in the post-edit hook. Static-only, workspace-confined.
 
 **Medium**
 4. **`apply_patch`** — multi-file unified-diff apply; reuse checkpoint diff code; register in `core/toolbelt.py`.

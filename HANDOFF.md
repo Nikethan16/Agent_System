@@ -4,7 +4,36 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## ⚡ LATEST (2026-07-11) — cost/quality + paid fleet + Skills Hub + UI flow (branch `claude/cost-quality-config`, PUSHED, NOT merged)
+## ⚡ LATEST (2026-07-11, pt.2) — `/commands`, real LSP, UI redesign (branch `claude/commands-and-lsp`, PUSHED, NOT merged)
+Closed the two remaining OpenCode-parity gaps and shipped the UI redesign. **9 commits,
+all validated: 258 pytest + 170 smoke green, `tsc` clean, `npm build` clean.** Not merged
+to `main` (held for the owner). Done on a fresh Linux clone — **no local `.env`/keys/Docker
+here**, so paid-model runs, the VM deploy, and eval A/B still need the owner's laptop/VM.
+
+1. **User-authored `/commands`** (`core/commands.py`, `config/commands/`, `server/api/commands.py`,
+   wired in `server/chat.py`). `.md` templates → `/name`; substitutions `$ARGUMENTS`/`$1..$9`,
+   `@file` (sandboxed read), `` !`shell` `` (via Docker `run_bash` — safely no-ops with no
+   image, never touches host). Args inserted literally, never re-scanned (no injection).
+   Frontend: `/` menu in the composer, ⌘K palette entries (`GET /api/commands`).
+2. **Real LSP / diagnostics** (`core/lint.py`) — a `diagnostics` tool (granted to the 5 code
+   agents) + the post-edit hook now use **ruff** when present (undefined names, imports, syntax,
+   likely bugs, fix hints), falling back to in-process pyflakes+compile. Static-only,
+   workspace-confined. `ruff` added to `requirements.txt`. Replaces the old pyflakes stand-in.
+3. **UI redesign** (mockup: https://claude.ai/code/artifact/73a43488-7a32-4150-a376-ff02aed3c53d):
+   (a) **chat list** grouped by recency (Pinned/Today/Yesterday/…) + auto-titled from the first
+   message (`db._derive_title` + optimistic UI) + metadata subline — fixes the "New chat" pile;
+   (b) **run-summary header** — verdict pill + metric columns (time/steps/tokens/%cached/cost/tools);
+   (c) **right panel** split into Changed-this-run (with +/- deltas) vs Context, typed rows,
+   segmented preview header.
+4. **Fixed 2 pre-existing latent bugs** surfaced by `tsc` (the app builds via vite, which skips
+   type-checking): duplicate `setRouting` in `api.ts` (fleet def shadowed the models one → split
+   into `setRouting`/`setFleetRouting`); `FilesPanel` expand-view rendered `<Body>` without its
+   `id` prop (dropped raw image/PDF links). `tsc --noEmit` is now clean.
+
+**To ship:** merge `claude/commands-and-lsp` → `main` (auto-deploys). `/commands` and the UI
+work run keyless; the LSP tool wants `ruff` on the box (`pip install -r requirements.txt`).
+
+## LATEST (2026-07-11, pt.1) — cost/quality + paid fleet + Skills Hub + UI flow (branch `claude/cost-quality-config`, MERGED via PR #14)
 Big multi-part session on branch **`claude/cost-quality-config`** — **20 commits, all
 validated (230 pytest + 170 smoke green, frontend builds).** PUSHED to origin so it can be
 pulled on another machine; **NOT merged to `main`** (main auto-deploys → held for the owner).
@@ -215,14 +244,15 @@ Replicated the Claude Code workflow and fixed the root causes of multi-minute ha
    locally but re-check on the VM); ensure `agent-verify:latest` Docker image exists on the VM
    (rebuild via `docker/build-verify-image.sh` if not); set `AGENT_DAILY_USD_CAP` (~$2-3/day)
    now that paid keys are live.
-2. **Remaining OpenCode parity** (design in `docs/OPENCODE_GAP.md`): user-authored `/commands`
-   (config-dir templates, `$ARGUMENTS`/`!shell`/`@file`) and **real LSP** (language-server
-   diagnostics into the agent loop — the biggest coding-quality lever, and the one heavy item).
+2. ~~**Remaining OpenCode parity**~~ — DONE (pt.2): user-authored `/commands` + real LSP shipped
+   on `claude/commands-and-lsp`. `docs/OPENCODE_GAP.md` updated (all High-value gaps closed).
 3. **Self-engineering dogfood test** (not yet run): seed an existing multi-file project in the
    workspace, ask the platform to "add feature X + a test, run it" and confirm the read→edit→
-   run loop works on a live codebase (proves "point it at a repo, ask for a feature").
-4. **Finish the UI redesign** per the mockups artifact — the run-flow + @file are built;
-   remaining polish: right-panel hierarchy, always-visible run-summary header refinements.
+   run loop works on a live codebase (proves "point it at a repo, ask for a feature"). The new
+   `diagnostics` tool makes this stronger — the agent can lint before running.
+4. ~~**Finish the UI redesign**~~ — DONE (pt.2): chat-list grouping/titling, run-summary header,
+   right-panel hierarchy shipped. Verify visually on a machine with data/keys (this session's
+   clone had none). Further polish (mobile pass) still open.
 5. **A/B validation on `evals/cases.yaml`** once comfortable — V4-Pro-plan vs GLM-plan, and the
    ported prompt overlays on/off, on real numbers (harness gained `setup.files` seeding).
 6. *(carried)* off-site backups (`BACKUP_UPLOAD_CMD`), CI actions bump off Node-20, mobile pass.
