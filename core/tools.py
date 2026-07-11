@@ -972,8 +972,12 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "run_bash",
-            "description": "Run a shell command in the workspace (tests, git, "
-                           "package installs, executing code).",
+            "description": "Run a shell command (tests, git, executing code). The command "
+                           "already runs INSIDE your workspace as the current directory — "
+                           "use relative paths (e.g. `python -m pytest`, `ls`); do NOT `cd` "
+                           "to a guessed absolute path like /workspace. Common test/build and "
+                           "document libraries (pytest, pandas, openpyxl, python-docx, "
+                           "reportlab, …) are preinstalled and there is no network.",
             "parameters": {
                 "type": "object",
                 "properties": {"command": {"type": "string"}},
