@@ -607,7 +607,12 @@ def _parse_patch(patch: str) -> list:
     for line in patch.replace("\r\n", "\n").split("\n"):
         if line.startswith("diff --git") or line.startswith("--- "):
             if line.startswith("--- "):
-                _flush_hunk()
+                # A new '---' header finalizes the previous file (plain multi-file diffs
+                # have no 'diff --git' separator between sections).
+                if cur is not None and cur.get("path"):
+                    _flush_file()
+                else:
+                    _flush_hunk()
                 if cur is None:
                     cur = {"path": None, "is_new": False, "hunks": []}
                 src = line[4:].strip()
