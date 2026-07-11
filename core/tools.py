@@ -286,6 +286,29 @@ def _pyflakes_warning(path: str, content: str) -> str:
             ". Likely bugs (undefined names / bad imports) — fix them before continuing.")
 
 
+# ---- formatter-on-edit (opt-in) ---------------------------------------------
+# After a write/edit, optionally auto-format the file so the agent's output matches the
+# project's style (OpenCode-parity). IN-PROCESS + gated: only runs when AGENT_FORMAT_ON_EDIT
+# is set AND the formatter library is installed — so core stays offline/subprocess-free and
+# nothing surprises a user who didn't opt in. Python via `black` today; extend per language.
+def _maybe_format(full: str, path: str) -> None:
+    if os.environ.get("AGENT_FORMAT_ON_EDIT", "").strip().lower() not in ("1", "true", "yes"):
+        return
+    if os.path.splitext(path)[1].lower() != ".py":
+        return
+    try:
+        import black
+        with open(full, encoding="utf-8") as f:
+            src = f.read()
+        formatted = black.format_str(src, mode=black.Mode())
+        if formatted != src:
+            with open(full, "w", encoding="utf-8") as f:
+                f.write(formatted)
+            _record_mtime(full)      # our own format write isn't a stale-conflict next time
+    except Exception:
+        pass                         # black absent, or file doesn't parse -> leave as-is
+
+
 def _postedit_warning(path: str, content: str) -> str:
     if os.environ.get("AGENT_POSTEDIT_VERIFY", "").strip().lower() in ("0", "false", "no"):
         return ""
@@ -557,7 +580,137 @@ def edit_file(path: str, old_string: str, new_string: str = "",
     n = count if replace_all else 1
     diff = _short_diff(before, after)
     out = f"Edited {path}: replaced {n} occurrence(s)." + (f"\n{diff}" if diff else "")
+    _maybe_format(full, path)
     return out + _postedit_warning(path, after)
+
+
+# ---- apply_patch: apply a multi-file unified diff in one call ----------------
+def _parse_patch(patch: str) -> list:
+    """Split a unified diff into [(path, is_new, hunks)] where each hunk is
+    (old_block, new_block). Tolerant of `diff --git`, `a/`,`b/` prefixes, /dev/null."""
+    files, cur = [], None
+    hunk_old, hunk_new = [], []
+
+    def _flush_hunk():
+        nonlocal hunk_old, hunk_new
+        if cur is not None and (hunk_old or hunk_new):
+            cur["hunks"].append(("\n".join(hunk_old), "\n".join(hunk_new)))
+        hunk_old, hunk_new = [], []
+
+    def _flush_file():
+        nonlocal cur
+        _flush_hunk()
+        if cur is not None:
+            files.append(cur)
+        cur = None
+
+    for line in patch.replace("\r\n", "\n").split("\n"):
+        if line.startswith("diff --git") or line.startswith("--- "):
+            if line.startswith("--- "):
+                _flush_hunk()
+                if cur is None:
+                    cur = {"path": None, "is_new": False, "hunks": []}
+                src = line[4:].strip()
+                cur["is_new"] = src in ("/dev/null", "a//dev/null")
+            elif line.startswith("diff --git"):
+                _flush_file()
+            continue
+        if line.startswith("+++ "):
+            dst = line[4:].strip()
+            for pre in ("b/", "a/"):
+                if dst.startswith(pre):
+                    dst = dst[len(pre):]
+            if cur is None:
+                cur = {"path": None, "is_new": False, "hunks": []}
+            cur["path"] = None if dst == "/dev/null" else dst
+            continue
+        if line.startswith("@@"):
+            _flush_hunk()
+            continue
+        if cur is None:
+            continue
+        if line.startswith("-"):
+            hunk_old.append(line[1:])
+        elif line.startswith("+"):
+            hunk_new.append(line[1:])
+        elif line.startswith(" "):
+            hunk_old.append(line[1:])
+            hunk_new.append(line[1:])
+        # a bare "" between hunks is context noise — ignore
+    _flush_file()
+    return [f for f in files if f.get("path")]
+
+
+def apply_patch(patch: str) -> str:
+    """Apply a unified diff (git-style `diff -u`) touching one or more files in the
+    workspace, in a single call. Each hunk's old block is located with the same
+    whitespace/indentation-tolerant matcher as edit_file, so near-miss context still
+    applies; a hunk that can't be matched is REFUSED (not guessed) and reported. Use this
+    for a multi-file change; use write_file for a brand-new file and edit_file for a single
+    surgical edit."""
+    try:
+        files = _parse_patch(patch or "")
+    except Exception as e:
+        return f"ERROR parsing patch: {e}"
+    if not files:
+        return ("ERROR: no file sections found. Provide a unified diff with '--- a/path' / "
+                "'+++ b/path' headers and '@@' hunks.")
+    results, changed = [], 0
+    for fdef in files:
+        path = fdef["path"]
+        try:
+            full = _safe(path)
+        except ValueError as e:
+            results.append(f"  {path}: ERROR {e}")
+            continue
+        # New file: concatenate the added lines.
+        if fdef["is_new"] or not os.path.isfile(full):
+            content = "\n".join(nw for _old, nw in fdef["hunks"])
+            try:
+                os.makedirs(os.path.dirname(full) or ".", exist_ok=True)
+                with open(full, "w", encoding="utf-8") as f:
+                    f.write(content)
+                _record_mtime(full)
+                changed += 1
+                results.append(f"  {path}: created ({len(content.splitlines())} lines)")
+            except OSError as e:
+                results.append(f"  {path}: ERROR writing: {e}")
+            continue
+        # Existing file: apply each hunk via the fuzzy matcher.
+        try:
+            with open(full, encoding="utf-8", errors="replace", newline="") as f:
+                raw = f.read()
+        except OSError as e:
+            results.append(f"  {path}: ERROR reading: {e}")
+            continue
+        ending = "\r\n" if "\r\n" in raw else "\n"
+        text = raw.replace("\r\n", "\n")
+        ok, failed = 0, 0
+        for old_block, new_block in fdef["hunks"]:
+            if not old_block.strip():
+                continue
+            cand, cnt = _find_match(text, old_block, replace_all=False)
+            if cand in (None, "AMBIGUOUS"):
+                failed += 1
+                continue
+            text = text.replace(cand, new_block, 1)
+            ok += 1
+        if failed:
+            results.append(f"  {path}: {ok} hunk(s) applied, {failed} could NOT be matched "
+                           "(re-read the file and regenerate the diff for those).")
+        if ok:
+            try:
+                with open(full, "w", encoding="utf-8", newline="") as f:
+                    f.write(text.replace("\n", ending) if ending == "\r\n" else text)
+                _record_mtime(full)
+                _maybe_format(full, path)
+                changed += 1
+                if not failed:
+                    results.append(f"  {path}: {ok} hunk(s) applied")
+            except OSError as e:
+                results.append(f"  {path}: ERROR writing: {e}")
+    head = f"apply_patch: updated {changed} file(s)."
+    return head + "\n" + "\n".join(results)
 
 
 def list_files(directory: str = ".") -> str:
