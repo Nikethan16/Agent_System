@@ -236,6 +236,11 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
     names = allowed_tools if allowed_tools is not None else toolbelt.names()
     schemas = toolbelt.schemas_for(names)
 
+    # The verification gate only makes sense for an agent that CAN execute: if it has no
+    # run_bash, "the code was NOT executed" is meaningless (e.g. a research/doc agent that
+    # only writes text) — nudging or banner-flagging it would just mislead. Disarm it.
+    verify_run = verify_run and ("run_bash" in names)
+
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": task},
