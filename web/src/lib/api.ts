@@ -76,7 +76,9 @@ export const api = {
     GET(`/api/skills/available?source=${encodeURIComponent(source)}`).then((r: any) => r?.available || []),
   skillView: (name: string) => GET(`/api/skills/${encodeURIComponent(name)}`),
   skillSync: (source: string, name: string) => POST("/api/skills/sync", { source, name }),
-  skillEnable: (name: string) => POST(`/api/skills/${encodeURIComponent(name)}/enable`, {}),
+  // enable is gated: a 'risky' skill returns 409 unless force=true (security override).
+  skillEnable: (name: string, force = false) =>
+    POST(`/api/skills/${encodeURIComponent(name)}/enable${force ? "?force=true" : ""}`, {}),
   skillDisable: (name: string) => POST(`/api/skills/${encodeURIComponent(name)}/disable`, {}),
   spend: () => GET("/api/spend"),
   spendOverview: () => GET("/api/spend/overview"),

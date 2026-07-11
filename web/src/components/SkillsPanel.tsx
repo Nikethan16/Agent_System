@@ -10,6 +10,8 @@ export default function SkillsPanel() {
   const [err, setErr] = useState<string>("");
   const [viewing, setViewing] = useState<string>("");  // skill whose body is expanded
   const [body, setBody] = useState<string>("");
+  const [scan, setScan] = useState<any>(null);         // security scan for the viewed skill
+  const [pendingForce, setPendingForce] = useState<string>(""); // risky skill awaiting override
 
   // Hub (browse + sync) state
   const [showHub, setShowHub] = useState(false);
@@ -35,14 +37,24 @@ export default function SkillsPanel() {
     finally { setBusy(""); }
   };
 
-  const toggle = (s: any) =>
-    guard(s.name, () => (s.enabled ? api.skillDisable(s.name) : api.skillEnable(s.name)));
+  const toggle = async (s: any, force = false) => {
+    if (s.enabled) { guard(s.name, () => api.skillDisable(s.name)); return; }
+    setBusy(s.name); setErr("");
+    try { await api.skillEnable(s.name, force); await loadSkills(); }
+    catch (e: any) {
+      // 409 = the scan flagged it risky; offer an explicit override.
+      if (e?.status === 409) setPendingForce(s.name);
+      else setErr(e?.message || String(e));
+    } finally { setBusy(""); }
+  };
 
   const view = async (name: string) => {
     if (viewing === name) { setViewing(""); return; }
-    setViewing(name); setBody("");
-    try { setBody((await api.skillView(name))?.body || "(empty)"); }
-    catch (e: any) { setBody(`error: ${e?.message || e}`); }
+    setViewing(name); setBody(""); setScan(null);
+    try {
+      const v = await api.skillView(name);
+      setBody(v?.body || "(empty)"); setScan(v?.scan || null);
+    } catch (e: any) { setBody(`error: ${e?.message || e}`); }
   };
 
   const openHub = async () => {
@@ -128,6 +140,12 @@ export default function SkillsPanel() {
               <div className="flex items-center gap-2 mb-1">
                 <span className="material-symbols-outlined text-accent-terracotta text-[18px]">bolt</span>
                 <h3 className="text-sm font-semibold flex-1 truncate font-code">{s.name}</h3>
+                {s.risk && s.risk !== "safe" && (
+                  <span title={`${s.findings} security finding(s)`}
+                    className={`text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full font-bold ${s.risk === "risky" ? "bg-red-500/15 text-red-600 dark:text-red-400" : "bg-amber-500/15 text-amber-600 dark:text-amber-400"}`}>
+                    {s.risk}
+                  </span>
+                )}
                 {on && (
                   <span className="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-accent-terracotta/15 text-accent-terracotta font-bold">
                     applied
@@ -142,6 +160,17 @@ export default function SkillsPanel() {
               <p className="text-[11px] leading-4 text-on-surface-variant dark:text-light-muted line-clamp-4">
                 {s.description}
               </p>
+              {pendingForce === s.name && (
+                <div className="mt-2 text-[10px] rounded-md border border-red-500/40 bg-red-500/5 p-2">
+                  <p className="text-red-600 dark:text-red-400 mb-1.5">This skill has HIGH-risk findings. Review them below before enabling.</p>
+                  <div className="flex gap-2">
+                    <button onClick={() => { setPendingForce(""); toggle(s, true); }}
+                      className="text-[10px] px-2 py-0.5 rounded-md bg-red-500/15 text-red-600 dark:text-red-400 font-bold">Override &amp; enable</button>
+                    <button onClick={() => { setPendingForce(""); if (viewing !== s.name) view(s.name); }}
+                      className="text-[10px] px-2 py-0.5 rounded-md bg-light-muted/15 text-light-muted">Review first</button>
+                  </div>
+                </div>
+              )}
               <div className="flex items-center gap-2 mt-1.5">
                 {s.source && <span className="text-[9px] text-light-muted font-code truncate">{s.source}</span>}
                 <button onClick={() => view(s.name)}
@@ -150,9 +179,23 @@ export default function SkillsPanel() {
                 </button>
               </div>
               {viewing === s.name && (
-                <pre className="mt-2 text-[10px] leading-4 whitespace-pre-wrap break-words max-h-56 overflow-y-auto scrollbar bg-surface-container-low dark:bg-dark-bg rounded-md p-2 text-on-surface-variant dark:text-light-muted">
-                  {body || "…"}
-                </pre>
+                <div className="mt-2">
+                  {scan && scan.findings && scan.findings.length > 0 && (
+                    <div className="mb-2 text-[10px] rounded-md bg-surface-container-low dark:bg-dark-bg p-2">
+                      <p className="uppercase tracking-wide text-light-muted mb-1">Security scan · {scan.risk}</p>
+                      {scan.findings.map((f: any, i: number) => (
+                        <div key={i} className="flex gap-1.5 py-0.5">
+                          <span className={f.severity === "high" ? "text-red-500" : "text-amber-500"}>●</span>
+                          <span className="font-code truncate flex-1" title={f.snippet}>{f.file}:{f.line}</span>
+                          <span className="text-light-muted truncate">{f.why}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <pre className="text-[10px] leading-4 whitespace-pre-wrap break-words max-h-56 overflow-y-auto scrollbar bg-surface-container-low dark:bg-dark-bg rounded-md p-2 text-on-surface-variant dark:text-light-muted">
+                    {body || "…"}
+                  </pre>
+                </div>
               )}
             </div>
           );

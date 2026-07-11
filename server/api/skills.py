@@ -57,19 +57,25 @@ def sync(body: SyncIn):
 
 @router.get("/{name}")
 def view(name: str):
-    """The SKILL.md body — so a human can REVIEW a synced skill before enabling it."""
+    """The SKILL.md body + the security scan — so a human can REVIEW a synced skill
+    (and see its risky patterns) before enabling it."""
     s = skill_lib.get(name)
     if not s:
         raise HTTPException(404, "skill not found")
     return {"name": s.name, "description": s.description, "enabled": s.enabled,
-            "source": s.source, "body": s.body}
+            "source": s.source, "body": s.body, "scan": skill_lib.scan(name)}
 
 
 @router.post("/{name}/enable")
-def enable(name: str):
+def enable(name: str, force: bool = False):
+    """Enable a skill. Blocked (409) if the scan flags it 'risky' unless force=true —
+    the security gate on top of the human review gate."""
     if not skill_lib.get(name):
         raise HTTPException(404, "skill not found")
-    skill_lib.set_enabled(name, True)
+    try:
+        skill_lib.set_enabled(name, True, force=force)
+    except skill_lib.SkillBlocked as e:
+        raise HTTPException(409, str(e))
     return {"ok": True, "skills": skill_lib.all_catalog()}
 
 

@@ -93,12 +93,37 @@ def load():
                 except Exception:
                     pass
     _SKILLS = out
+    _scan_cache.clear()          # skills changed -> re-scan lazily
     return out
 
 
-def set_enabled(name: str, enabled: bool) -> bool:
-    """Enable/disable a skill (persisted). Returns the new state; reloads so select()
-    reflects it immediately. Enabling is the human review-gate for a synced skill."""
+# Security-scan cache, keyed by skill path (skills change rarely; scanning the docx/pptx
+# schema bundles every list call would be wasteful). Cleared on load().
+_scan_cache: dict = {}
+
+
+def scan(name: str) -> dict:
+    """The security scan for a skill (cached). {risk: safe|caution|risky, findings, scanned}."""
+    from . import skill_scan
+    s = get(name)
+    if not s:
+        return {"risk": "safe", "findings": [], "scanned": 0}
+    if s.path not in _scan_cache:
+        _scan_cache[s.path] = skill_scan.scan_skill(s)
+    return _scan_cache[s.path]
+
+
+class SkillBlocked(Exception):
+    """Raised when enabling a skill the scan flags 'risky' without an override."""
+
+
+def set_enabled(name: str, enabled: bool, force: bool = False) -> bool:
+    """Enable/disable a skill (persisted). ENABLING a skill the scanner flags 'risky' is
+    BLOCKED unless force=True — the security gate on top of the review gate. Returns the
+    new state."""
+    if enabled and not force and scan(name).get("risk") == "risky":
+        raise SkillBlocked(
+            f"'{name}' has HIGH-risk findings — review them, then enable with override if intended.")
     with _state_lock:
         state = _load_state()
         state[name] = bool(enabled)
@@ -110,12 +135,16 @@ def set_enabled(name: str, enabled: bool) -> bool:
 
 
 def all_catalog() -> list:
-    """Every skill (enabled AND disabled) with its state + source — for the Skills tab.
-    (catalog() below returns only ENABLED skills, for the lead's selectable menu.)"""
-    return [{"name": s.name, "description": s.description,
-             "enabled": s.enabled, "source": s.source,
-             "has_scripts": os.path.isdir(os.path.join(s.path, "scripts"))}
-            for s in _SKILLS]
+    """Every skill (enabled AND disabled) with its state, source + security scan — for the
+    Skills tab. (catalog() below returns only ENABLED skills, for the lead's menu.)"""
+    out = []
+    for s in _SKILLS:
+        sc = scan(s.name)
+        out.append({"name": s.name, "description": s.description,
+                    "enabled": s.enabled, "source": s.source,
+                    "has_scripts": os.path.isdir(os.path.join(s.path, "scripts")),
+                    "risk": sc["risk"], "findings": len(sc["findings"])})
+    return out
 
 
 load()
