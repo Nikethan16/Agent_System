@@ -54,17 +54,18 @@ def test_no_paid_keys_falls_to_free_fleet(reg, monkeypatch):
 
 
 def test_free_fallback_order_unchanged_vs_main(reg, monkeypatch):
-    """Regression guard for the review finding: replacing free entries with inert paid
-    ones must not reorder the free fleet. These are main's exact free chains."""
+    """Regression guard: replacing free entries with inert paid ones must not reorder the
+    free fleet. NOTE (2026-07-12): nvidia_nim/z-ai/glm-5.1 was REMOVED after verify_models
+    confirmed NVIDIA retired it (HTTP 410) — so the curated free coding lead is now
+    qwen3.5-122b then nemotron-super (slots past that are cost-ranked auto-append)."""
     _set_free(monkeypatch)
     r = reg()
-    # The three benchmarked free backups the review found were being dropped must lead
-    # the free coding chain, in order (the 4th slot is cost-ranked auto-append — don't pin).
-    assert r.model_chain("tier3", task_type="coding")[:3] == [
-        "nvidia_nim/z-ai/glm-5.1",
+    assert r.model_chain("tier3", task_type="coding")[:2] == [
         "nvidia_nim/qwen/qwen3.5-122b-a10b",
         "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
     ]
+    # And the dead model must not reappear anywhere in the chain.
+    assert "nvidia_nim/z-ai/glm-5.1" not in r.model_chain("tier3", task_type="coding")
     # reasoning: nemotron-super leads, NIM deepseek-v4-pro is the curated first fallback
     # (NOT minimax — the review caught minimax being promoted by cost-rank auto-append).
     reasoning = r.model_chain("tier3", task_type="reasoning")
