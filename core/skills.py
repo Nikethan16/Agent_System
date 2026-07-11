@@ -89,6 +89,14 @@ def load():
                     # Bundled skills (no state entry) default enabled; synced skills are
                     # written into state as False on sync until a human reviews + enables.
                     s.enabled = bool(state.get(s.name, True))
+                    # Provenance sidecar (written by skill_sync) marks a GitHub-synced skill.
+                    src_file = os.path.join(os.path.dirname(md), ".source")
+                    if os.path.isfile(src_file):
+                        try:
+                            with open(src_file, encoding="utf-8") as sf:
+                                s.source = sf.read().strip() or s.source
+                        except OSError:
+                            pass
                     out.append(s)
                 except Exception:
                     pass

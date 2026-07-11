@@ -135,8 +135,15 @@ def sync_skill(source_name: str, skill_name: str) -> dict:
     if not os.path.isfile(os.path.join(skill_root, "SKILL.md")):
         raise ValueError(f"{skill_name}: no SKILL.md found in the source folder")
 
+    # Record provenance in a sidecar so the UI/scan can distinguish a GitHub-synced skill
+    # from a trusted bundled one (load() reads .source back into Skill.source).
+    source = f"github:{src['repo']}"
+    try:
+        with open(os.path.join(skill_root, ".source"), "w", encoding="utf-8") as f:
+            f.write(source)
+    except OSError:
+        pass
     # Disabled on arrival — human must review + enable before it can be selected.
     skill_lib.set_enabled(skill_name, False)
     skill_lib.load()
-    return {"name": skill_name, "files": count[0], "enabled": False,
-            "source": f"github:{src['repo']}"}
+    return {"name": skill_name, "files": count[0], "enabled": False, "source": source}

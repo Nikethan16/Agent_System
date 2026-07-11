@@ -17,7 +17,7 @@ sources:
   - name: anthropic-skills
     repo: anthropics/skills
     branch: main
-    path: ""
+    path: skills
 
   # Add your own curated sources here, e.g.:
   # - name: my-team-skills

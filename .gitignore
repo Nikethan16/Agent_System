@@ -48,3 +48,7 @@ _deck_build/
 
 # local backups
 backups/
+
+# synced skills are pulled at runtime (disabled+scanned); do not commit them
+skills/*/.source
+skills/webapp-testing/\nskills/mcp-builder/\nskills/skill-creator/
