@@ -67,62 +67,95 @@ worker_tier: tier2
 # "Routing & fallback" editor edits.)
 #
 # DESIGN (finalized 2026-07-11, fit -> reliability -> cost):
-#   plan/lead   deepseek-v4-pro   frontier reasoning at ~5x cheaper output than GLM
-#   build       deepseek-v4-flash near-free with its automatic prompt cache (90%+ hits)
-#   review/qa   glm-5.2 (z.ai)    best tool-caller judges + runs the tests
-#   research    nemotron (deepinfra)  reliable tool-calls at ~12x below GLM cost
+#   plan/lead   deepseek-v4-pro    frontier reasoning at ~5x cheaper output than GLM
+#   build       deepseek-v4-flash  near-free with its automatic prompt cache (90%+ hits)
+#   review/qa   GLM-4.6 (deepinfra) strong open tool-caller judges + runs the tests
+#   research    nemotron (deepinfra) reliable tool-calls at ~12x below GLM cost
 #   Every chain spans >=2 providers so one provider's outage never stalls a run.
+# KEYS: DEEPSEEK_API_KEY + DEEPINFRA_API_KEY run the whole paid fleet (2 keys). GLM
+#   comes from DeepInfra (FP4) — reliable Grade-A host, cheaper than z.ai; if the hard
+#   tool-calling cases ever need z.ai's FP8 GLM, add it as a deeper fallback + ZAI key.
+# EACH chain lists the paid leads FIRST, then the FULL free NIM/Gemini order — so with
+#   no paid keys the chain resolves EXACTLY as it did before this change (model_chain
+#   skips key-less models, then truncates), and no benchmarked free fallback is lost.
 routing:
   chat:      ["deepseek/deepseek-v4-flash",
               "gemini/gemini-2.5-flash-lite",
-              "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b"]
-  # The LEAD/planner: V4 Pro plans (reasoning fit, cheap long outputs); GLM is the
-  # quality fallback; Nemotron-Super the different-provider third. NIM's nemotron
-  # stays as the free floor. (NIM deepseek/minimax stay demoted: 45s+ timeouts.)
+              "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b",
+              "nvidia_nim/z-ai/glm-5.1"]
+  # The LEAD/planner: V4 Pro plans (reasoning fit, cheap long outputs); DeepInfra
+  # Nemotron + GLM are the paid fallbacks. Free floor keeps main's curated order:
+  # NIM nemotron-super, then NIM deepseek-v4-pro, then minimax (both demoted, 45s+).
   reasoning: ["deepseek/deepseek-v4-pro",
-              "zai/glm-5.2",
               "deepinfra/nvidia/nemotron-3-super-120b",
-              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"]
+              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+              "nvidia_nim/deepseek-ai/deepseek-v4-pro",
+              "nvidia_nim/minimaxai/minimax-m3"]
   planning:  ["deepseek/deepseek-v4-pro",
-              "zai/glm-5.2",
               "deepinfra/nvidia/nemotron-3-super-120b",
-              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"]
+              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+              "nvidia_nim/deepseek-ai/deepseek-v4-pro",
+              "nvidia_nim/minimaxai/minimax-m3"]
+  # math is a reasoning-class type the router can emit — same chain as planning so a
+  # math task also leads with the paid reasoner instead of falling to the free floor.
+  math:      ["deepseek/deepseek-v4-pro",
+              "deepinfra/nvidia/nemotron-3-super-120b",
+              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+              "nvidia_nim/deepseek-ai/deepseek-v4-pro"]
   # The BUILDER: V4-Flash direct is the community-proven build workhorse (its 0/10
   # in our 2026-06-27 benchmark was NIM timing out — a provider failure, not the
-  # model; direct DeepSeek serves it reliably + cached). Qwen3-Coder and GLM back it
-  # up; free NIM GLM-5.1 (benchmark 10/10) is the floor.
+  # model; direct DeepSeek serves it reliably + cached). Qwen3-Coder + GLM back it up.
+  # Free floor keeps main's order: NIM GLM-5.1 (10/10), qwen3.5-122b (9/10), nemotron.
   coding:    ["deepseek/deepseek-v4-flash",
               "deepinfra/qwen/qwen3-coder-480b",
-              "zai/glm-5.2",
-              "nvidia_nim/z-ai/glm-5.1"]
-  # REVIEW/QA (the critic routes here via its `qa` capability): short outputs, high
-  # judgment, must reliably run_bash the tests -> GLM's tool-calling earns its price.
-  qa:        ["zai/glm-5.2",
+              "deepinfra/zai-org/GLM-4.6",
+              "nvidia_nim/z-ai/glm-5.1",
+              "nvidia_nim/qwen/qwen3.5-122b-a10b",
+              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"]
+  # frontend is coding-class but a distinct task_type (the frontend agent's capability
+  # + dispatcher tag) — alias it to the coding chain so delegated UI builds get the
+  # curated builder fleet, not the generic cheapest-capable pool.
+  frontend:  ["deepseek/deepseek-v4-flash",
+              "deepinfra/qwen/qwen3-coder-480b",
+              "deepinfra/zai-org/GLM-4.6",
+              "nvidia_nim/z-ai/glm-5.1",
+              "nvidia_nim/qwen/qwen3.5-122b-a10b"]
+  # REVIEW/QA: short outputs, high judgment, must reliably run_bash the tests -> GLM's
+  # tool-calling leads. Both the critic (capability 'qa') and code-reviewer (capability
+  # 'review') route here, so 'review' is defined as an alias of this chain.
+  qa:        ["deepinfra/zai-org/GLM-4.6",
               "deepseek/deepseek-v4-pro",
               "deepinfra/nvidia/nemotron-3-super-120b",
-              "nvidia_nim/z-ai/glm-5.1"]
+              "nvidia_nim/z-ai/glm-5.1",
+              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"]
+  review:    ["deepinfra/zai-org/GLM-4.6",
+              "deepseek/deepseek-v4-pro",
+              "deepinfra/nvidia/nemotron-3-super-120b",
+              "nvidia_nim/z-ai/glm-5.1",
+              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"]
   # RESEARCH is input-heavy with LOW cache hits (every fetch is new content), so an
   # expensive model burns money here — Nemotron-Super is a first-class tool-caller at
-  # ~12x below GLM cost (validated 2026-07-11). Gemini Flash stays the free reliable
-  # tool-calling fallback (NIM qwen emitted XML tool calls as raw text).
+  # ~12x below GLM cost (validated 2026-07-11). Free floor keeps main's order: Gemini
+  # Flash (reliable tool-calls), qwen3.5-122b, then NIM GLM-5.1.
   research:  ["deepinfra/nvidia/nemotron-3-super-120b",
               "deepseek/deepseek-v4-flash",
               "gemini/gemini-2.5-flash",
-              "nvidia_nim/qwen/qwen3.5-122b-a10b"]
+              "nvidia_nim/qwen/qwen3.5-122b-a10b",
+              "nvidia_nim/z-ai/glm-5.1"]
   general:   ["deepseek/deepseek-v4-flash",
               "nvidia_nim/z-ai/glm-5.1",
-              "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b",
               "nvidia_nim/meta/llama-4-maverick-17b-128e-instruct"]
   writing:   ["deepseek/deepseek-v4-flash",
-              "zai/glm-5.2",
-              "nvidia_nim/z-ai/glm-5.1",
-              "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b"]
+              "deepinfra/zai-org/GLM-4.6",
+              "nvidia_nim/z-ai/glm-5.1"]
   classify:  ["gemini/gemini-2.5-flash-lite",
               "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b"]
+  # data leads with the code-specialist; free floor keeps main's order (qwen, glm, nemotron).
   data:      ["deepinfra/qwen/qwen3-coder-480b",
               "deepseek/deepseek-v4-flash",
               "nvidia_nim/qwen/qwen3.5-122b-a10b",
-              "nvidia_nim/z-ai/glm-5.1"]
+              "nvidia_nim/z-ai/glm-5.1",
+              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"]
   vision:    ["deepinfra/qwen/qwen3-vl",
               "nvidia_nim/meta/llama-4-maverick-17b-128e-instruct",
               "gemini/gemini-2.5-flash"]
@@ -145,9 +178,9 @@ routing:
 #   tier_hint    : 1=simple, 2=balanced, 3=frontier (must be >= the task's tier)
 #   good_for     : task tags the selector prefers when they match
 #   timeout_s    : per-model wall-clock timeout (seconds) for a single call; omit = the
-#                  global default (AGENT_LLM_TIMEOUT, 45s). Slow frontier reasoning models
+#                  global default (AGENT_LLM_TIMEOUT, 60s). Slow frontier reasoning models
 #                  take ~70s+ on the free tier, so a non-streaming call to one would be
-#                  guillotined by the 45s default — give them headroom here. (For streaming
+#                  guillotined by the default — give them headroom here. (For streaming
 #                  calls this bounds the per-CHUNK watchdog, so it only trips on a true stall.)
 # The model-scout agent appends/updates discovered models in config/models.discovered.yaml.
 catalog:
@@ -189,18 +222,19 @@ catalog:
     timeout_s: 120
     good_for: [reasoning, planning, agents, hard, math]
 
-  # Review/QA + coding fallback: the strongest open-model tool-caller, served
-  # at FP8 reference quality by z.ai (cheaper hosts serve FP4 — measurably
-  # weaker for code). Zero-retention-friendly for proprietary work.
-  - id: "zai/glm-5.2"
-    provider: "zai"
-    requires_env: "ZAI_API_KEY"
+  # Review/QA + coding fallback: the strongest open-model tool-caller, from DeepInfra
+  # (Grade-A host, FP4 — cheaper than z.ai's FP8 reference; A/B on evals will show if the
+  # hard tool-calling cases need FP8, in which case add a zai/ entry as a deeper fallback).
+  # good_for covers review/qa AND frontend so the frontend agent's delegations prefer it.
+  - id: "deepinfra/zai-org/GLM-4.6"
+    provider: "deepinfra"
+    requires_env: "DEEPINFRA_API_KEY"
     free: false
     open_source: true
     cost: 9
     tier_hint: 3
     timeout_s: 90
-    good_for: [qa, review, coding, agentic, frontend, debugging]
+    good_for: [qa, review, coding, agentic, frontend, debugging, writing]
 
   # Research lead: first-class tool-caller (our benchmark: 10/10) at a low
   # price — research is input-heavy with low cache hits, so cheap+reliable

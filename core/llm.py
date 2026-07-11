@@ -474,6 +474,31 @@ def _key_for(model):
     return k.value if k else None
 
 
+def _apply_sampling(kwargs: dict, model: str, temperature: float) -> None:
+    """Overlay the model's `sampling:` from models.yaml onto call kwargs, in place.
+
+    The model temperature applies ONLY when the caller left the generic default (0.2),
+    so an explicit temperature=0 classifier call is preserved. Other knobs (top_p/top_k/
+    min_p/repetition_penalty) fill in without clobbering an explicit caller value. Shared
+    by complete() AND every streaming path so a model's anti-loop sampling (e.g. Qwen's
+    temp 0.55 + repetition_penalty) isn't silently dropped on the streamed build/data path.
+    `repeat_penalty` is normalized to `repetition_penalty` (the OpenAI-compatible name that
+    vLLM/DeepInfra/NIM actually honor; `repeat_penalty` is the Ollama spelling)."""
+    try:
+        from .registry import registry as _reg
+        samp = _reg.sampling_for(model)
+    except Exception:
+        samp = {}
+    for k, v in (samp or {}).items():
+        if k == "repeat_penalty":
+            k = "repetition_penalty"
+        if k == "temperature":
+            if temperature == 0.2:
+                kwargs["temperature"] = v
+        else:
+            kwargs.setdefault(k, v)
+
+
 def complete(model, messages, tools=None, max_tokens=4096,
              budget: Budget = None, temperature=0.2, timeout=None):
     """
@@ -496,22 +521,7 @@ def complete(model, messages, tools=None, max_tokens=4096,
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
-
-    # Per-model sampling overlay (models.yaml `sampling:`). Extra knobs (top_p/top_k/
-    # repeat_penalty/min_p) fill in; the model's temperature applies ONLY when the caller
-    # left the generic default (0.2), so an explicit temperature=0 classifier call is kept.
-    # Local import avoids any import cycle; litellm.drop_params handles unsupported keys.
-    try:
-        from .registry import registry as _reg
-        _samp = _reg.sampling_for(model)
-    except Exception:
-        _samp = {}
-    for _k, _v in _samp.items():
-        if _k == "temperature":
-            if temperature == 0.2:
-                kwargs["temperature"] = _v
-        else:
-            kwargs.setdefault(_k, _v)
+    _apply_sampling(kwargs, model, temperature)
 
     pool = keypool.pool_for_model(model)
     last_exc = None
@@ -660,13 +670,16 @@ def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
     """
     if budget:
         budget.check()
+    to = _resolve_timeout(model, None)          # honor per-model timeout_s (not the flat default)
     _kw = dict(
         model=model, messages=messages, max_tokens=max_tokens,
-        temperature=temperature, stream=True, timeout=_TIMEOUT,
+        temperature=temperature, stream=True, timeout=to,
         stream_options={"include_usage": True}, api_key=_key_for(model),
     )
-    resp = _iter_stream_bounded(_kw)
-    pieces, cost, tokens, cached = [], 0.0, 0, 0
+    _apply_sampling(_kw, model, temperature)
+    _t0 = time.time()
+    resp = _iter_stream_bounded(_kw, timeout=to)
+    pieces, cost, tokens, ptoks, cached = [], 0.0, 0, 0, 0
     for chunk in resp:
         try:
             piece = chunk.choices[0].delta.content
@@ -682,7 +695,10 @@ def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
             except Exception:
                 pass
             tokens = _tokens_of(chunk) or tokens
+            ptoks = _prompt_tokens(chunk) or ptoks
             cached = _cached_tokens_of(chunk) or cached
+    metrics.record(model, time.time() - _t0, ok=True, cost=cost,
+                   prompt_tokens=ptoks, cached_tokens=cached)
     if budget:
         budget.add_cost(cost)
         budget.add_tokens(tokens)
@@ -741,11 +757,13 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
+    _apply_sampling(kwargs, model, temperature)
     # Per-model timeout also bounds the PER-CHUNK watchdog (a slow frontier model may pause
-    # between tokens longer than the default 45s; it should fail over only on a true stall).
+    # between tokens longer than the default; it should fail over only on a true stall).
+    _t0 = time.time()
     resp = _iter_stream_bounded(kwargs, timeout=to)
 
-    content, tcs, cost, tokens, cached = [], {}, 0.0, 0, 0
+    content, tcs, cost, tokens, ptoks, cached = [], {}, 0.0, 0, 0, 0
     for chunk in resp:
         ch = chunk.choices[0] if getattr(chunk, "choices", None) else None
         delta = getattr(ch, "delta", None) if ch else None
@@ -772,6 +790,7 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
             except Exception:
                 pass
             tokens = _tokens_of(chunk) or tokens
+            ptoks = _prompt_tokens(chunk) or ptoks
             cached = _cached_tokens_of(chunk) or cached
 
     tool_calls = [
@@ -782,6 +801,8 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
     msg = {"role": "assistant", "content": "".join(content) or None}
     if tool_calls:
         msg["tool_calls"] = tool_calls
+    metrics.record(model, time.time() - _t0, ok=True, cost=cost,
+                   prompt_tokens=ptoks, cached_tokens=cached)
     if budget:
         budget.add_cost(cost)
         budget.add_tokens(tokens)
