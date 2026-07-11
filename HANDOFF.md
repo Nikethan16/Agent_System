@@ -4,34 +4,51 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## ⚡ LATEST (2026-07-11, pt.2) — `/commands`, real LSP, UI redesign (branch `claude/commands-and-lsp`, PUSHED, NOT merged)
-Closed the two remaining OpenCode-parity gaps and shipped the UI redesign. **9 commits,
-all validated: 258 pytest + 170 smoke green, `tsc` clean, `npm build` clean.** Not merged
-to `main` (held for the owner). Done on a fresh Linux clone — **no local `.env`/keys/Docker
-here**, so paid-model runs, the VM deploy, and eval A/B still need the owner's laptop/VM.
+## ⚡ LATEST (2026-07-11, pt.2) — `/commands`, real LSP, UI redesign, dogfood (branch `claude/commands-and-lsp`, PUSHED, NOT merged)
+Closed the two remaining OpenCode-parity gaps, shipped the UI redesign + polish, and added
+the self-engineering dogfood harness. **13 commits, all validated: 258 pytest + 170 smoke
+green, `tsc --noEmit` clean, `npm build` clean.** Not merged to `main` (held for the owner).
+Built on a fresh Linux clone with **no keys/Docker**, so the live dogfood run + eval A/B still
+need the owner's laptop/VM (everything else is validated).
 
 1. **User-authored `/commands`** (`core/commands.py`, `config/commands/`, `server/api/commands.py`,
    wired in `server/chat.py`). `.md` templates → `/name`; substitutions `$ARGUMENTS`/`$1..$9`,
-   `@file` (sandboxed read), `` !`shell` `` (via Docker `run_bash` — safely no-ops with no
-   image, never touches host). Args inserted literally, never re-scanned (no injection).
-   Frontend: `/` menu in the composer, ⌘K palette entries (`GET /api/commands`).
+   `@file` (sandboxed read), `` !`shell` `` (via Docker `run_bash`, no-ops without an image).
+   Args inserted literally, never re-scanned (no injection). Frontend: `/` menu in the composer,
+   ⌘K palette entries (`GET /api/commands`).
 2. **Real LSP / diagnostics** (`core/lint.py`) — a `diagnostics` tool (granted to the 5 code
-   agents) + the post-edit hook now use **ruff** when present (undefined names, imports, syntax,
-   likely bugs, fix hints), falling back to in-process pyflakes+compile. Static-only,
-   workspace-confined. `ruff` added to `requirements.txt`. Replaces the old pyflakes stand-in.
-3. **UI redesign** (mockup: https://claude.ai/code/artifact/73a43488-7a32-4150-a376-ff02aed3c53d):
-   (a) **chat list** grouped by recency (Pinned/Today/Yesterday/…) + auto-titled from the first
-   message (`db._derive_title` + optimistic UI) + metadata subline — fixes the "New chat" pile;
-   (b) **run-summary header** — verdict pill + metric columns (time/steps/tokens/%cached/cost/tools);
-   (c) **right panel** split into Changed-this-run (with +/- deltas) vs Context, typed rows,
-   segmented preview header.
-4. **Fixed 2 pre-existing latent bugs** surfaced by `tsc` (the app builds via vite, which skips
-   type-checking): duplicate `setRouting` in `api.ts` (fleet def shadowed the models one → split
-   into `setRouting`/`setFleetRouting`); `FilesPanel` expand-view rendered `<Body>` without its
-   `id` prop (dropped raw image/PDF links). `tsc --noEmit` is now clean.
+   agents) + the post-edit hook use **ruff** when present, falling back to in-process
+   pyflakes+compile. Static-only, workspace-confined. `ruff` added to `requirements.txt`.
+3. **UI redesign + polish** (mockup: https://claude.ai/code/artifact/73a43488-7a32-4150-a376-ff02aed3c53d):
+   chat list grouped-by-recency + auto-titled (`db._derive_title`) with a metadata subline;
+   run-summary header (verdict pill + metric columns); right panel split Changed-this-run
+   (+/- deltas) vs Context; **Health** panel status pill + summary tiles + cache meters;
+   **Schedules** panel summary + status pills; **mobile pass** (Settings modal stacks, composer
+   popovers capped — no overflow at 320/375px). Visually verified with seeded data.
+4. **Dogfood harness** (`scripts/dogfood.py` + `run_dogfood.ps1`) — see "Run the dogfood" below.
+5. **Fixed 2 pre-existing latent `tsc` bugs**: duplicate `setRouting` in `api.ts` (split into
+   `setRouting`/`setFleetRouting`); `FilesPanel` expand-view missing `<Body id>`. `tsc` now clean.
 
-**To ship:** merge `claude/commands-and-lsp` → `main` (auto-deploys). `/commands` and the UI
-work run keyless; the LSP tool wants `ruff` on the box (`pip install -r requirements.txt`).
+**To ship:** merge `claude/commands-and-lsp` → `main` (auto-deploys). All keyless except the
+LSP tool wants `ruff` (`pip install -r requirements.txt`).
+
+### Run the dogfood (self-engineering test) — LOCAL, needs keys
+On the laptop/VM (keys in `.env`, from the repo root):
+```
+git pull --ff-only
+.\run_dogfood.ps1                 # built-in calc demo: add multiply() + test, run it, PASS/FAIL
+.\run_dogfood.ps1 -Dir .\yourproj -Task "write pytest tests for X and make them pass"
+.\run_dogfood.ps1 -SeedOnly       # prepare only, no model calls (sanity)
+.\run_dogfood.ps1 -Force          # skip the model pre-check
+```
+It resolves the real model chains, runs the agent, reports which files changed + a pytest
+pass/fail. `-Dir` copies your project first (non-destructive; `-InPlace` to edit directly).
+**Gotchas we hit:** the venv was bound to the old `C:\` path after moving the repo to `D:\`
+(recreate with `python -m venv .venv` + `pip install -r requirements.txt`; the `.ps1` uses the
+venv python so `pip.exe` launcher breakage doesn't matter). A `410 Gone` in a run = a **stale
+NIM/model id** — run `python -m scripts.verify_models` and fix ids in `config/models.yaml`.
+**Classify leads with Gemini**, so `GEMINI_API_KEY` must be in `.env` or classify falls to a
+(possibly stale) NIM floor id.
 
 ## LATEST (2026-07-11, pt.1) — cost/quality + paid fleet + Skills Hub + UI flow (branch `claude/cost-quality-config`, MERGED via PR #14)
 Big multi-part session on branch **`claude/cost-quality-config`** — **20 commits, all
