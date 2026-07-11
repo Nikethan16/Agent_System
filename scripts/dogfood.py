@@ -1,4 +1,4 @@
-"""
+r"""
 dogfood.py — end-to-end self-engineering test you run locally.
 
 Point the platform at a project, give it a task ("add a feature + a test", "write
@@ -29,6 +29,14 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Windows consoles default to cp1252, which can't encode the ✅/❌/→ we print — force
+# UTF-8 so the final PASS/FAIL line doesn't crash the harness after a successful run.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 try:
     from dotenv import load_dotenv
