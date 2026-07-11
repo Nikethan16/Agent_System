@@ -69,18 +69,29 @@ def verify_seed(ws: str) -> bool:
 
 
 def _model_available() -> bool:
-    """Cheap probe: resolve a cheap model and make one tiny call. False when no
-    key/network so the harness can SKIP cleanly instead of erroring."""
-    try:
-        from core import llm
-        from core.registry import registry
-        model = registry.model_for_tier("tier1")
-        llm.complete(model, [{"role": "user", "content": "ok"}],
-                     budget=Budget(max_usd=0.02), max_tokens=5)
-        return True
-    except Exception as e:
-        print(f"  (no model access: {type(e).__name__}: {str(e)[:120]})")
-        return False
+    """Probe the SAME chains the run will use (via registry.model_chain +
+    complete_chain, exactly like the agent), so a single deprecated/dead model — e.g.
+    a free-floor NIM id returning 410 Gone — doesn't cause a false 'no access'; the
+    chain falls through to a live model. Tries the coding chain (the dogfood's main
+    work) and the classify chain (its planning/routing step). True if EITHER resolves."""
+    from core import llm
+    from core.registry import registry
+    probes = [("coding", registry.model_chain("tier2", task_type="coding")),
+              ("classify", registry.model_chain("tier1", task_type="classify"))]
+    ok = False
+    for name, chain in probes:
+        try:
+            llm.complete_chain(chain, [{"role": "user", "content": "ok"}],
+                               budget=Budget(max_usd=0.05), max_tokens=5)
+            print(f"  {name} chain: OK ({(chain or ['?'])[0]})")
+            ok = True
+        except Exception as e:
+            print(f"  {name} chain FAILED: {type(e).__name__}: {str(e)[:140]}")
+    if not ok:
+        print("  Every chain failed. Likely a missing key (classify needs GEMINI_API_KEY) "
+              "or stale model ids — run `python -m scripts.verify_models` to see which ids "
+              "resolve, then update config/models.yaml.")
+    return ok
 
 
 def check_result(ws: str) -> bool:
