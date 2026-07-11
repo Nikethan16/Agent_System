@@ -31,6 +31,19 @@ RUN pip install --no-cache-dir \
         flask \
         rich
 
+# Document-generation libraries — the Anthropic doc skills (docx/xlsx/pptx/pdf) run
+# generator scripts inside this sandbox, and `--network none` blocks installing them at
+# runtime, so bake them in. Without these, "create a real .xlsx/.docx/.pdf" produces no
+# file (the agent burns its iteration budget on a failing `pip install`).
+RUN pip install --no-cache-dir \
+        openpyxl xlsxwriter \
+        python-docx \
+        python-pptx \
+        reportlab pypdf pdfplumber \
+        markitdown \
+        Pillow \
+        lxml defusedxml
+
 # A couple of widely-used JS test runners, global so they resolve offline.
 RUN npm install -g --no-audit --no-fund vitest jest 2>/dev/null || true
 
