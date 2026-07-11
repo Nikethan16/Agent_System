@@ -68,6 +68,7 @@ export const api = {
 
   models: () => GET("/api/models"),
   agents: () => GET("/api/agents"),
+  commands: () => GET("/api/commands").then((r: any) => r?.commands || []),
   // Skills Hub: list local skills (with enabled/source), the allowlisted sources, and
   // sync/enable/disable controls. Synced skills arrive disabled (review gate).
   skills: () => GET("/api/skills").then((r: any) => r?.skills || []),

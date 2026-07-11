@@ -30,6 +30,8 @@ type State = {
   strategy: string;
   agents: any[];
   skills: any[];
+  commands: { name: string; description: string; argument_hint: string }[];
+  draft: string;
   projects: any[];
   activeProject: string;
   files: any[];
@@ -62,6 +64,8 @@ type State = {
   setTier: (tier: string, model: string) => Promise<void>;
   scoutModels: () => Promise<void>;
   loadSkills: () => Promise<void>;
+  loadCommands: () => Promise<void>;
+  setDraft: (v: string) => void;
   loadProjects: () => Promise<void>;
   createProject: (name: string) => Promise<void>;
   setActiveProject: (pid: string) => Promise<void>;
@@ -162,14 +166,16 @@ export const useStore = create<State>((set, get) => ({
   stream: true,
   acceptance: "",
   attachments: [],
+  commands: [],
+  draft: "",
   toasts: [],
 
   async init() {
     applyTheme(get().theme);   // restore the persisted theme on load
     try {
-      const [m, ag, sk, sessions, projects] = await Promise.all([api.models(), api.agents(), api.skills(), api.listSessions(), api.listProjects()]);
+      const [m, ag, sk, cmds, sessions, projects] = await Promise.all([api.models(), api.agents(), api.skills(), api.commands(), api.listSessions(), api.listProjects()]);
       set({ tiers: m.tiers, catalog: m.catalog, resolved: m.resolved || {},
-            strategy: m.strategy || "fixed", agents: ag, skills: sk || [], sessions, projects, connected: true });
+            strategy: m.strategy || "fixed", agents: ag, skills: sk || [], commands: cmds || [], sessions, projects, connected: true });
       let list = sessions;
       if (!list.length) {
         const s = await api.createSession("New chat");
@@ -224,6 +230,12 @@ export const useStore = create<State>((set, get) => ({
   async loadSkills() {
     set({ skills: (await api.skills()) || [] });
   },
+
+  async loadCommands() {
+    set({ commands: (await api.commands()) || [] });
+  },
+
+  setDraft(v) { set({ draft: v }); },
 
   async loadProjects() {
     set({ projects: await api.listProjects() });
@@ -295,7 +307,15 @@ export const useStore = create<State>((set, get) => ({
   submit(text) {
     const t = text.trim();
     if (!t) return;
-    if (t.startsWith("/")) return handleSlash(set, get, t);
+    if (t.startsWith("/")) {
+      const name = t.slice(1).split(/\s+/)[0].toLowerCase();
+      // Built-in client commands run locally; user-authored ones (from config/commands)
+      // are sent as a run so the server expands the template. Anything else falls through
+      // to handleSlash, which shows the "unknown command" help.
+      if (CLIENT_COMMANDS.includes(name)) return handleSlash(set, get, t);
+      if (get().commands.some((c) => c.name === name)) return get().send(t);
+      return handleSlash(set, get, t);
+    }
     get().send(t);
   },
 
@@ -546,12 +566,25 @@ export const useStore = create<State>((set, get) => ({
   },
 }));
 
+// Commands handled entirely in the browser (never sent to the server as a run).
+const CLIENT_COMMANDS = ["help", "new", "export", "model", "mode"];
+
 const HELP = `**Slash commands**
 - \`/new\` — start a new chat
 - \`/export\` — download this chat as markdown
 - \`/model <tier> <model-id>\` — swap a tier's model (e.g. \`/model tier3 gpt-5.5\`)
 - \`/mode auto|careful|trusted\` — set the approval mode
-- \`/help\` — show this help`;
+- \`/help\` — show this help
+
+Type \`/\` in the composer to see your own command templates (from \`config/commands\`).`;
+
+// A short chat title from the first message — mirrors server db._derive_title so the
+// optimistic UI label matches what the backend persists.
+function deriveTitle(text: string): string {
+  const t = (text || "").split("\n")[0].replace(/\s+/g, " ").trim();
+  if (!t) return "New chat";
+  return t.length > 48 ? t.slice(0, 48).trimEnd() + "…" : t;
+}
 
 function appendInfo(set: any, get: any, content: string) {
   set({ messages: [...get().messages, { id: newMid(), role: "assistant", content, events: [], local: true }] });
@@ -591,9 +624,16 @@ function startRun(set: any, get: any, payload: any, userText: string) {
   closeSocket();
   const userMsg: Msg = { id: newMid(), role: "user", content: userText, events: [] };
   const asst: Msg = { id: newMid(), role: "assistant", content: "", events: [], pending: true };
+  // Optimistically title an untitled chat from this first message, so RECENTS updates
+  // instantly (the server does the same in db.add_message — this just avoids the lag).
+  const cur = get().sessions.find((s: any) => s.id === id);
+  const titlePatch = cur && (cur.title === "New chat" || !cur.title)
+    ? { sessions: get().sessions.map((s: any) => s.id === id ? { ...s, title: deriveTitle(userText) } : s) }
+    : {};
   set({
     messages: [...get().messages, userMsg, asst],
     running: true, cost: 0, pendingApproval: null, pendingPlan: null,
+    ...titlePatch,
   });
   _runStart = Date.now();
   let completed = false;
