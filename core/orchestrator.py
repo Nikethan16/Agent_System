@@ -52,6 +52,36 @@ _REVIEW_TASK_TYPES = {"coding", "writing", "data", "math"}
 # multi-agent loop stays for genuinely-INDEPENDENT work (e.g. multi-topic research).
 _TIER3_SINGLE_AGENT_TYPES = {"coding"}
 
+# Cross-domain coordination detector. The classifier returns ONE task_type, so a task that
+# genuinely spans several domains (research + build + document) collapses to a single
+# specialist that can't cover all of it — e.g. a research agent asked to also build and run
+# code just writes the report and silently drops the code (observed in live testing). When
+# the user EXPLICITLY asks for multiple coordinated parts across domains, route to the LEAD
+# master loop instead so it can delegate each part to the right specialist. Deliberately
+# conservative — requires BOTH explicit coordination language AND >=2 distinct domains — so
+# ordinary single-domain work ("build a calculator + tests", "write a blog post") is never
+# escalated into an expensive multi-agent run.
+_COORD_CUES = re.compile(
+    r"\b(coordinat|delegat|orchestrat|each step|multi[-\s]?part|separate steps|"
+    r"as separate|different specialists|hand[-\s]?off|multiple (parts|steps|deliverables|"
+    r"specialists|components))", re.I)
+_DOMAIN_PATS = {
+    "build": re.compile(r"\b(build|implement|code|coding|script|app\.py|module|function|"
+                        r"class\b|unit test|pytest|endpoint|cli|flask|fastapi|react|\.py\b)", re.I),
+    "research": re.compile(r"\b(research|search|look up|latest|current|online|web\b|"
+                           r"sources?|cite|citation)", re.I),
+    "document": re.compile(r"\b(document|report|comparison|summary|essay|write[-\s]?up|"
+                           r"markdown|\.md\b|readme|spreadsheet|slide|presentation)", re.I),
+}
+
+
+def _wants_delegation(task: str) -> bool:
+    """True only when the task explicitly asks to coordinate work across >=2 domains."""
+    t = task or ""
+    if not _COORD_CUES.search(t):
+        return False
+    return sum(1 for p in _DOMAIN_PATS.values() if p.search(t)) >= 2
+
 
 def _auto_review(tier, task_type) -> bool:
     """Decide whether to run the critic when review == 'auto' (the default).
@@ -669,9 +699,18 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     # buried under pages of context can look "hard"). The agents still receive the full
     # `task`; only the cheap classifier sees the trimmed message.
     cls = classify(_user_request(task), budget=budget)
-    _emit({**cls, "type": "route"})
     tier = cls.get("tier", 2)
     task_type = cls.get("task_type")
+    # Cross-domain coordination: escalate an explicitly multi-part, multi-domain request to
+    # the LEAD master loop (which can delegate to specialists) instead of a lone specialist
+    # that can only cover one domain. Conservative — see _wants_delegation.
+    if tier < 3 and _wants_delegation(_user_request(task)):
+        tier = 3
+        if task_type in _TIER3_SINGLE_AGENT_TYPES:
+            task_type = "general"      # force the LEAD path — a single build agent can't span domains
+        cls = {**cls, "tier": tier, "task_type": task_type,
+               "reason": (str(cls.get("reason", "")) + " · multi-domain → LEAD").strip(" ·")}
+    _emit({**cls, "type": "route"})
     review = _resolve_review(review, tier, task_type)
 
     # Plan-first preview.
