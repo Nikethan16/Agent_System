@@ -142,8 +142,11 @@ export const api = {
     DELETE(`/api/keys/${encodeURIComponent(provider)}/${encodeURIComponent(masked)}`),
   testKey: (provider: string) => POST("/api/keys/test", { provider }),
   usage: () => GET("/api/usage"),
-  routing: () => GET("/api/routing"),
-  setRouting: (task_type: string, chain: string[]) => PUT("/api/routing", { task_type, chain }),
+  // Fleet routing (Fleet panel) — distinct from the models/routing editor above. Both
+  // persist through registry.set_routing; kept separate so each caller's intent is clear
+  // and there's no duplicate object key silently shadowing the other.
+  fleetRouting: () => GET("/api/routing"),
+  setFleetRouting: (task_type: string, chain: string[]) => PUT("/api/routing", { task_type, chain }),
   addCatalogModel: (model: any) => POST("/api/models/catalog", { models: [model] }),
   removeCatalogModel: (id: string) => DELETE("/api/models/catalog/" + id),
 

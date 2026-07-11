@@ -19,7 +19,7 @@ export default function FleetPanel() {
 
   const load = async () => {
     try { setKeys(await api.keys()); } catch { /* empty */ }
-    try { setRouting(await api.routing()); } catch { /* empty */ }
+    try { setRouting(await api.fleetRouting()); } catch { /* empty */ }
     try { setCatalog((await api.models()).catalog || []); } catch { /* empty */ }
   };
   useEffect(() => { load(); }, []);
@@ -62,7 +62,7 @@ export default function FleetPanel() {
     const chain = (edit[tt] ?? (routing.routing[tt] || []).join("\n"))
       .split("\n").map((s) => s.trim()).filter(Boolean);
     setBusy("route:" + tt);
-    try { const r = await api.setRouting(tt, chain); setRouting({ routing: r.routing }); setMsg(`saved ${tt}`); }
+    try { const r = await api.setFleetRouting(tt, chain); setRouting({ routing: r.routing }); setMsg(`saved ${tt}`); }
     catch (e: any) { setMsg(e.message); } finally { setBusy(""); }
   };
 
