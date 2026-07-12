@@ -438,8 +438,13 @@ check("semantic: facts injectable by scope", any("Python" in t for t in MEM.get_
 MEM.update_summary("smoke-sess", [{"role": "user", "content": "built a calculator"}],
                    budget=Budget(max_usd=1, max_iterations=5))
 check("working: rolling summary written", "summary" in MEM.get_summary("smoke-sess").lower())
-_fid = _facts[0]["id"]
-check("memory: forget works", MEM.forget_fact(_fid) and not any(f["id"] == _fid for f in MEM.list_facts()))
+# Fact extraction is a live LLM call — on a flaky free tier it can return nothing. Guard
+# the forget test so an empty extraction can't crash the whole smoke run with an IndexError.
+if _facts:
+    _fid = _facts[0]["id"]
+    check("memory: forget works", MEM.forget_fact(_fid) and not any(f["id"] == _fid for f in MEM.list_facts()))
+else:
+    print("  SKIP  memory: forget works (no facts extracted this run — free-tier flake)")
 
 # ---- Phase C: embedding-based semantic recall -------------------------------
 _oem, _ovec = MEM._embed_model, MEM._vec
