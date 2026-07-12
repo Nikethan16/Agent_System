@@ -47,5 +47,10 @@ RUN pip install --no-cache-dir \
 # A couple of widely-used JS test runners, global so they resolve offline.
 RUN npm install -g --no-audit --no-fund vitest jest 2>/dev/null || true
 
+# The workspace is mounted at /ws. Models habitually `cd /workspace` — make it an alias so
+# that guess lands in the right place instead of wasting a step discovering /ws. The symlink
+# is created at build time and resolves once /ws is mounted at run time.
+RUN ln -sfn /ws /workspace
+
 WORKDIR /ws
 CMD ["bash"]
