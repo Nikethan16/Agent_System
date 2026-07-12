@@ -324,8 +324,8 @@ try:
     check("model_chain returns an ordered fallback list", isinstance(_chain, list) and len(_chain) >= 2)
     check("model_chain routing: reasoning primary = nemotron-super",
           _chain[0] == "nvidia_nim/nvidia/nemotron-3-super-120b-a12b")
-    check("model_chain routing: coding primary = glm-5.1",
-          _reg.model_chain("tier2", task_type="coding")[0] == "nvidia_nim/z-ai/glm-5.1")
+    check("model_chain routing: coding primary = qwen3.5-122b (free floor after glm-5.1 retired)",
+          _reg.model_chain("tier2", task_type="coding")[0] == "nvidia_nim/qwen/qwen3.5-122b-a10b")
     check("model_chain has no duplicates", len(_chain) == len(set(_chain)))
 finally:
     _os.environ.pop("NVIDIA_NIM_API_KEY", None)
@@ -385,7 +385,7 @@ check("keypool remove_key: removes it again",
       KP.remove_key("openrouter", KP.mask(_testkey)) and not KP.get_pool("openrouter").keys)
 # Use REAL catalog ids — set_routing now drops unknown ids so a UI edit can't save a
 # chain that would evaporate at model_chain() time.
-_rt_ids = ["nvidia_nim/z-ai/glm-5.1", "gemini/gemini-2.5-flash-lite"]
+_rt_ids = ["nvidia_nim/nvidia/nemotron-3-super-120b-a12b", "gemini/gemini-2.5-flash-lite"]
 _reg.set_routing("smoke_tt", _rt_ids)
 check("routing override persists + merges into routing()",
       _reg.routing().get("smoke_tt") == _rt_ids)
@@ -438,8 +438,13 @@ check("semantic: facts injectable by scope", any("Python" in t for t in MEM.get_
 MEM.update_summary("smoke-sess", [{"role": "user", "content": "built a calculator"}],
                    budget=Budget(max_usd=1, max_iterations=5))
 check("working: rolling summary written", "summary" in MEM.get_summary("smoke-sess").lower())
-_fid = _facts[0]["id"]
-check("memory: forget works", MEM.forget_fact(_fid) and not any(f["id"] == _fid for f in MEM.list_facts()))
+# Fact extraction is a live LLM call — on a flaky free tier it can return nothing. Guard
+# the forget test so an empty extraction can't crash the whole smoke run with an IndexError.
+if _facts:
+    _fid = _facts[0]["id"]
+    check("memory: forget works", MEM.forget_fact(_fid) and not any(f["id"] == _fid for f in MEM.list_facts()))
+else:
+    print("  SKIP  memory: forget works (no facts extracted this run — free-tier flake)")
 
 # ---- Phase C: embedding-based semantic recall -------------------------------
 _oem, _ovec = MEM._embed_model, MEM._vec

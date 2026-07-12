@@ -203,20 +203,79 @@ function PhaseLabel({ icon, color, children }: { icon: string; color: string; ch
   );
 }
 
-function Activity({ events, running }: { events: Ev[]; running?: boolean }) {
+// Compact integer label: 18234 -> "18.2k", 2_100_000 -> "2.1M".
+function fmtCompact(n?: number): string {
+  if (!n && n !== 0) return "";
+  if (n < 1000) return `${n}`;
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`.replace(".0k", "k");
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+// Whether a run produced enough detail to be worth its own Plan/Steps/Verify card.
+function hasRunDetail(events: Ev[], running?: boolean): boolean {
+  const steps = groupSteps(events);
+  const lastPlan = [...events].reverse().find((e) => e.type === "plan") as any;
+  const worthShowing = events.some((e) => MEANINGFUL.includes(e.type)) ||
+    events.filter((e) => e.type === "assign").length > 1 || !!running;
+  const hasWork = steps.some((s) => s.tools.length || s.notes.length) || !!lastPlan?.todos?.length;
+  return hasWork && worthShowing;
+}
+
+// The always-visible run-summary header: a verdict pill + metric columns
+// (time · steps · tokens · % cached · cost · tools). Replaces the plain "Run" bar.
+function RunSummary({ m, running, steps, critic }: { m: Msg; running?: boolean; steps: number; critic: Ev[] }) {
+  const meta = m.meta;
+  const tools = m.events.filter((e) => e.type === "tool").length;
+  const failed = critic.some((c) => !(c as any).passed);
+  const dur = fmtDur(meta?.durationMs);
+  const cachedPct = meta?.cachedTokens && meta?.tokens
+    ? Math.round((meta.cachedTokens / meta.tokens) * 100) : 0;
+
+  type M = { k: string; v: string; accent?: boolean };
+  const cols: M[] = [];
+  if (dur) cols.push({ k: "time", v: dur });
+  if (steps > 0) cols.push({ k: "steps", v: `${steps}` });
+  if (meta?.tokens) cols.push({ k: "tokens", v: fmtCompact(meta.tokens) });
+  if (cachedPct > 0) cols.push({ k: "cached", v: `${cachedPct}%`, accent: true });
+  if (meta?.cost) cols.push({ k: "cost", v: `$${meta.cost.toFixed(3)}` });
+  if (tools > 0) cols.push({ k: "tools", v: `${tools}` });
+
+  const verdict = running
+    ? { label: "Working", cls: "text-accent-deep bg-accent-terracotta/12", dot: "bg-accent-terracotta animate-pulse", icon: "" }
+    : failed
+    ? { label: "Needs review", cls: "text-amber-700 dark:text-amber-400 bg-amber-500/12", dot: "", icon: "warning" }
+    : { label: "Done", cls: "text-emerald-700 dark:text-emerald-400 bg-emerald-500/12", dot: "", icon: "check" };
+
+  return (
+    <div className="flex items-center gap-x-4 gap-y-2 flex-wrap px-3.5 py-2.5 border-b border-light-border/50 dark:border-dark-border bg-surface-container-low/60 dark:bg-dark-bg/40">
+      <span className={`inline-flex items-center gap-1.5 text-[11.5px] font-semibold px-2.5 py-1 rounded-full ${verdict.cls}`}>
+        {verdict.dot ? <span className={`w-1.5 h-1.5 rounded-full ${verdict.dot}`} />
+          : <span className="material-symbols-outlined text-[13px]">{verdict.icon}</span>}
+        {verdict.label}
+      </span>
+      {cols.length > 0 && (
+        <div className="flex items-center">
+          {cols.map((c, i) => (
+            <div key={c.k} className={`flex flex-col px-3 ${i > 0 ? "border-l border-light-border dark:border-dark-border" : ""}`}>
+              <span className={`text-[12.5px] font-semibold leading-tight tabular-nums ${c.accent ? "text-accent-deep dark:text-accent-terracotta" : "text-on-surface dark:text-dark-text"}`}>{c.v}</span>
+              <span className="text-[9px] uppercase tracking-[0.08em] text-light-muted">{c.k}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Activity({ m, running }: { m: Msg; running?: boolean }) {
+  const events = m.events;
   const lastPlan = [...events].reverse().find((e) => e.type === "plan") as any;
   const steps = groupSteps(events);
   const critic = events.filter((e) => e.type === "critic");
-  const worthShowing = events.some((e) => MEANINGFUL.includes(e.type)) ||
-    events.filter((e) => e.type === "assign").length > 1 || running;
-  const hasWork = steps.some((s) => s.tools.length || s.notes.length) || lastPlan?.todos?.length;
-  if (!hasWork || !worthShowing) return null;
+  if (!hasRunDetail(events, running)) return null;
   return (
     <div className="mt-3 border border-light-border dark:border-dark-border rounded-xl overflow-hidden">
-      <div className="flex items-center gap-2 px-3.5 py-2 border-b border-light-border/50 dark:border-dark-border bg-surface-container-low/60 dark:bg-dark-bg/40">
-        <span className={`w-1.5 h-1.5 rounded-full ${running ? "bg-accent-terracotta animate-pulse" : "bg-emerald-500"}`} />
-        <span className="text-[11px] uppercase tracking-widest text-light-muted font-medium">{running ? "Working" : "Run"}</span>
-      </div>
+      <RunSummary m={m} running={running} steps={steps.length} critic={critic} />
       <AgentStatus events={events} running={running} />
       <div className="px-4 pb-4 pt-1">
         {lastPlan?.todos?.length > 0 && (<><PhaseLabel icon="checklist" color="bg-accent-terracotta">Plan</PhaseLabel><PlanChecklist todos={lastPlan.todos} /></>)}
@@ -294,8 +353,8 @@ function Message({ m, index, isLast }: { m: Msg; index: number; isLast?: boolean
           <div className="font-code text-[12px] leading-5 text-on-surface-variant dark:text-light-muted whitespace-pre-wrap">{m.live}<span className="caret" /></div>
         </div>
       ) : null}
-      {m.events.length > 0 && <Activity events={m.events} running={m.pending} />}
-      {m.content && !m.pending && <ResponseFooter m={m} last={isLast} />}
+      {m.events.length > 0 && <Activity m={m} running={m.pending} />}
+      {m.content && !m.pending && <ResponseFooter m={m} last={isLast} hideStats={hasRunDetail(m.events, false)} />}
     </div>
   );
 }
@@ -310,7 +369,7 @@ const fmtDur = (ms?: number) => {
 
 // Claude Code-style run summary (time · tokens · cost · tools · files edited) plus the
 // always-visible response actions (copy / regenerate / feedback).
-function ResponseFooter({ m, last }: { m: Msg; last?: boolean }) {
+function ResponseFooter({ m, last, hideStats }: { m: Msg; last?: boolean; hideStats?: boolean }) {
   const { regenerate, running, sendFeedback } = useStore();
   const [copied, setCopied] = useState(false);
   const [fb, setFb] = useState("");
@@ -344,9 +403,9 @@ function ResponseFooter({ m, last }: { m: Msg; last?: boolean }) {
 
   return (
     <div className="mt-2.5 space-y-1.5">
-      {(stats.length > 0 || fileChanges.length > 0) && (
+      {((!hideStats && stats.length > 0) || fileChanges.length > 0) && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-light-muted">
-          {stats.length > 0 && (
+          {!hideStats && stats.length > 0 && (
             <span className="inline-flex items-center gap-1.5">
               <span className="material-symbols-outlined text-[13px] text-emerald-500">check_circle</span>
               {stats.join(" · ")}

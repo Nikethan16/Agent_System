@@ -72,6 +72,21 @@ def _is_readonly_bash(args: dict) -> bool:
     return bool(_SAFE_BASH.match(cmd))
 
 
+# File-data payload fields: the CONTENT an agent writes, not an action it takes. The
+# policy patterns describe ACTIONS (shell commands, DB ops, deploys) — so a document
+# that merely mentions "deploy", or code that contains the literal "delete from" in a
+# query builder, must NOT trip an action rule and get a benign write escalated/denied.
+# If that content is ever executed, the run_bash that runs it is gated on its own.
+_PAYLOAD_KEYS = {"content", "new_string", "old_string", "patch", "text", "body"}
+
+
+def _scan_blob(args: dict) -> str:
+    """Stringify args for pattern matching, EXCLUDING file-data payload fields."""
+    if isinstance(args, dict):
+        args = {k: v for k, v in args.items() if k not in _PAYLOAD_KEYS}
+    return json.dumps(args, default=str).lower()
+
+
 def reload():
     global _HARD_BLOCK, _REQUIRE_HUMAN
     _HARD_BLOCK, _REQUIRE_HUMAN = _load()
@@ -79,7 +94,7 @@ def reload():
 
 def evaluate(tool: Tool, args: dict) -> Decision:
     """Decide what gating a tool call needs, deterministically."""
-    blob = json.dumps(args, default=str).lower()
+    blob = _scan_blob(args)
 
     for pat in _HARD_BLOCK:
         if pat.search(blob):

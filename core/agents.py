@@ -191,7 +191,6 @@ _DISPATCH_SYS = (
 _KEYWORDS = [
     ("research", ("research", "investigate", "find out", "look up", "what should we",
                   "compare options", "latest", "sources")),
-    ("image", ("image", "picture", "logo", "graphic", "illustration", "render", "photo")),
     ("frontend", ("html", "css", "frontend", "react", "web page", "webpage", "ui ", "landing")),
     ("coder", ("code", "function", "script", "bug", "test", "python", "api ", "implement",
                "refactor", "compile", "run ")),

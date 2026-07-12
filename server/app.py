@@ -25,6 +25,7 @@ from .api import fleet as fleet_api
 from .api import runs as runs_api
 from .api import traces as traces_api
 from .api import skills as skills_api
+from .api import commands as commands_api
 from .api import auth_routes
 
 import tools  # noqa: F401  (registers web_search/web_fetch/generate_image/mcp_call)
@@ -64,6 +65,7 @@ app.include_router(fleet_api.router, dependencies=_auth)
 app.include_router(runs_api.router, dependencies=_auth)
 app.include_router(traces_api.router, dependencies=_auth)
 app.include_router(skills_api.router, dependencies=_auth)
+app.include_router(commands_api.router, dependencies=_auth)
 # auth_routes defines its own per-route protection (/login + /auth/config are public,
 # /me is gated), so it is NOT wrapped in the blanket _auth dependency.
 app.include_router(auth_routes.router)

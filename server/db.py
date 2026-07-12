@@ -241,10 +241,32 @@ def touch_session(session_id: str):
             s.commit()
 
 
+def _derive_title(content: str) -> str:
+    """A short, human title from the first user message (offline, no model call).
+    Keeps the chat list readable instead of a pile of 'New chat' rows."""
+    text = " ".join((content or "").strip().split())
+    if not text:
+        return ""
+    if len(text) > 48:
+        text = text[:48].rstrip() + "…"
+    return text
+
+
 def add_message(session_id: str, role: str, content: str, cost: float = 0.0) -> str:
     with DBSession(engine) as s:
         m = Message(session_id=session_id, role=role, content=content, cost=cost)
         s.add(m)
+        # Auto-title an untitled chat from its first user message, so RECENTS shows
+        # what each chat is about. Only fires while the title is still the default —
+        # a manual rename (or a title set elsewhere, e.g. Telegram) is never clobbered.
+        if role == "user":
+            sess = s.get(Session, session_id)
+            if sess and sess.title in ("New chat", "", None):
+                title = _derive_title(content)
+                if title:
+                    sess.title = title
+                    sess.updated_at = _now()
+                    s.add(sess)
         s.commit()
         s.refresh(m)
         return m.id

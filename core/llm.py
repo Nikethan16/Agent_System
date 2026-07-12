@@ -57,6 +57,12 @@ _BREAKER_COOLDOWN = float(os.environ.get("AGENT_BREAKER_COOLDOWN", "60"))
 # runs). Each attempt is still bounded by the wall-clock timeout, so worst case is
 # ~threshold×timeout before a genuinely-dead model is benched — the hang protection holds.
 _BREAKER_THRESHOLD = max(1, int(os.environ.get("AGENT_BREAKER_THRESHOLD", "2")))
+# A rate-limit (429) is a definitive "back off" — unlike a one-off slow timeout, retrying
+# in 60s just wastes another slow round-trip. A quota that's exhausted (e.g. Gemini free
+# daily) won't recover for many minutes, so bench a rate-limited model for MUCH longer and
+# trip on the first hit (no 2-strike wait). This stops every classify/embed/manager call
+# from re-probing a dead provider each minute — the biggest latency sink under free-tier 429s.
+_BREAKER_RATELIMIT_COOLDOWN = float(os.environ.get("AGENT_RATELIMIT_COOLDOWN", "600"))
 
 
 def _breaker_open(model: str) -> bool:
@@ -76,10 +82,11 @@ def _record_breaker_failure(model: str) -> bool:
         return False
 
 
-def _trip_breaker(model: str) -> None:
-    """Force the breaker open immediately (bypasses the threshold)."""
+def _trip_breaker(model: str, cooldown: float = None) -> None:
+    """Force the breaker open immediately (bypasses the threshold). Optional longer
+    cooldown for definitive failures like a rate-limit / quota exhaustion."""
     with _BREAKER_LOCK:
-        _BREAKER[model] = time.time() + _BREAKER_COOLDOWN
+        _BREAKER[model] = time.time() + (cooldown if cooldown is not None else _BREAKER_COOLDOWN)
         _BREAKER_FAILS[model] = _BREAKER_THRESHOLD
 
 
@@ -256,7 +263,9 @@ class Budget:
         with self._lock:
             if self.spent_usd >= self.max_usd:
                 raise BudgetExceeded(
-                    f"cost cap hit: spent ${self.spent_usd:.4f} of ${self.max_usd:.2f}"
+                    # 4 decimals on BOTH figures — a sub-cent cap (e.g. $0.0002) rounded
+                    # to 2dp shows a misleading "$0.00".
+                    f"cost cap hit: spent ${self.spent_usd:.4f} of ${self.max_usd:.4f}"
                 )
             if self.iterations >= self.max_iterations:
                 raise BudgetExceeded(f"iteration cap hit: {self.max_iterations}")
@@ -624,8 +633,13 @@ def complete_chain(models, messages, tools=None, max_tokens=4096, budget: Budget
             continue
         except Exception as e:                     # rate-limit-exhausted / timeout / 5xx
             last_exc = e
-            # A1: only OPEN the breaker after N consecutive failures, not the first.
-            _record_breaker_failure(model)
+            if isinstance(e, _RATE_LIMIT):
+                # A definitive 429 — bench this model NOW for a long cooldown so later
+                # calls skip it fast instead of re-paying the slow round-trip every minute.
+                _trip_breaker(model, cooldown=_BREAKER_RATELIMIT_COOLDOWN)
+            else:
+                # A1: only OPEN the breaker after N consecutive failures, not the first.
+                _record_breaker_failure(model)
             nxt = chain[i + 1] if i + 1 < len(chain) else None
             metrics.record(model, 0.0, ok=False, fallback=bool(nxt), error=type(e).__name__)
             if nxt and on_fallback:

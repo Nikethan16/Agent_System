@@ -14,6 +14,7 @@ from core.boundary import wrap as _wrap_untrusted
 from core.tools import using_workspace, fresh_build_slug
 from core.orchestrator import handle_task, _user_request
 from core.router import classify
+from core import commands as _commands
 
 from . import db
 from . import memory
@@ -120,6 +121,13 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
         trace.trace(session_id, ev)
         if emit:
             emit(ev)
+
+    # User-authored /commands: the raw "/name ..." is stored above as the user message
+    # (so the chat log shows what was typed); here it's expanded into the actual
+    # instruction the agent runs. @file / !shell in a template resolve inside THIS
+    # session's workspace via the sandboxed tools. A non-command message is unchanged.
+    if _commands.is_command(text):
+        text = _commands.expand(text, db.session_workspace(session_id), emit=_emit)
 
     # Global daily spend cap (a safety net above the per-run Budget). If today's
     # cumulative spend has hit the ceiling, refuse the run instead of spending more.

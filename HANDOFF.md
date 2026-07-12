@@ -4,7 +4,101 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## ⚡ LATEST (2026-07-11) — cost/quality + paid fleet + Skills Hub + UI flow (branch `claude/cost-quality-config`, PUSHED, NOT merged)
+## ⚡ LATEST (2026-07-12) — full E2E test round, 13 fixes, staged multi-agent pipeline (branch `claude/commands-and-lsp`, MERGED to `main`)
+Ran a **full end-to-end test round** (live UI + engine-level, on real seeded repos), found 11
+issues, and fixed **all** of them plus added a multi-agent pipeline. **~16 commits, all
+validated: 260 pytest + 170 smoke green, `tsc` clean, `npm build` clean; doc-gen + the new
+pipeline proven live on real repos.** Full write-up: `docs/TEST_REPORT_2026-07-12.md`.
+
+**Fixes shipped:**
+- **Doc/Office generation now works in the sandbox** — baked the doc libs (openpyxl, python-docx,
+  pptx, reportlab, pypdf, pdfplumber, markitdown, Pillow) into `docker/verify.Dockerfile`, and
+  aliased `/workspace`→`/ws`. *Proven live: agent produced a real `planets.xlsx`.*
+- **Human approval gate restored** — the security-manager review no longer fail-closes on an
+  empty/garbled model reply; an `[infra]` failure falls through to the human card (`server/approvals.py`).
+- **Policy** matches action rules against commands, not written file **content** (a doc that says
+  "deploy" no longer gets escalated) (`core/policy.py`).
+- **Dead NIM ids removed** (`z-ai/glm-5.1` 410, `deepseek-v4-flash` 404) — the cost-first picker
+  was *selecting* the dead GLM (`config/models.yaml`).
+- **Reliability:** a 429 benches a model for 10 min (not re-probed each minute); research free-floor
+  leads with Nemotron-Super before the loopy qwen (`core/llm.py`, `config/models.yaml`).
+- **Skill selection tightened:** `web-frontend` intent-gated; heavy doc-format skills only auto-load
+  for agents that can run them (a research step was staging ~1MB of xlsx schemas) (`core/skills.py`).
+- **Polish:** UNVERIFIED banner only when the agent has run_bash; sub-cent budget-cap display;
+  run_bash cwd hint; dogfood Windows fixes; flaky smoke `_facts[0]` guard.
+- **`/commands`** was a stale-build artifact, not a code bug (source was correct; rebuilt `web/dist`).
+
+**NEW — staged multi-agent pipeline (`core/orchestrator.py`):** a *research + build* task now runs
+a deterministic manager: **research → architect (plan) → coder (implement+verify) → code-reviewer**,
+with each stage's artifact (`findings.md`, `design.md`) passed forward via the blackboard + workspace.
+Triggered by `_wants_pipeline` (research signal AND build signal). Pure coding stays single-agent
+(the speed-fix); multi-domain coordination without research still uses the LEAD master loop.
+*Proven live: 4 specialists, real handoffs, tests pass, $0.008.*
+
+**Dropped** the image-generation agent (no image/vision requirement now; re-enable = restore one
+YAML block + `image_model:` + key).
+
+**⚠️ REQUIRED VM steps after this deploy** (auto-deploy does reset→pip→npm build→restart, NOT these):
+1. **Rebuild the verify Docker image** so doc-gen + the `/workspace` alias work on the VM:
+   `./docker/build-verify-image.sh` (it now includes the doc libs). Without this, doc generation
+   still fails on the VM.
+2. Confirm `DEEPSEEK_API_KEY` + `DEEPINFRA_API_KEY` in the server `.env` (the pipeline works on the
+   free floor without them, but the paid fleet is faster/better). Gemini free quota was exhausted
+   during testing — a second `GEMINI_API_KEY` reduces latency.
+
+**Next tasks:** (1) large-repo **map step** — the architect reads *all* files today, which won't
+scale to big codebases; add a file-tree/symbol map or lightweight index. (2) Semantic skill
+selection + more skills (debug/refactor/git). (3) **Live-UI re-verify** the approval card,
+`/commands` menu, and doc-gen (the preview pane was broken this session, so those three are proven
+by unit/E2E but not re-driven through the real app). (4) `python -m evals` A/B on the routing choices.
+
+## ⚡ (2026-07-11, pt.2) — `/commands`, real LSP, UI redesign, dogfood (folded into the 2026-07-12 merge)
+Closed the two remaining OpenCode-parity gaps, shipped the UI redesign + polish, and added
+the self-engineering dogfood harness. **13 commits, all validated: 258 pytest + 170 smoke
+green, `tsc --noEmit` clean, `npm build` clean.** Not merged to `main` (held for the owner).
+Built on a fresh Linux clone with **no keys/Docker**, so the live dogfood run + eval A/B still
+need the owner's laptop/VM (everything else is validated).
+
+1. **User-authored `/commands`** (`core/commands.py`, `config/commands/`, `server/api/commands.py`,
+   wired in `server/chat.py`). `.md` templates → `/name`; substitutions `$ARGUMENTS`/`$1..$9`,
+   `@file` (sandboxed read), `` !`shell` `` (via Docker `run_bash`, no-ops without an image).
+   Args inserted literally, never re-scanned (no injection). Frontend: `/` menu in the composer,
+   ⌘K palette entries (`GET /api/commands`).
+2. **Real LSP / diagnostics** (`core/lint.py`) — a `diagnostics` tool (granted to the 5 code
+   agents) + the post-edit hook use **ruff** when present, falling back to in-process
+   pyflakes+compile. Static-only, workspace-confined. `ruff` added to `requirements.txt`.
+3. **UI redesign + polish** (mockup: https://claude.ai/code/artifact/73a43488-7a32-4150-a376-ff02aed3c53d):
+   chat list grouped-by-recency + auto-titled (`db._derive_title`) with a metadata subline;
+   run-summary header (verdict pill + metric columns); right panel split Changed-this-run
+   (+/- deltas) vs Context; **Health** panel status pill + summary tiles + cache meters;
+   **Schedules** panel summary + status pills; **mobile pass** (Settings modal stacks, composer
+   popovers capped — no overflow at 320/375px). Visually verified with seeded data.
+4. **Dogfood harness** (`scripts/dogfood.py` + `run_dogfood.ps1`) — see "Run the dogfood" below.
+5. **Fixed 2 pre-existing latent `tsc` bugs**: duplicate `setRouting` in `api.ts` (split into
+   `setRouting`/`setFleetRouting`); `FilesPanel` expand-view missing `<Body id>`. `tsc` now clean.
+
+**To ship:** merge `claude/commands-and-lsp` → `main` (auto-deploys). All keyless except the
+LSP tool wants `ruff` (`pip install -r requirements.txt`).
+
+### Run the dogfood (self-engineering test) — LOCAL, needs keys
+On the laptop/VM (keys in `.env`, from the repo root):
+```
+git pull --ff-only
+.\run_dogfood.ps1                 # built-in calc demo: add multiply() + test, run it, PASS/FAIL
+.\run_dogfood.ps1 -Dir .\yourproj -Task "write pytest tests for X and make them pass"
+.\run_dogfood.ps1 -SeedOnly       # prepare only, no model calls (sanity)
+.\run_dogfood.ps1 -Force          # skip the model pre-check
+```
+It resolves the real model chains, runs the agent, reports which files changed + a pytest
+pass/fail. `-Dir` copies your project first (non-destructive; `-InPlace` to edit directly).
+**Gotchas we hit:** the venv was bound to the old `C:\` path after moving the repo to `D:\`
+(recreate with `python -m venv .venv` + `pip install -r requirements.txt`; the `.ps1` uses the
+venv python so `pip.exe` launcher breakage doesn't matter). A `410 Gone` in a run = a **stale
+NIM/model id** — run `python -m scripts.verify_models` and fix ids in `config/models.yaml`.
+**Classify leads with Gemini**, so `GEMINI_API_KEY` must be in `.env` or classify falls to a
+(possibly stale) NIM floor id.
+
+## LATEST (2026-07-11, pt.1) — cost/quality + paid fleet + Skills Hub + UI flow (branch `claude/cost-quality-config`, MERGED via PR #14)
 Big multi-part session on branch **`claude/cost-quality-config`** — **20 commits, all
 validated (230 pytest + 170 smoke green, frontend builds).** PUSHED to origin so it can be
 pulled on another machine; **NOT merged to `main`** (main auto-deploys → held for the owner).
@@ -215,14 +309,15 @@ Replicated the Claude Code workflow and fixed the root causes of multi-minute ha
    locally but re-check on the VM); ensure `agent-verify:latest` Docker image exists on the VM
    (rebuild via `docker/build-verify-image.sh` if not); set `AGENT_DAILY_USD_CAP` (~$2-3/day)
    now that paid keys are live.
-2. **Remaining OpenCode parity** (design in `docs/OPENCODE_GAP.md`): user-authored `/commands`
-   (config-dir templates, `$ARGUMENTS`/`!shell`/`@file`) and **real LSP** (language-server
-   diagnostics into the agent loop — the biggest coding-quality lever, and the one heavy item).
+2. ~~**Remaining OpenCode parity**~~ — DONE (pt.2): user-authored `/commands` + real LSP shipped
+   on `claude/commands-and-lsp`. `docs/OPENCODE_GAP.md` updated (all High-value gaps closed).
 3. **Self-engineering dogfood test** (not yet run): seed an existing multi-file project in the
    workspace, ask the platform to "add feature X + a test, run it" and confirm the read→edit→
-   run loop works on a live codebase (proves "point it at a repo, ask for a feature").
-4. **Finish the UI redesign** per the mockups artifact — the run-flow + @file are built;
-   remaining polish: right-panel hierarchy, always-visible run-summary header refinements.
+   run loop works on a live codebase (proves "point it at a repo, ask for a feature"). The new
+   `diagnostics` tool makes this stronger — the agent can lint before running.
+4. ~~**Finish the UI redesign**~~ — DONE (pt.2): chat-list grouping/titling, run-summary header,
+   right-panel hierarchy shipped. Verify visually on a machine with data/keys (this session's
+   clone had none). Further polish (mobile pass) still open.
 5. **A/B validation on `evals/cases.yaml`** once comfortable — V4-Pro-plan vs GLM-plan, and the
    ported prompt overlays on/off, on real numbers (harness gained `setup.files` seeding).
 6. *(carried)* off-site backups (`BACKUP_UPLOAD_CMD`), CI actions bump off Node-20, mobile pass.

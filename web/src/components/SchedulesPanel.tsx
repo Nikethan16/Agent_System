@@ -30,11 +30,6 @@ function countdown(iso: string): string {
   return `in ${s}s`;
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  done: "text-emerald-500", error: "text-red-500",
-  running: "text-accent-terracotta", queued: "text-amber-500",
-};
-
 // Settings → Schedules: run a saved task on a schedule, in the current chat.
 export default function SchedulesPanel() {
   const currentId = useStore((s) => s.currentId);
@@ -62,8 +57,21 @@ export default function SchedulesPanel() {
   const runNow = async (id: string) => { try { await api.runSchedule(id); setMsg("queued a run"); load(); } catch (e: any) { setMsg(e.message); } };
   const del = async (id: string) => { try { await api.deleteSchedule(id); load(); } catch (e: any) { setMsg(e.message); } };
 
+  const active = list.filter((s) => s.enabled);
+  const nextRun = active
+    .map((s) => s.next_run_at).filter(Boolean)
+    .sort()[0];
+
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-medium">Scheduled tasks</div>
+        {list.length > 0 && (
+          <div className="text-[11px] text-light-muted">
+            {active.length} active{nextRun && countdown(nextRun) ? <span className="text-on-surface dark:text-dark-text"> · next {countdown(nextRun)}</span> : ""}
+          </div>
+        )}
+      </div>
       <div className="text-[11px] text-light-muted">
         Scheduled tasks run unattended in the chosen chat via the job queue (auto-approve path;
         risky actions are still policy-gated). Times are UTC. They survive restarts.
@@ -83,30 +91,40 @@ export default function SchedulesPanel() {
         <div className="text-[10px] text-light-muted">{SPEC_HINT[kind]}</div>
       </div>
 
-      {list.length === 0 && <div className="text-xs text-light-muted">No schedules yet.</div>}
-      {list.map((s) => (
-        <div key={s.id} className="flex items-center justify-between gap-2 text-xs py-2 border-b border-light-border dark:border-dark-border">
-          <div className="min-w-0">
-            <div className="truncate">{s.text}</div>
-            <div className="text-[10px] text-light-muted">
-              {s.kind} {s.spec} · {s.enabled
-                ? <>next {(s.next_run_at || "").replace("T", " ").slice(0, 16)} UTC{countdown(s.next_run_at) && <span className="text-on-surface dark:text-dark-text"> ({countdown(s.next_run_at)})</span>}</>
-                : "disabled"}
+      {list.length === 0 && <div className="text-xs text-light-muted px-1 py-2">No schedules yet — add one above.</div>}
+      <div className="space-y-2">
+        {list.map((s) => (
+          <div key={s.id} className={`rounded-xl border p-3 ${s.enabled ? "border-light-border dark:border-dark-border" : "border-light-border/50 dark:border-dark-border/50 opacity-60"}`}>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] truncate">{s.text}</div>
+                <div className="flex items-center gap-1.5 mt-1 text-[10px] text-light-muted">
+                  <span className="font-code px-1.5 py-0.5 rounded bg-surface-container dark:bg-dark-bg">{s.kind} {s.spec}</span>
+                  {s.enabled
+                    ? <span className="tabular-nums">next {(s.next_run_at || "").replace("T", " ").slice(0, 16)} UTC{countdown(s.next_run_at) && <span className="text-accent-deep dark:text-accent-terracotta"> · {countdown(s.next_run_at)}</span>}</span>
+                    : <span className="uppercase tracking-wide">paused</span>}
+                </div>
+              </div>
+              <div className="flex items-center gap-0.5 shrink-0">
+                <button onClick={() => runNow(s.id)} title="Run now" className="p-1 rounded-md text-light-muted hover:text-accent-terracotta hover:bg-surface-container-low dark:hover:bg-dark-bg"><span className="material-symbols-outlined text-[16px]">play_arrow</span></button>
+                <button onClick={() => toggle(s.id)} title={s.enabled ? "Pause" : "Resume"} className="p-1 rounded-md text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg"><span className="material-symbols-outlined text-[16px]">{s.enabled ? "pause" : "play_circle"}</span></button>
+                <button onClick={() => del(s.id)} title="Delete" className="p-1 rounded-md text-light-muted hover:text-red-500 hover:bg-surface-container-low dark:hover:bg-dark-bg"><span className="material-symbols-outlined text-[16px]">delete</span></button>
+              </div>
             </div>
             {s.last_status && (
-              <div className="text-[10px] text-light-muted">
-                last run: <span className={STATUS_COLOR[s.last_status] || ""}>{s.last_status}</span>
-                {s.last_result && <span title={s.last_result}> · {s.last_result.slice(0, 48)}{s.last_result.length > 48 ? "…" : ""}</span>}
+              <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-light-border/50 dark:border-dark-border/50 text-[10px] text-light-muted">
+                <span className={`inline-flex items-center gap-1 font-semibold px-1.5 py-0.5 rounded-full ${
+                  s.last_status === "done" ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/12"
+                  : s.last_status === "error" ? "text-red-600 dark:text-red-400 bg-red-500/12"
+                  : "text-amber-700 dark:text-amber-400 bg-amber-500/12"}`}>
+                  {s.last_status}
+                </span>
+                {s.last_result && <span className="truncate" title={s.last_result}>{s.last_result.slice(0, 60)}{s.last_result.length > 60 ? "…" : ""}</span>}
               </div>
             )}
           </div>
-          <div className="flex items-center gap-1 shrink-0">
-            <button onClick={() => runNow(s.id)} title="run now" className="material-symbols-outlined text-[16px] text-light-muted hover:text-accent-terracotta">play_arrow</button>
-            <button onClick={() => toggle(s.id)} title="enable/disable" className="material-symbols-outlined text-[16px] text-light-muted hover:text-on-surface">{s.enabled ? "pause" : "resume"}</button>
-            <button onClick={() => del(s.id)} title="delete" className="material-symbols-outlined text-[16px] text-light-muted hover:text-red-500">delete</button>
-          </div>
-        </div>
-      ))}
+        ))}
+      </div>
       {msg && <div className="text-[11px] text-light-muted">{msg}</div>}
     </div>
   );

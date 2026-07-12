@@ -6,7 +6,7 @@ type Cmd = { id: string; label: string; icon: string; hint?: string; run: () => 
 // Claude-style ⌘K palette: search and run actions or jump to any chat.
 export default function CommandPalette({ onClose, onOpenSettings, onOpenBench }:
   { onClose: () => void; onOpenSettings: () => void; onOpenBench: () => void }) {
-  const { sessions, newSession, selectSession, toggleTheme, exportChat } = useStore();
+  const { sessions, newSession, selectSession, toggleTheme, exportChat, commands, setDraft } = useStore();
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -19,11 +19,15 @@ export default function CommandPalette({ onClose, onOpenSettings, onOpenBench }:
     { id: "bench", label: "Open Model Lab", icon: "science", run: () => { onOpenBench(); } },
     { id: "export", label: "Export this chat", icon: "download", run: () => { exportChat(); onClose(); } },
   ];
+  const cmds: Cmd[] = (commands || []).map((c) => ({
+    id: "cmd_" + c.name, label: "/" + c.name, icon: "bolt", hint: c.description || "command",
+    run: () => { setDraft("/" + c.name + " "); onClose(); },
+  }));
   const sess: Cmd[] = sessions.map((s) => ({
     id: "s_" + s.id, label: s.title || "Untitled", icon: "chat_bubble", hint: "chat",
     run: () => { selectSession(s.id); onClose(); },
   }));
-  const all = [...base, ...sess];
+  const all = [...base, ...cmds, ...sess];
   const ql = q.trim().toLowerCase();
   const filtered = ql ? all.filter((c) => c.label.toLowerCase().includes(ql)) : all;
   const clamped = Math.min(sel, Math.max(0, filtered.length - 1));

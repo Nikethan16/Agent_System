@@ -36,7 +36,7 @@ function RunOptions({ onClose, onQueue, canQueue }: { onClose: () => void; onQue
   const help = mode === "auto" ? "Asks only for irreversible actions." : mode === "careful" ? "Asks before every risky action." : "Auto-approves all but hard-blocks.";
   const field = "w-full mt-1 bg-surface-container-low dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-2.5 py-1.5 text-sm text-on-surface dark:text-dark-text outline-none focus:border-accent-terracotta/40 transition";
   return (
-    <div className="absolute bottom-14 left-0 w-80 bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-xl p-4 z-20 fadeup">
+    <div className="absolute bottom-14 left-0 w-80 max-w-[calc(100vw-2.5rem)] bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-xl p-4 z-20 fadeup">
       <div className="flex items-center justify-between mb-1">
         <span className="text-sm font-medium">Run options</span>
         <button onClick={onClose} aria-label="Close run options" className="material-symbols-outlined text-[18px] text-light-muted hover:text-on-surface dark:hover:text-dark-text">close</button>
@@ -90,12 +90,31 @@ function RunOptions({ onClose, onQueue, canQueue }: { onClose: () => void; onQue
 // (`variant="bottom"`). The input card itself is identical in both.
 export default function Composer({ variant = "bottom" }: { variant?: "center" | "bottom" }) {
   const { submit, stop, running, enqueueJob, attachments, addAttachment, removeAttachment,
-          files, loadFiles } = useStore();
+          files, loadFiles, commands, draft, setDraft } = useStore();
   const [text, setText] = useState("");
   const [opts, setOpts] = useState(false);
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // /command menu: opens while the whole input is a bare "/name" (no space/args yet).
+  const slashQuery = /^\/([\w-]*)$/.exec(text.trim());
+  const cmdMatches = slashQuery
+    ? (commands || []).filter((c) => c.name.startsWith(slashQuery[1].toLowerCase())).slice(0, 7)
+    : [];
+
+  const pickCommand = (name: string) => {
+    setText("/" + name + " ");
+    requestAnimationFrame(() => taRef.current?.focus());
+  };
+
+  // A palette selection (⌘K) drops a draft here — load it into the composer and focus.
+  useEffect(() => {
+    if (!draft) return;
+    setText(draft);
+    setDraft("");
+    requestAnimationFrame(() => { const ta = taRef.current; if (ta) { ta.focus(); const n = ta.value.length; ta.setSelectionRange(n, n); } });
+  }, [draft]);
 
   // @file mention: workspace file paths that match the current @token (top 7).
   const filePaths: string[] = (files || []).map((f: any) => typeof f === "string" ? f : f?.path).filter(Boolean);
@@ -156,9 +175,24 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
           ))}
         </div>
       )}
+      {/* /command menu — opens while typing a bare /command */}
+      {cmdMatches.length > 0 && (
+        <div className="absolute bottom-full left-2 mb-1 w-80 max-w-[calc(100vw-2rem)] max-h-56 overflow-y-auto scrollbar bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl shadow-xl z-30 p-1 fadeup">
+          <p className="text-[9px] uppercase tracking-widest text-light-muted px-2 py-1">Commands</p>
+          {cmdMatches.map((c) => (
+            <button key={c.name} type="button" onMouseDown={(e) => { e.preventDefault(); pickCommand(c.name); }}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-surface-container-low dark:hover:bg-dark-bg transition">
+              <span className="material-symbols-outlined text-[15px] text-accent-terracotta">bolt</span>
+              <span className="text-[12px] font-code shrink-0">/{c.name}</span>
+              {c.argument_hint && <span className="text-[10px] text-light-muted font-code shrink-0">{c.argument_hint}</span>}
+              {c.description && <span className="text-[11px] text-light-muted truncate ml-auto">{c.description}</span>}
+            </button>
+          ))}
+        </div>
+      )}
       {/* @file mention picker — opens when you type @ before the caret */}
       {mention && matches.length > 0 && (
-        <div className="absolute bottom-full left-2 mb-1 w-72 max-h-56 overflow-y-auto scrollbar bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl shadow-xl z-30 p-1 fadeup">
+        <div className="absolute bottom-full left-2 mb-1 w-72 max-w-[calc(100vw-2rem)] max-h-56 overflow-y-auto scrollbar bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl shadow-xl z-30 p-1 fadeup">
           <p className="text-[9px] uppercase tracking-widest text-light-muted px-2 py-1">Reference a file</p>
           {matches.map((p) => (
             <button key={p} type="button" onMouseDown={(e) => { e.preventDefault(); pickFile(p); }}
@@ -174,6 +208,7 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
         value={text}
         onChange={onType}
         onKeyDown={(e) => {
+          if (cmdMatches.length && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); pickCommand(cmdMatches[0].name); return; }
           if (mention && matches.length && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); pickFile(matches[0]); return; }
           if (mention && e.key === "Escape") { setMention(null); return; }
           if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); }

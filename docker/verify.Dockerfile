@@ -31,8 +31,26 @@ RUN pip install --no-cache-dir \
         flask \
         rich
 
+# Document-generation libraries — the Anthropic doc skills (docx/xlsx/pptx/pdf) run
+# generator scripts inside this sandbox, and `--network none` blocks installing them at
+# runtime, so bake them in. Without these, "create a real .xlsx/.docx/.pdf" produces no
+# file (the agent burns its iteration budget on a failing `pip install`).
+RUN pip install --no-cache-dir \
+        openpyxl xlsxwriter \
+        python-docx \
+        python-pptx \
+        reportlab pypdf pdfplumber \
+        markitdown \
+        Pillow \
+        lxml defusedxml
+
 # A couple of widely-used JS test runners, global so they resolve offline.
 RUN npm install -g --no-audit --no-fund vitest jest 2>/dev/null || true
+
+# The workspace is mounted at /ws. Models habitually `cd /workspace` — make it an alias so
+# that guess lands in the right place instead of wasting a step discovering /ws. The symlink
+# is created at build time and resolves once /ws is mounted at run time.
+RUN ln -sfn /ws /workspace
 
 WORKDIR /ws
 CMD ["bash"]
