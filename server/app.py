@@ -83,11 +83,31 @@ def _resume_jobs():
     scheduler.start_scheduler()  # start firing due scheduled tasks
     from . import auth
     auth.warn_if_weak_login()    # nudge: the app is internet-facing — flag a weak login pw
+    _start_janitor()             # reclaim orphaned/aged traces+checkpoints (self-maintaining)
     # Wire the LLM observer so Langfuse gets generation spans (model/cost/tokens/latency).
     # core stays offline — it only holds a callback ref; no Langfuse import in core.
     from . import trace as _trace
     from core import llm as _llm
     _llm.register_llm_observer(_trace._llm_generation_callback)
+
+
+def _start_janitor():
+    """Best-effort disk hygiene so the 24/7 host self-maintains without a cron. Runs the
+    SAFE sweep only (orphaned + aged traces/checkpoints — no workspaces, no docker) in a
+    daemon thread so a slow disk can't delay startup. AGENT_DISABLE_JANITOR=1 turns it off."""
+    if os.environ.get("AGENT_DISABLE_JANITOR", "").strip() in ("1", "true", "yes"):
+        return
+    import threading
+
+    def _run():
+        try:
+            from scripts.cleanup import sweep
+            days = int(os.environ.get("MAX_TRACE_AGE_DAYS", "30"))
+            sweep(days=days, workspaces=False, docker=False)
+        except Exception as e:      # never let hygiene break the server
+            print(f"disk janitor skipped: {type(e).__name__}: {e}")
+
+    threading.Thread(target=_run, name="disk-janitor", daemon=True).start()
 
 
 @app.on_event("shutdown")

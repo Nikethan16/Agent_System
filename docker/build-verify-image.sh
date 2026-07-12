@@ -17,6 +17,14 @@ TAG="${AGENT_VERIFY_IMAGE_TAG:-agent-verify:latest}"
 echo "Building $TAG from ${HERE}/verify.Dockerfile ..."
 docker build -f "${HERE}/verify.Dockerfile" -t "$TAG" "${HERE}"
 
+# Rebuilding reuses the :latest tag, so the PREVIOUS image becomes a dangling <none>
+# image that would otherwise pile up over time. Reclaim it (dangling-only — never touches
+# tagged images). Set NO_PRUNE=1 to skip.
+if [ "${NO_PRUNE:-}" != "1" ]; then
+  echo "Pruning dangling images left by the rebuild ..."
+  docker image prune -f >/dev/null 2>&1 || true
+fi
+
 echo
 echo "Done. Set in .env:  AGENT_BASH_DOCKER_IMAGE=${TAG}"
 echo "Then restart the service so run_bash uses the preloaded image."
