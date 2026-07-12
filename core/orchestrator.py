@@ -672,6 +672,16 @@ def _pipeline(task, budget, emit, approve, review, task_type=None, acceptance=""
             emit(ev)
 
     board = Blackboard()
+    # A compact map of the repo (tree + key symbols) so the architect/coder ground themselves
+    # on the structure WITHOUT reading every file — the thing that lets this scale past small
+    # repos. Bounded; they still read the specific files they need (or call repo_map on a subdir).
+    try:
+        from . import repomap
+        repo_overview = repomap.build_map(current_workspace())
+    except Exception:
+        repo_overview = ""
+    _map_ctx = (repo_overview + "\n\n") if repo_overview else ""
+
     need_research = bool(_DOMAIN_PATS["research"].search(task))
     impl_agent = _IMPLEMENTER.get(task_type or "", "coder")
     if team.agents.get(impl_agent) is None:
@@ -708,14 +718,15 @@ def _pipeline(task, budget, emit, approve, review, task_type=None, acceptance=""
 
     # STAGE 2 — PLAN (the architect reads the real project + the findings, writes design.md)
     _assign("architect", "plan", "tier3", "planning", "pipeline: design the plan")
-    pprompt = ("Read the existing project files FIRST, then turn the goal into a concrete, "
-               "ordered implementation plan of small, independently-verifiable steps (each with "
-               "an acceptance check) that the coder will follow. Use any research findings in "
-               "your context. Respect the existing architecture and style. Write the plan to "
+    pprompt = ("A MAP of the repo is in your context. Use it to open ONLY the files you need "
+               "(don't read everything), then turn the goal into a concrete, ordered "
+               "implementation plan of small, independently-verifiable steps (each with an "
+               "acceptance check) that the coder will follow. Use any research findings in your "
+               "context. Respect the existing architecture and style. Write the plan to "
                "design.md.\n\nGOAL:\n" + task
                + (("\n\nACCEPTANCE:\n" + acceptance) if acceptance else ""))
-    plan = _do_subtask("architect", pprompt, budget, emit, approve, board.digest(), False,
-                       task_type="planning")
+    plan = _do_subtask("architect", pprompt, budget, emit, approve, _map_ctx + board.digest(),
+                       False, task_type="planning")
     board.post("architect", "plan", plan)
     i += 1
     _plan(i)
@@ -730,7 +741,7 @@ def _pipeline(task, budget, emit, approve, review, task_type=None, acceptance=""
     # Critic QA only when we CAN'T self-verify in a sandbox (mirrors the tier-2 gating); when
     # we can, the dedicated code-review stage below covers it — no double review.
     impl_review = bool(review) and not (can_run and os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip())
-    result = _do_subtask(impl_agent, iprompt, budget, emit, approve, board.digest(),
+    result = _do_subtask(impl_agent, iprompt, budget, emit, approve, _map_ctx + board.digest(),
                          impl_review, task_type=task_type, acceptance=acceptance,
                          verify_run=can_run, max_rounds=24, stream=True)
     board.post(impl_agent, "implementation", result)
