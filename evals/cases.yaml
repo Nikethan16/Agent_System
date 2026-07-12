@@ -89,7 +89,7 @@ cases:
       division-by-zero raising ValueError. Run the tests with pytest and make sure
       they all pass; fix anything that fails.
     budget: { max_usd: 0.80, max_iterations: 22 }
-    expect_tier: 3
+    expect_tier: 2   # a single-session build -> one coder (the tier-3 speed-fix design)
     graders:
       - { type: file_exists, path: calc.py }
       - { type: file_exists, path: test_calc.py }
@@ -103,7 +103,7 @@ cases:
       bug with a precise edit, and verify by running
       `python -c "import buggy; assert buggy.factorial(0)==1 and buggy.factorial(5)==120; print('ok')"`.
     budget: { max_usd: 0.60, max_iterations: 16 }
-    expect_tier: 3
+    expect_tier: 2   # a one-file bug fix -> one specialist, not the multi-agent lead
     setup:
       files:
         buggy.py: |
@@ -125,7 +125,7 @@ cases:
       then state the numeric result. Do not estimate — run code and report what it
       printed.
     budget: { max_usd: 0.60, max_iterations: 14 }
-    expect_tier: 3
+    expect_tier: 2   # compute-with-code fits one data/coding specialist in a single session
     graders:
       - { type: contains, any: ["2.0", "2.00", " 2 "] }
       - { type: not_contains, all: ["as an ai", "i cannot", "unverified"] }

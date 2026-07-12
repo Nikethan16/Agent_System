@@ -11,6 +11,7 @@ A case passes only if ALL of its graders pass (see run_graders).
 """
 import os
 import re
+import sys
 import json
 import subprocess
 
@@ -95,6 +96,10 @@ def grade_file_contains(spec, output, ctx):
 def grade_bash_check(spec, output, ctx):
     cmd = spec["command"]
     expect = spec.get("expect_exit", 0)
+    # Run a bare `python`/`python3` with the SAME interpreter running the evals (it has
+    # pytest + the project deps). A shell `python` would otherwise resolve to whatever is
+    # first on PATH — often a system Python without the test tooling (a false FAIL).
+    cmd = re.sub(r"\bpython3?\b", lambda _m: f'"{sys.executable}"', cmd, count=1)
     try:
         proc = subprocess.run(
             cmd, shell=True, cwd=WORKSPACE,
