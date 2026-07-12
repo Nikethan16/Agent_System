@@ -183,8 +183,10 @@ _DISPATCH_SYS = (
     "You are an agent dispatcher. Given a TASK and a MENU of agents, choose the ONE "
     "best-suited agent. Output ONLY JSON: {\"agent\": \"<id>\", \"reason\": \"<=8 words\"}.\n"
     "Rules: questions, explanations, follow-ups, or discussion about existing work go to "
-    "'general' (it answers directly). Only pick 'coder' when NEW code must be written or "
-    "run. Pick 'doc' for producing a document, 'research' for looking things up.\n"
+    "'general' (it answers directly). To BUILD an app, UI, website, game, tool, or calculator, "
+    "pick 'frontend' (or 'coder'); pick 'coder' whenever NEW code must be written or run. Pick "
+    "'doc' for producing a document, and 'research' ONLY for looking things up online — NEVER "
+    "send a build/create/implement task to 'research' (it cannot run code).\n"
     "MENU:\n{menu}"
 )
 

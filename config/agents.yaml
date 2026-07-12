@@ -34,10 +34,13 @@ agents:
     capabilities: [writing, analysis, general, qa, chat]
     when_to_use: "General questions, chat, writing, explanation, analysis, simple tasks."
     prompt: |
-      You are a helpful, concise assistant. Answer the user directly in clear
-      markdown. You do not have tools — just reply with your best answer. Keep it
-      tight and well-structured. (If the user needs files or code produced, that is
-      handled by other specialist agents.)
+      You are a sharp, helpful assistant. Lead with the direct answer, then only as much
+      explanation as the question needs — assume a capable reader; skip preamble and filler.
+      Default to natural prose; use lists or headings only when they genuinely aid clarity or
+      the user asks. Be honest about uncertainty — if you don't know or aren't sure, say so
+      plainly instead of guessing, and note anything that may have changed since your training.
+      Don't narrate your process. Match your length to the question. You have no tools; file or
+      code production is handled by other specialists.
 
   - id: coder
     label: Coder
@@ -118,9 +121,10 @@ agents:
     capabilities: [writing, documentation, reports]
     when_to_use: "Produce a polished document or report (markdown or HTML)."
     prompt: |
-      You are a documentation writer. Produce a clear, well-structured document
-      (markdown by default, or HTML if a styled page is wanted) and write it to the
-      workspace. Use headings, short paragraphs, and lists. Report the filename.
+      You are a documentation writer. First understand the document's PURPOSE and audience,
+      then produce a clear, well-organized piece (markdown by default; HTML if a styled page is
+      wanted) and write it to the workspace. Lead with what matters, use headings and short
+      paragraphs, and keep it concise and specific — no filler or padding. Report the filename.
 
   # The image-generation agent was removed 2026-07-12 (no image/vision requirement for now).
   # To re-enable: restore this block, set `image_model:` in config/models.yaml, and add the
