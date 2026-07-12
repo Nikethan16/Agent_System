@@ -287,6 +287,71 @@ def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=F
     return r
 
 
+# ---- parallel agent fan-out (shared by the pipeline's research stage) --------
+def _run_agents_parallel(specs, budget, emit, approve):
+    """Run several GENUINELY-INDEPENDENT agent tasks CONCURRENTLY and return
+    [(agent_id, result), ...] in the same order as `specs`.
+
+    Each spec is a dict: {agent, instruction, context?, task_type?, skills?}. Worker
+    threads don't inherit this thread's contextvars, so — exactly like the LEAD loop's
+    delegate_parallel — we capture the run's workspace, budget, and trace span here and
+    re-bind all three inside each worker (else parallel agents would use the DEFAULT
+    ./workspace, escape the run budget, and lose their trace span). Per-task failures are
+    isolated so one failing branch can't discard its siblings; a real BudgetExceeded still
+    propagates so the global cap halts the run."""
+    ws_root = current_workspace()
+    span_root = _span_ctx.get()
+
+    def _one(spec):
+        with using_workspace(ws_root), use_budget(budget), use_span_ctx(span_root):
+            aid = (spec.get("agent") or "general").strip()
+            if aid not in team.agents.agents:
+                aid = team._fallback_select(spec.get("instruction", ""))
+            instruction = spec.get("instruction") or ""
+            ctx, tt, sk = spec.get("context", ""), spec.get("task_type"), spec.get("skills")
+            try:
+                r = team.run(aid, instruction, budget=budget, emit=emit, approve=approve,
+                             context=ctx, task_type=tt, skills=sk)
+                if _looks_failed(r):     # retry a failed branch once (mirrors _run_delegation)
+                    r = team.run(aid, instruction + "\n\n(Previous attempt failed — retry carefully.)",
+                                 budget=budget, emit=emit, approve=approve, context=ctx,
+                                 task_type=tt, skills=sk)
+            except BudgetExceeded:
+                raise
+            except Exception as e:
+                r = f"(parallel task failed: {type(e).__name__}: {e})"
+            return aid, r
+
+    workers = max(1, min(len(specs), MAX_PARALLEL_FANOUT))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return list(ex.map(_one, specs))
+
+
+_RESEARCH_SPLIT_SYS = (
+    "You split a research goal into INDEPENDENT sub-questions that can be investigated in "
+    "parallel (no sub-question depends on another's answer). Only split when the goal really "
+    "has separable parts; a single focused topic stays ONE question. Output ONLY JSON: "
+    '{"questions": ["...", "..."]}. Return exactly one question when it is not decomposable, '
+    "and at most 4.")
+
+
+def _split_research(task, budget, max_q=None):
+    """Decompose a research goal into independent sub-questions for parallel fan-out.
+    Returns [] when it can't split (caller then runs a single research pass)."""
+    max_q = max_q or MAX_PARALLEL_FANOUT
+    chain = registry.model_chain("tier1", task_type="classify")
+    try:
+        resp, _ = complete_chain(chain, [{"role": "system", "content": _RESEARCH_SPLIT_SYS},
+                                         {"role": "user", "content": task}],
+                                 max_tokens=300, budget=budget, temperature=0)
+        txt = resp.choices[0].message.content or ""
+        qs = json.loads(txt[txt.find("{"): txt.rfind("}") + 1]).get("questions", [])
+        qs = [q.strip() for q in qs if isinstance(q, str) and q.strip()]
+        return qs[:max_q]
+    except Exception:
+        return []
+
+
 # ---- the LEAD master loop (Claude-Code style) ------------------------------
 def _todos_text(todos):
     mark = {"done": "x", "in_progress": "~"}
@@ -666,8 +731,9 @@ def _finalize_from_board(board, task, budget, emit, stream=False):
 # stage with the right specialist and passes its artifact forward via the blackboard AND the
 # workspace (findings.md, design.md). Dependent stages run in sequence — you can't plan
 # before the research is in, or build before the plan exists (the codebase A/B-proved that
-# parallelizing a DEPENDENT build is slower + worse). The research agent still fans out
-# independent questions in parallel internally.
+# parallelizing a DEPENDENT build is slower + worse). The RESEARCH stage is the exception:
+# it splits into independent sub-questions and investigates them CONCURRENTLY (_split_research
+# + _run_agents_parallel) — genuinely independent work, the one case parallelism helps.
 def _pipeline(task, budget, emit, approve, review, task_type=None, acceptance="", stream=False):
     def _emit(ev):
         if emit:
@@ -708,13 +774,34 @@ def _pipeline(task, budget, emit, approve, review, task_type=None, acceptance=""
 
     # STAGE 1 — RESEARCH (only when the task needs external/current info)
     if need_research:
-        _assign("research", "research", "tier2", "research", "pipeline: gather the inputs")
-        rprompt = ("Research ONLY what's needed to inform the work below, and produce a "
-                   "concise, cited findings summary another engineer can act on. Do NOT write "
-                   "the final code/deliverable — just the findings.\n\nGOAL:\n" + task)
-        findings = _do_subtask("research", rprompt, budget, emit, approve, "", False,
-                               task_type="research")
-        board.post("research", "findings", findings)
+        # Split the research goal into INDEPENDENT sub-questions and investigate them
+        # CONCURRENTLY — this is the one stage that's genuinely parallelizable (unlike the
+        # dependent plan→build→review chain below). A single focused topic stays one pass.
+        questions = _split_research(task, budget) if MAX_PARALLEL_FANOUT > 1 else []
+        base_prompt = ("Research ONLY what's needed to inform the work below, and produce a "
+                       "concise, cited findings summary another engineer can act on. Do NOT "
+                       "write the final code/deliverable — just the findings.\n\nGOAL:\n" + task)
+        if len(questions) > 1:
+            model = registry.model_for_tier("tier2", task_type="research")
+            for idx, q in enumerate(questions, 1):
+                _emit({"type": "assign", "agent": "research", "label": "Research", "model": model,
+                       "subtask": q, "reason": f"parallel research {idx}/{len(questions)}",
+                       "step": idx, "stage": "research"})
+            specs = [{"agent": "research", "task_type": "research",
+                      "instruction": ("Research THIS specific question and return a concise, cited "
+                                      "findings summary another engineer can act on (no final "
+                                      "code/deliverable):\n" + q +
+                                      "\n\nOVERALL GOAL (context only):\n" + task)}
+                     for q in questions]
+            pairs = _run_agents_parallel(specs, budget, emit, approve)
+            for idx, (aid, r) in enumerate(pairs):
+                board.post("research", f"findings-{idx + 1}", f"Q: {questions[idx]}\n{r}")
+            findings = "\n\n".join(f"### {questions[idx]}\n{r}" for idx, (aid, r) in enumerate(pairs))
+        else:
+            _assign("research", "research", "tier2", "research", "pipeline: gather the inputs")
+            findings = _do_subtask("research", base_prompt, budget, emit, approve, "", False,
+                                   task_type="research")
+            board.post("research", "findings", findings)
         i += 1
         _plan(i)
 
