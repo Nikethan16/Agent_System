@@ -4,7 +4,55 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## ⚡ LATEST (2026-07-11, pt.2) — `/commands`, real LSP, UI redesign, dogfood (branch `claude/commands-and-lsp`, PUSHED, NOT merged)
+## ⚡ LATEST (2026-07-12) — full E2E test round, 13 fixes, staged multi-agent pipeline (branch `claude/commands-and-lsp`, MERGED to `main`)
+Ran a **full end-to-end test round** (live UI + engine-level, on real seeded repos), found 11
+issues, and fixed **all** of them plus added a multi-agent pipeline. **~16 commits, all
+validated: 260 pytest + 170 smoke green, `tsc` clean, `npm build` clean; doc-gen + the new
+pipeline proven live on real repos.** Full write-up: `docs/TEST_REPORT_2026-07-12.md`.
+
+**Fixes shipped:**
+- **Doc/Office generation now works in the sandbox** — baked the doc libs (openpyxl, python-docx,
+  pptx, reportlab, pypdf, pdfplumber, markitdown, Pillow) into `docker/verify.Dockerfile`, and
+  aliased `/workspace`→`/ws`. *Proven live: agent produced a real `planets.xlsx`.*
+- **Human approval gate restored** — the security-manager review no longer fail-closes on an
+  empty/garbled model reply; an `[infra]` failure falls through to the human card (`server/approvals.py`).
+- **Policy** matches action rules against commands, not written file **content** (a doc that says
+  "deploy" no longer gets escalated) (`core/policy.py`).
+- **Dead NIM ids removed** (`z-ai/glm-5.1` 410, `deepseek-v4-flash` 404) — the cost-first picker
+  was *selecting* the dead GLM (`config/models.yaml`).
+- **Reliability:** a 429 benches a model for 10 min (not re-probed each minute); research free-floor
+  leads with Nemotron-Super before the loopy qwen (`core/llm.py`, `config/models.yaml`).
+- **Skill selection tightened:** `web-frontend` intent-gated; heavy doc-format skills only auto-load
+  for agents that can run them (a research step was staging ~1MB of xlsx schemas) (`core/skills.py`).
+- **Polish:** UNVERIFIED banner only when the agent has run_bash; sub-cent budget-cap display;
+  run_bash cwd hint; dogfood Windows fixes; flaky smoke `_facts[0]` guard.
+- **`/commands`** was a stale-build artifact, not a code bug (source was correct; rebuilt `web/dist`).
+
+**NEW — staged multi-agent pipeline (`core/orchestrator.py`):** a *research + build* task now runs
+a deterministic manager: **research → architect (plan) → coder (implement+verify) → code-reviewer**,
+with each stage's artifact (`findings.md`, `design.md`) passed forward via the blackboard + workspace.
+Triggered by `_wants_pipeline` (research signal AND build signal). Pure coding stays single-agent
+(the speed-fix); multi-domain coordination without research still uses the LEAD master loop.
+*Proven live: 4 specialists, real handoffs, tests pass, $0.008.*
+
+**Dropped** the image-generation agent (no image/vision requirement now; re-enable = restore one
+YAML block + `image_model:` + key).
+
+**⚠️ REQUIRED VM steps after this deploy** (auto-deploy does reset→pip→npm build→restart, NOT these):
+1. **Rebuild the verify Docker image** so doc-gen + the `/workspace` alias work on the VM:
+   `./docker/build-verify-image.sh` (it now includes the doc libs). Without this, doc generation
+   still fails on the VM.
+2. Confirm `DEEPSEEK_API_KEY` + `DEEPINFRA_API_KEY` in the server `.env` (the pipeline works on the
+   free floor without them, but the paid fleet is faster/better). Gemini free quota was exhausted
+   during testing — a second `GEMINI_API_KEY` reduces latency.
+
+**Next tasks:** (1) large-repo **map step** — the architect reads *all* files today, which won't
+scale to big codebases; add a file-tree/symbol map or lightweight index. (2) Semantic skill
+selection + more skills (debug/refactor/git). (3) **Live-UI re-verify** the approval card,
+`/commands` menu, and doc-gen (the preview pane was broken this session, so those three are proven
+by unit/E2E but not re-driven through the real app). (4) `python -m evals` A/B on the routing choices.
+
+## ⚡ (2026-07-11, pt.2) — `/commands`, real LSP, UI redesign, dogfood (folded into the 2026-07-12 merge)
 Closed the two remaining OpenCode-parity gaps, shipped the UI redesign + polish, and added
 the self-engineering dogfood harness. **13 commits, all validated: 258 pytest + 170 smoke
 green, `tsc --noEmit` clean, `npm build` clean.** Not merged to `main` (held for the owner).
