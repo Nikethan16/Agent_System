@@ -834,6 +834,17 @@ def glob(pattern: str, path: str = ".") -> str:
     return out
 
 
+def repo_map(subdir: str = ".") -> str:
+    """A compact map of the codebase (tree + key functions/classes per file), so you grok
+    the structure WITHOUT reading every file. Workspace-sandboxed; `subdir` scopes it."""
+    from . import repomap
+    try:
+        base = _safe(subdir)
+    except ValueError as e:
+        return f"ERROR: {e}"
+    return repomap.build_map(base) or "(empty — no source files found)"
+
+
 def diagnostics(path: str = ".") -> str:
     """Static diagnostics for a workspace file or directory (real analyser when present,
     pyflakes fallback otherwise). Never executes the code — it's an LSP-style check."""

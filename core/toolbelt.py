@@ -151,7 +151,7 @@ def _obj(props, required=None):
 
 # ---- built-in OFFLINE sandboxed tools (file/shell) --------------------------
 from .tools import (read_file, write_file, edit_file, list_files, run_bash,  # noqa: E402
-                    parse_document, grep, glob, apply_patch, diagnostics)
+                    parse_document, grep, glob, apply_patch, diagnostics, repo_map)
 
 register_fn(
     "read_file", lambda path, offset=1, limit=None: read_file(path, offset, limit),
@@ -190,6 +190,14 @@ register_fn(
          ["pattern"]),
     "Find files by name/glob pattern across the workspace (newest first, capped at 100).",
     RISK_SAFE,
+)
+register_fn(
+    "repo_map", lambda subdir=".": repo_map(subdir),
+    _obj({"subdir": {"type": "string",
+                     "description": "subdirectory to map (default: the whole workspace)"}}),
+    "Get a COMPACT map of the codebase — the file tree plus the key functions/classes in each "
+    "source file — so you understand the structure WITHOUT reading every file. Use this FIRST "
+    "on an unfamiliar or large repo, then read only the specific files you need.", RISK_SAFE,
 )
 register_fn(
     "diagnostics", lambda path=".": diagnostics(path),

@@ -42,7 +42,7 @@ agents:
   - id: coder
     label: Coder
     tier: tier2
-    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, diagnostics, run_bash, see_image]
+    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, repo_map, diagnostics, run_bash, see_image]
     capabilities: [coding, testing, debugging, scripts]
     when_to_use: "Write, run, or debug code; create project files; run tests/commands."
     prompt: |
@@ -67,7 +67,7 @@ agents:
   - id: frontend
     label: Frontend Engineer
     tier: tier2
-    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, diagnostics, run_bash, see_image]
+    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, repo_map, diagnostics, run_bash, see_image]
     capabilities: [frontend, html, css, javascript, react, ui, design]
     when_to_use: "Build web UI — HTML/CSS/JS or React — that can be previewed."
     prompt: |
@@ -80,7 +80,7 @@ agents:
   - id: research
     label: Research Analyst
     tier: tier2
-    tools: [web_search, web_fetch, safety_check, read_file, parse_document, see_image, write_file]
+    tools: [web_search, web_fetch, safety_check, read_file, parse_document, repo_map, see_image, write_file]
     capabilities: [research, web, investigation, recommendations]
     when_to_use: "Find information online, investigate options, recommend next steps."
     prompt: |
@@ -114,7 +114,7 @@ agents:
   - id: critic
     label: Critic / QA
     tier: tier2
-    tools: [read_file, list_files, grep, glob, run_bash]
+    tools: [read_file, list_files, grep, glob, repo_map, run_bash]
     capabilities: [qa, review, testing, verification]
     when_to_use: "Check whether produced work meets concrete pass/fail criteria."
     prompt: |
@@ -126,7 +126,7 @@ agents:
   - id: architect
     label: Architect
     tier: tier3
-    tools: [read_file, parse_document, write_file, list_files, grep, glob]
+    tools: [read_file, parse_document, write_file, list_files, grep, glob, repo_map]
     capabilities: [planning, architecture, design, reasoning]
     when_to_use: "Turn a spec/FRS or a vague goal into a concrete technical design + ordered build plan BEFORE any code is written."
     prompt: |
@@ -144,7 +144,7 @@ agents:
   - id: data-analyst
     label: Data Analyst
     tier: tier2
-    tools: [read_file, parse_document, write_file, edit_file, apply_patch, list_files, grep, glob, diagnostics, run_bash]
+    tools: [read_file, parse_document, write_file, edit_file, apply_patch, list_files, grep, glob, repo_map, diagnostics, run_bash]
     capabilities: [data, analysis, math, finance, csv]
     when_to_use: "Analyze data / CSV / spreadsheets, compute metrics, or model scenarios with Python + pandas."
     prompt: |
@@ -160,7 +160,7 @@ agents:
   - id: code-reviewer
     label: Code Reviewer
     tier: tier2
-    tools: [read_file, list_files, grep, glob, run_bash]
+    tools: [read_file, list_files, grep, glob, repo_map, run_bash]
     capabilities: [review, security, quality, audit]
     when_to_use: "Review EXISTING code for correctness, security, and quality (distinct from the pass/fail QA critic)."
     prompt: |
@@ -173,7 +173,7 @@ agents:
   - id: fast-coder
     label: Fast Coder
     tier: tier2
-    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, diagnostics, run_bash, see_image]
+    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, repo_map, diagnostics, run_bash, see_image]
     capabilities: [coding, scripts, quickfix]
     when_to_use: "Small, well-scoped code changes or quick scripts/one-liners where speed matters more than depth."
     prompt: |
@@ -216,7 +216,7 @@ agents:
   - id: repo-engineer
     label: Repo Engineer
     tier: tier2
-    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, diagnostics, run_bash,
+    tools: [read_file, write_file, edit_file, apply_patch, list_files, grep, glob, repo_map, diagnostics, run_bash,
             git_clone, git_status, git_diff, git_log, git_checkout_branch,
             git_commit, git_push, create_pull_request]
     capabilities: [git, github, repository, coding, pr, patch]
