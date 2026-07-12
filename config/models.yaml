@@ -42,7 +42,7 @@ defaults:
 tiers:
   tier1:
     label: "Fast & cheap"
-    model: "gemini/gemini-2.5-flash-lite"
+    model: "deepseek/deepseek-v4-flash"
     max_tokens: 1024
   tier2:
     label: "Balanced"
@@ -144,8 +144,12 @@ routing:
   writing:   ["deepseek/deepseek-v4-flash",
               "deepinfra/zai-org/GLM-5.1",
               "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"]
-  classify:  ["gemini/gemini-2.5-flash-lite",
-              "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b"]
+  # Router/classify leads with DeepSeek V4-Flash: reliable JSON, cheap, and NO daily quota,
+  # so the per-task routing (and the security-manager review, which reuses this chain) never
+  # stalls on Gemini's free-tier limit. Gemini stays only as a fallback (2026-07-12).
+  classify:  ["deepseek/deepseek-v4-flash",
+              "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b",
+              "gemini/gemini-2.5-flash-lite"]
   # data leads with the code-specialist; free floor keeps main's order (qwen, glm, nemotron).
   data:      ["deepinfra/Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
               "deepseek/deepseek-v4-flash",
@@ -432,13 +436,16 @@ catalog:
   #  GOOGLE GEMINI — kept as the cross-provider fallback (needs GEMINI_API_KEY).
   #  Demoted by cost so the NIM fleet is preferred, but still selectable and a
   #  valuable DIFFERENT-provider fallback if NIM is rate-limited or down.
-  #  (Flash-Lite stays cost 0 at tier 1 = the reliable JSON classifier for now.)
+  #  Gemini is FALLBACK-ONLY now (2026-07-12): its free daily quota makes it a poor
+  #  lead, so cost is bumped above the free NIM floor — the cost-first selector never
+  #  picks it as a primary, but it stays available as a fallback in the chains. (The
+  #  one exception is embeddings via EMBED_MODEL, which the owner keeps on Gemini.)
   # =========================================================================
   - id: "gemini/gemini-2.5-flash-lite"
     provider: "google"
     requires_env: "GEMINI_API_KEY"
     free: true
-    cost: 0
+    cost: 3
     tier_hint: 1
     good_for: [routing, summarize, chat, simple, classify]
   - id: "gemini/gemini-2.5-flash"

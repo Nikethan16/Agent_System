@@ -89,8 +89,11 @@ def test_paid_keys_activate_finalized_plan(reg, monkeypatch):
     assert r.model_chain("tier2", task_type="research")[0] == "deepinfra/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B"
     assert r.model_chain("tier2", task_type="data")[0] == "deepinfra/Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
     assert r.model_chain("tier1", task_type="chat")[0] == "deepseek/deepseek-v4-flash"
-    # Router stays on the free reliable classifier even with paid keys.
-    assert r.model_chain("tier1", task_type="classify")[0] == "gemini/gemini-2.5-flash-lite"
+    # Router leads with DeepSeek V4-Flash (reliable JSON, no daily quota); Gemini is a
+    # fallback only (2026-07-12) so the per-task routing never stalls on Gemini's quota.
+    classify = r.model_chain("tier1", task_type="classify")
+    assert classify[0] == "deepseek/deepseek-v4-flash"
+    assert "gemini/gemini-2.5-flash-lite" in classify        # still present as a fallback
 
 
 def test_chains_span_multiple_providers(reg, monkeypatch):
