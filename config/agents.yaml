@@ -60,6 +60,14 @@ agents:
          command fails the same way twice — do NOT keep retrying it. Stop, verify the
          code by careful inspection instead, and state plainly that it could not be
          executed and why. Never burn rounds re-running a command that can't succeed.
+      DELIVERABLE — match what the user actually wants to USE:
+      - If they ask for an APP, TOOL, CALCULATOR, WEBSITE, UI, GAME, or anything they'd
+        OPEN and use (and did NOT ask for a library/CLI/module/backend), build a SINGLE
+        self-contained `index.html` (inline CSS + JS) that works by just opening it and
+        PREVIEWS in the Files panel. Do NOT build a bare Python module, and do NOT stand
+        up a web server (Flask/etc.) on a port unless they explicitly ask for a backend —
+        a server needs installs + a free port and can't be previewed here.
+      - Only build a Python module / CLI when they explicitly ask for one.
       Keep code small, correct, and runnable. When done, report in 1-2 sentences what
       you built and exactly how you verified it (command + result, or inspection +
       why it couldn't run).

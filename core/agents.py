@@ -191,9 +191,13 @@ _DISPATCH_SYS = (
 _KEYWORDS = [
     ("research", ("research", "investigate", "find out", "look up", "what should we",
                   "compare options", "latest", "sources")),
-    ("frontend", ("html", "css", "frontend", "react", "web page", "webpage", "ui ", "landing")),
+    # App/UI builds go to the frontend engineer (self-contained, previewable HTML) — these
+    # come BEFORE coder so "build a calculator/app/website" isn't treated as a bare module.
+    ("frontend", ("html", "css", "frontend", "react", "web page", "webpage", "ui ", "landing",
+                  "calculator", "app", "application", "website", "web app", "dashboard",
+                  "game", "interface", "widget", " site", "web page", "front end", "web ui")),
     ("coder", ("code", "function", "script", "bug", "test", "python", "api ", "implement",
-               "refactor", "compile", "run ")),
+               "refactor", "compile", "run ", "module", "cli", "library")),
     ("doc", ("document", "report", "write up", "readme", "summary doc", "memo")),
 ]
 

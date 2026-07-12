@@ -856,6 +856,18 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     if tier < 3:
         agent_id, reason = team.select_agent(task, budget=budget)
         agent = team.agents.get(agent_id)
+        # A BUILD task must go to an agent that can actually edit + run code. The dispatcher
+        # (especially its keyword fallback when the LLM pick fails) sometimes hands a coding/UI
+        # build to research/doc/general — which have no run_bash and just narrate or flail
+        # (observed live: a "host my calculator" request went to research, which wrote a Flask
+        # app it never ran). Repin such tasks to the right builder.
+        if (task_type in ("coding", "frontend", "data")
+                and not {"edit_file", "run_bash"}.issubset(set(getattr(agent, "tools", None) or []))):
+            _want = "frontend" if task_type == "frontend" else "coder"
+            _repl = team.agents.get(_want)
+            if _repl and {"edit_file", "run_bash"}.issubset(set(_repl.tools or [])):
+                agent_id, agent = _want, _repl
+                reason = f"repinned to {_want}: the picked agent can't build+run"
         # #4: a trivial task handed to a TOOL-LESS chat agent (general) can run on the
         # cheaper routed-tier model. But NEVER downgrade a TOOL-USING agent (research,
         # coder, …): they need a capable model for reliable tool-calling — downgrading
