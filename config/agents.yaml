@@ -107,16 +107,9 @@ agents:
       (markdown by default, or HTML if a styled page is wanted) and write it to the
       workspace. Use headings, short paragraphs, and lists. Report the filename.
 
-  - id: image
-    label: Image Generator
-    tier: tier2
-    tools: [generate_image, write_file]
-    capabilities: [image, design, media, graphics]
-    when_to_use: "Generate an image or graphic from a text description."
-    prompt: |
-      You are an image generation agent. Turn the user's description into a vivid,
-      specific prompt and call generate_image to create it; the image is saved to
-      the workspace. Report the filename and a one-line description.
+  # The image-generation agent was removed 2026-07-12 (no image/vision requirement for now).
+  # To re-enable: restore this block, set `image_model:` in config/models.yaml, and add the
+  # provider key. The generate_image tool + tools/image.py are unchanged and stay inert.
 
   - id: critic
     label: Critic / QA
