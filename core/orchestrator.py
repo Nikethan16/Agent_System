@@ -83,6 +83,20 @@ def _wants_delegation(task: str) -> bool:
     return sum(1 for p in _DOMAIN_PATS.values() if p.search(t)) >= 2
 
 
+def _wants_pipeline(task: str) -> bool:
+    """True when the task needs BOTH research (external/current info) AND a build/implement
+    component — the case a lone specialist can't cover (a research agent has no run_bash;
+    a coder won't go find current information). Those run as a staged research -> plan ->
+    implement -> review pipeline. Pure coding or pure research stays a single agent."""
+    t = task or ""
+    return bool(_DOMAIN_PATS["research"].search(t) and _DOMAIN_PATS["build"].search(t))
+
+
+# Which specialist actually PRODUCES the deliverable in the pipeline's implement stage.
+_IMPLEMENTER = {"coding": "coder", "frontend": "frontend", "data": "data-analyst",
+                "writing": "doc", "research": "coder", "general": "coder"}
+
+
 def _auto_review(tier, task_type) -> bool:
     """Decide whether to run the critic when review == 'auto' (the default).
 
@@ -644,6 +658,100 @@ def _finalize_from_board(board, task, budget, emit, stream=False):
         return digest[:1500]
 
 
+# ---- the staged pipeline: research -> plan -> implement -> review ------------
+# For genuinely multi-domain work (research + build), a single specialist can't cover every
+# part, and the free-tier LEAD delegates unreliably. This DETERMINISTIC manager runs each
+# stage with the right specialist and passes its artifact forward via the blackboard AND the
+# workspace (findings.md, design.md). Dependent stages run in sequence — you can't plan
+# before the research is in, or build before the plan exists (the codebase A/B-proved that
+# parallelizing a DEPENDENT build is slower + worse). The research agent still fans out
+# independent questions in parallel internally.
+def _pipeline(task, budget, emit, approve, review, task_type=None, acceptance="", stream=False):
+    def _emit(ev):
+        if emit:
+            emit(ev)
+
+    board = Blackboard()
+    need_research = bool(_DOMAIN_PATS["research"].search(task))
+    impl_agent = _IMPLEMENTER.get(task_type or "", "coder")
+    if team.agents.get(impl_agent) is None:
+        impl_agent = "coder"
+    can_run = "run_bash" in set(getattr(team.agents.get(impl_agent), "tools", None) or [])
+
+    stage_names = ((["Research the inputs"] if need_research else [])
+                   + ["Design the implementation plan", f"Implement + verify ({impl_agent})"]
+                   + (["Review the change"] if (review and can_run) else []))
+
+    def _plan(i):
+        _emit({"type": "plan", "subtasks": stage_names,
+               "todos": [{"text": s, "status": ("done" if j < i else "in_progress" if j == i else "pending")}
+                         for j, s in enumerate(stage_names)]})
+
+    def _assign(agent, stage, tier, tt, why):
+        _emit({"type": "assign", "agent": agent, "stage": stage,
+               "model": registry.model_for_tier(tier, task_type=tt), "reason": why})
+
+    i = 0
+    _plan(i)
+
+    # STAGE 1 — RESEARCH (only when the task needs external/current info)
+    if need_research:
+        _assign("research", "research", "tier2", "research", "pipeline: gather the inputs")
+        rprompt = ("Research ONLY what's needed to inform the work below, and produce a "
+                   "concise, cited findings summary another engineer can act on. Do NOT write "
+                   "the final code/deliverable — just the findings.\n\nGOAL:\n" + task)
+        findings = _do_subtask("research", rprompt, budget, emit, approve, "", False,
+                               task_type="research")
+        board.post("research", "findings", findings)
+        i += 1
+        _plan(i)
+
+    # STAGE 2 — PLAN (the architect reads the real project + the findings, writes design.md)
+    _assign("architect", "plan", "tier3", "planning", "pipeline: design the plan")
+    pprompt = ("Read the existing project files FIRST, then turn the goal into a concrete, "
+               "ordered implementation plan of small, independently-verifiable steps (each with "
+               "an acceptance check) that the coder will follow. Use any research findings in "
+               "your context. Respect the existing architecture and style. Write the plan to "
+               "design.md.\n\nGOAL:\n" + task
+               + (("\n\nACCEPTANCE:\n" + acceptance) if acceptance else ""))
+    plan = _do_subtask("architect", pprompt, budget, emit, approve, board.digest(), False,
+                       task_type="planning")
+    board.post("architect", "plan", plan)
+    i += 1
+    _plan(i)
+
+    # STAGE 3 — IMPLEMENT (a single specialist that self-verifies in the sandbox)
+    impl_tier = getattr(team.agents.get(impl_agent), "tier", "tier2")
+    _assign(impl_agent, "implement", impl_tier, task_type, "pipeline: build it from the plan")
+    iprompt = ("Implement the goal by FOLLOWING the ordered plan in your context (from the "
+               "architect — also saved as design.md) and using any research findings. Match "
+               "the existing architecture, tests, and style. Then run the tests and make sure "
+               "everything passes.\n\nGOAL:\n" + task)
+    # Critic QA only when we CAN'T self-verify in a sandbox (mirrors the tier-2 gating); when
+    # we can, the dedicated code-review stage below covers it — no double review.
+    impl_review = bool(review) and not (can_run and os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip())
+    result = _do_subtask(impl_agent, iprompt, budget, emit, approve, board.digest(),
+                         impl_review, task_type=task_type, acceptance=acceptance,
+                         verify_run=can_run, max_rounds=24, stream=True)
+    board.post(impl_agent, "implementation", result)
+    i += 1
+    _plan(i)
+
+    # STAGE 4 — CODE REVIEW (deep review on real code changes; fixes Critical/Major itself)
+    if review and can_run:
+        _assign("code-reviewer", "review", "tier2", "review", "pipeline: review the change")
+        vprompt = ("Review the code changes just made for correctness, security, and quality, "
+                   "and RUN the tests. Report a short prioritized list; if you find a Critical "
+                   "or Major issue, fix it directly and re-run the tests.\n\nGOAL:\n" + task)
+        _do_subtask("code-reviewer", vprompt, budget, emit, approve, board.digest(), False,
+                    task_type="review", verify_run=True, max_rounds=12)
+        i += 1
+        _plan(i)
+
+    _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
+    return result
+
+
 # ---- entry point ------------------------------------------------------------
 def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
                 plan_only=False, subtasks=None, review="auto", parallel=False, stream=False,
@@ -701,10 +809,16 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     cls = classify(_user_request(task), budget=budget)
     tier = cls.get("tier", 2)
     task_type = cls.get("task_type")
-    # Cross-domain coordination: escalate an explicitly multi-part, multi-domain request to
-    # the LEAD master loop (which can delegate to specialists) instead of a lone specialist
-    # that can only cover one domain. Conservative — see _wants_delegation.
-    if tier < 3 and _wants_delegation(_user_request(task)):
+    # Research + build in one task -> the staged research->plan->implement->review pipeline
+    # (a lone specialist can't do both). This is the most specific multi-agent route.
+    use_pipeline = _wants_pipeline(_user_request(task))
+    if use_pipeline:
+        tier = 3
+        cls = {**cls, "tier": tier,
+               "reason": (str(cls.get("reason", "")) + " · research+build → pipeline").strip(" ·")}
+    # Otherwise: cross-domain coordination -> the LEAD master loop (delegates to specialists)
+    # instead of a lone specialist that can only cover one domain. Conservative (see helper).
+    elif tier < 3 and _wants_delegation(_user_request(task)):
         tier = 3
         if task_type in _TIER3_SINGLE_AGENT_TYPES:
             task_type = "general"      # force the LEAD path — a single build agent can't span domains
@@ -712,6 +826,10 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
                "reason": (str(cls.get("reason", "")) + " · multi-domain → LEAD").strip(" ·")}
     _emit({**cls, "type": "route"})
     review = _resolve_review(review, tier, task_type)
+
+    if use_pipeline:
+        return _pipeline(task, budget, emit, approve, review,
+                         task_type=task_type, acceptance=acceptance, stream=stream)
 
     # Plan-first preview.
     if plan_only:
