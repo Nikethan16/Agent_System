@@ -136,6 +136,7 @@ routing:
   research:  ["deepinfra/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
               "deepseek/deepseek-v4-flash",
               "gemini/gemini-2.5-flash",
+              "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
               "nvidia_nim/qwen/qwen3.5-122b-a10b"]
   general:   ["deepseek/deepseek-v4-flash",
               "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
