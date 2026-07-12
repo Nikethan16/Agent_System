@@ -174,12 +174,19 @@ _SIGNALS = {
     "docx": ("docx", "word", "letter", "memo", "letterhead"),
     "pptx": ("powerpoint", "pptx", "slide", "slides", "deck", "presentation"),
     "pdf": ("pdf",),
-    # web-frontend is also intent-gated: it kept firing on backend/CLI/library tasks (a
+    # web-frontend is also intent-gated (added 2026-07-12): it kept firing on backend/CLI/library tasks (a
     # bank module, a bare `echo`) on generic word overlap. Only fire when the task is
     # actually about a web UI, not any task that happens to share a couple of dev words.
     "web-frontend": ("html", "css", "frontend", "front-end", "webpage", "web page",
                      "website", "landing page", "responsive", "browser", "ui ", "dom"),
 }
+
+# The document-format skills bundle ~1MB of Office XML schemas + generator scripts and get
+# STAGED into the workspace on selection. Only auto-load them for an agent that can actually
+# RUN those scripts (has run_bash) — otherwise a text-only agent (research/general) that just
+# mentions "spreadsheet/csv" in passing pulls in the whole payload for nothing (observed live
+# 2026-07-12: a JSON-export research step dumped ~50 xlsx schema files into the workspace).
+_DOC_FORMAT_SKILLS = {"xlsx", "docx", "pptx", "pdf"}
 
 
 def catalog() -> list:
@@ -249,6 +256,11 @@ def select(task: str, agent=None, k: int = 2, min_score: int = 2, names=None,
         if s in forced:
             continue
         if s.agents and agent is not None and agent.id not in s.agents:
+            continue
+        # Don't auto-load (and stage) a heavy doc-format skill for an agent that can't run
+        # its generator scripts. Explicit `names=` from the lead still override this.
+        if (s.name in _DOC_FORMAT_SKILLS and agent is not None
+                and "run_bash" not in set(getattr(agent, "tools", None) or [])):
             continue
         sc = _score(tw, raw, s)
         if sc >= min_score:
