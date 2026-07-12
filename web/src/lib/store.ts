@@ -51,6 +51,8 @@ type State = {
   parallel: boolean;
   stream: boolean;
   acceptance: string;
+  effort: "low" | "default" | "high";
+  modelOverride: string;
   attachments: Attachment[];
   toasts: Toast[];
 
@@ -81,6 +83,8 @@ type State = {
   setParallel: (v: boolean) => void;
   setStream: (v: boolean) => void;
   setAcceptance: (v: string) => void;
+  setEffort: (v: "low" | "default" | "high") => void;
+  setModelOverride: (v: string) => void;
   stop: () => void;
   respond: (allowed: boolean) => void;
   loadFiles: () => Promise<void>;
@@ -165,6 +169,8 @@ export const useStore = create<State>((set, get) => ({
   parallel: false,
   stream: true,
   acceptance: "",
+  effort: "default",
+  modelOverride: "",
   attachments: [],
   commands: [],
   draft: "",
@@ -326,7 +332,8 @@ export const useStore = create<State>((set, get) => ({
     // QA automatically on substantive tasks (coding/writing/data + all complex tasks).
     startRun(set, get, {
       text, plan_first: get().planFirst, ...(get().review ? { review: true } : {}),
-      parallel: get().parallel, stream: get().stream,
+      parallel: get().parallel, stream: get().stream, effort: get().effort,
+      ...(get().modelOverride ? { model_override: get().modelOverride } : {}),
       ...(acc ? { acceptance: acc } : {}),
       attachments: atts.map((a) => a.path),
     }, atts.length ? `${text}\n\n📎 ${atts.map((a) => a.name).join(", ")}` : text);
@@ -338,7 +345,8 @@ export const useStore = create<State>((set, get) => ({
     if (!subs) return;
     startRun(set, get, {
       text: "Run the approved plan", subtasks: subs, ...(get().review ? { review: true } : {}),
-      parallel: get().parallel, stream: get().stream,
+      parallel: get().parallel, stream: get().stream, effort: get().effort,
+      ...(get().modelOverride ? { model_override: get().modelOverride } : {}),
     }, "▶ Run the approved plan");
   },
 
@@ -390,6 +398,14 @@ export const useStore = create<State>((set, get) => ({
 
   setStream(v) {
     set({ stream: v });
+  },
+
+  setEffort(v) {
+    set({ effort: v });
+  },
+
+  setModelOverride(v) {
+    set({ modelOverride: v });
   },
 
   setAcceptance(v) {

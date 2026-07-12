@@ -91,7 +91,7 @@ def _workspace_files(workspace: str, limit: int = 40) -> list:
 
 def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
              plan_first=False, subtasks=None, review="auto", parallel=False, stream=True,
-             attachments=None, acceptance=""):
+             attachments=None, acceptance="", model_override=""):
     """Blocking: runs one full turn. Returns the assistant's final text.
 
     plan_first=True -> produce a plan and stop (for approval).
@@ -259,7 +259,8 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
         with using_workspace(workspace):
             final = handle_task(task, budget=budget, emit=_emit, approve=approve,
                                 plan_only=plan_first, subtasks=subtasks, review=review,
-                                parallel=parallel, stream=stream, acceptance=acceptance)
+                                parallel=parallel, stream=stream, acceptance=acceptance,
+                                model_override=model_override)
     finally:
         _span_ctx.reset(_span_token)
 

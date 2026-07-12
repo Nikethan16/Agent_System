@@ -301,9 +301,11 @@ def _run_agents_parallel(specs, budget, emit, approve):
     propagates so the global cap halts the run."""
     ws_root = current_workspace()
     span_root = _span_ctx.get()
+    override = registry.get_model_override()
 
     def _one(spec):
-        with using_workspace(ws_root), use_budget(budget), use_span_ctx(span_root):
+        with using_workspace(ws_root), use_budget(budget), use_span_ctx(span_root), \
+                registry.use_model_override(override):
             aid = (spec.get("agent") or "general").strip()
             if aid not in team.agents.agents:
                 aid = team._fallback_select(spec.get("instruction", ""))
@@ -483,14 +485,17 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     # agents would silently use the DEFAULT ./workspace and lose the trace span.
     ws_root = current_workspace()
     span_root = _span_ctx.get()
+    override = registry.get_model_override()
 
     def _run_delegation(item, step):
         """Run ONE delegated step (used by both delegate and delegate_parallel).
         Returns (agent_id, result). Safe to call from worker threads — Budget and the
         Blackboard are thread-safe, team.run gives each agent its own sub-budget, and the
-        workspace, run budget, and span context are re-bound here so worker threads land
-        in the right sandbox, charge the right budget, and attribute costs to the right trace."""
-        with using_workspace(ws_root), use_budget(budget), use_span_ctx(span_root):
+        workspace, run budget, span context, and model pin are re-bound here so worker
+        threads land in the right sandbox, charge the right budget, attribute costs to the
+        right trace, and honor the same pinned model as the lead."""
+        with using_workspace(ws_root), use_budget(budget), use_span_ctx(span_root), \
+                registry.use_model_override(override):
             agent_id = (item.get("agent") or "general").strip()
             if agent_id not in team.agents.agents:
                 agent_id = team._fallback_select(item.get("instruction", ""))
@@ -855,8 +860,12 @@ def _pipeline(task, budget, emit, approve, review, task_type=None, acceptance=""
 # ---- entry point ------------------------------------------------------------
 def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
                 plan_only=False, subtasks=None, review="auto", parallel=False, stream=False,
-                acceptance="") -> str:
+                acceptance="", model_override="") -> str:
     budget = budget or Budget()
+    # A user-pinned model for this run (composer "Model" picker). Bound as a ContextVar so
+    # every registry.model_chain resolution on this run prefers it, with routing as fallback;
+    # concurrent runs/sessions keep their own. Cleared automatically when None/"".
+    registry.set_model_override(model_override or None)
     # Bind the run budget so tool-internal model calls (see_image / safety_check /
     # generate_image) charge THIS run's budget + the daily cap, not a throwaway one.
     # Each run executes on a fresh thread (WS spawns one per turn) or rebinds here before

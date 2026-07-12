@@ -29,7 +29,7 @@ function Section({ label, children }: { label: string; children: any }) {
 // All per-run controls live here (approval mode, behavior toggles, limits) so the
 // composer bar itself stays minimal. Defaults live in Settings; edits here are this-run-only.
 function RunOptions({ onClose, onQueue, canQueue }: { onClose: () => void; onQueue: () => void; canQueue: boolean }) {
-  const { maxUsd, maxIter, setLimit, mode, setMode, planFirst, setPlanFirst, review, setReview, parallel, setParallel, stream, setStream, acceptance, setAcceptance } = useStore();
+  const { maxUsd, maxIter, setLimit, mode, setMode, review, setReview, parallel, setParallel, stream, setStream, acceptance, setAcceptance } = useStore();
   const num = (e: React.ChangeEvent<HTMLInputElement>, k: "maxUsd" | "maxIter") => {
     const n = parseFloat(e.target.value); if (!Number.isNaN(n)) setLimit(k, n);
   };
@@ -53,7 +53,6 @@ function RunOptions({ onClose, onQueue, canQueue }: { onClose: () => void; onQue
       </Section>
 
       <Section label="Behavior">
-        <Toggle on={planFirst} set={setPlanFirst} label="Plan first" hint="Preview a plan and approve before running" />
         <Toggle on={review} set={setReview} label="Force QA" hint="QA already runs on substantive tasks" />
         <Toggle on={parallel} set={setParallel} label="Parallel subtasks" hint="Run independent subtasks at once" />
         <Toggle on={stream} set={setStream} label="Stream tokens" hint="Show output as it's written" />
@@ -88,9 +87,56 @@ function RunOptions({ onClose, onQueue, canQueue }: { onClose: () => void; onQue
 // The composer renders in two places, Claude-style: centered under the greeting on the
 // welcome screen (`variant="center"`), and pinned to the bottom during a conversation
 // (`variant="bottom"`). The input card itself is identical in both.
+// A compact inline pill dropdown for the composer bar (OpenCode-style Mode/Model/Effort).
+// Shows the current value; opens a small menu above the bar. Closes on outside click.
+function BarSelect({ label, value, options, onPick, icon }: {
+  label: string; value: string; icon?: string;
+  options: { value: string; label: string; hint?: string }[];
+  onPick: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [open]);
+  const cur = options.find((o) => o.value === value);
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <button type="button" onClick={() => setOpen(!open)} title={label}
+        className={`flex items-center gap-1 h-9 px-2.5 rounded-full text-[12px] transition max-w-[10rem] ${open ? "bg-accent-terracotta/10 text-accent-terracotta" : "text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg"}`}>
+        {icon && <span className="material-symbols-outlined text-[16px]">{icon}</span>}
+        <span className="truncate">{cur?.label ?? value}</span>
+        <span className="material-symbols-outlined text-[16px] -ml-0.5 opacity-70">expand_more</span>
+      </button>
+      {open && (
+        <div className="absolute bottom-full left-0 mb-1 w-60 max-w-[calc(100vw-2rem)] max-h-64 overflow-y-auto scrollbar bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl shadow-xl z-30 p-1 fadeup">
+          <p className="text-[9px] uppercase tracking-widest text-light-muted px-2 py-1">{label}</p>
+          {options.map((o) => (
+            <button key={o.value} type="button" onMouseDown={(e) => { e.preventDefault(); onPick(o.value); setOpen(false); }}
+              className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg text-left transition ${o.value === value ? "bg-surface-container-low dark:bg-dark-bg" : "hover:bg-surface-container-low dark:hover:bg-dark-bg"}`}>
+              <span className="min-w-0">
+                <span className="block text-[12px] text-on-surface dark:text-dark-text truncate">{o.label}</span>
+                {o.hint && <span className="block text-[10px] text-light-muted truncate">{o.hint}</span>}
+              </span>
+              {o.value === value && <span className="material-symbols-outlined text-[16px] text-accent-terracotta shrink-0">check</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A long catalog id like "nvidia_nim/nvidia/nemotron-3-super-120b" -> "nemotron-3-super-120b".
+const shortModel = (id: string) => id.split("/").pop() || id;
+
 export default function Composer({ variant = "bottom" }: { variant?: "center" | "bottom" }) {
   const { submit, stop, running, enqueueJob, attachments, addAttachment, removeAttachment,
-          files, loadFiles, commands, draft, setDraft } = useStore();
+          files, loadFiles, commands, draft, setDraft,
+          planFirst, setPlanFirst, effort, setEffort, modelOverride, setModelOverride, catalog } = useStore();
   const [text, setText] = useState("");
   const [opts, setOpts] = useState(false);
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null);
@@ -162,6 +208,21 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
     ? "How can I help you today?"
     : "Reply to the team…";
 
+  // Inline composer controls (OpenCode-style). Mode maps to plan-first; Model "" = Auto
+  // routing; Effort scales how hard the run tries (budget/iterations + QA default).
+  const modeOpts = [
+    { value: "build", label: "Build", hint: "Do the work now" },
+    { value: "plan", label: "Plan first", hint: "Preview a plan, then approve" }];
+  const modelOpts = [
+    { value: "", label: "Auto", hint: "Cost-first routing (recommended)" },
+    // Only models whose provider key is set (available !== false keeps older cached lists working).
+    ...(catalog || []).filter((m: any) => m.available !== false).map((m: any) => ({
+      value: m.id, label: shortModel(m.id), hint: m.free ? "free" : (m.provider || "") }))];
+  const effortOpts = [
+    { value: "low", label: "Low effort", hint: "Fast + cheap · QA off" },
+    { value: "default", label: "Default effort", hint: "Balanced routing" },
+    { value: "high", label: "High effort", hint: "More budget · QA on" }];
+
   const box = (
     <div className="relative w-full bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-[26px] shadow-sm p-2.5 focus-within:border-accent-terracotta/40 focus-within:shadow-md transition-all">
       {attachments.length > 0 && (
@@ -218,16 +279,22 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
         className="w-full px-3 pt-2 pb-1 bg-transparent resize-none outline-none text-[15px] leading-6 min-h-[40px] placeholder-light-muted"
       />
       <div className="flex items-center justify-between px-1 pt-1.5 gap-2">
-        {/* LEFT: attach + run-options (everything advanced lives behind the sliders) */}
-        <div className="flex items-center gap-1">
+        {/* LEFT: attach + inline Mode/Model/Effort + run-options (advanced behind the sliders) */}
+        <div className="flex items-center gap-1 min-w-0 overflow-x-auto scrollbar">
           <label title="Attach a file (added as context)"
-            className="w-9 h-9 rounded-full text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg flex items-center justify-center transition cursor-pointer">
+            className="w-9 h-9 shrink-0 rounded-full text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg flex items-center justify-center transition cursor-pointer">
             <span className="material-symbols-outlined text-[22px]">add</span>
             <input type="file" className="hidden" onChange={(e) => {
               const f = e.target.files?.[0]; if (f) addAttachment(f); e.currentTarget.value = "";
             }} />
           </label>
-          <div className="relative" ref={popRef}>
+          <BarSelect label="Mode" icon="construction" value={planFirst ? "plan" : "build"}
+            options={modeOpts} onPick={(v) => setPlanFirst(v === "plan")} />
+          <BarSelect label="Model" icon="neurology" value={modelOverride}
+            options={modelOpts} onPick={setModelOverride} />
+          <BarSelect label="Effort" icon="bolt" value={effort}
+            options={effortOpts} onPick={(v) => setEffort(v as "low" | "default" | "high")} />
+          <div className="relative shrink-0" ref={popRef}>
             <button onClick={() => setOpts(!opts)} title="Run options — approval, plan-first, QA, parallel, limits" aria-label="Run options"
               className={`flex items-center gap-1.5 h-9 px-3 rounded-full text-[12px] transition ${opts ? "bg-accent-terracotta/10 text-accent-terracotta" : "text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg"}`}>
               <span className="material-symbols-outlined text-[18px]">tune</span>

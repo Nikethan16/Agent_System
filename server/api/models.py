@@ -16,7 +16,9 @@ router = APIRouter(prefix="/api", tags=["models"])
 def get_models():
     return {
         "tiers": registry.cfg["tiers"],
-        "catalog": registry.catalog(),
+        # `available` = its provider key is set — lets the composer's Model picker offer
+        # only models that will actually resolve (a copy; never mutate the catalog dicts).
+        "catalog": [{**m, "available": registry._available(m)} for m in registry.catalog()],
         "strategy": registry.model_strategy(),
         "resolved": {t: registry.model_for_tier(t) for t in registry.cfg.get("tiers", {})},
     }

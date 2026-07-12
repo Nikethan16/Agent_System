@@ -83,13 +83,21 @@ async def run_socket(websocket: WebSocket, session_id: str):
                 text = (msg.get("text") or "").strip()
                 if not text:
                     continue
+                # Effort (composer control) scales HOW HARD the run tries — native to our
+                # routing: it stretches the budget/iterations and flips the QA default. Low
+                # = cheap+fast, High = more headroom + QA on. (Tier/model still auto-route.)
+                effort = str(msg.get("effort", "default")).lower()
+                if effort not in ("low", "default", "high"):
+                    effort = "default"
+                _usd_f, _iter_f = {"low": (0.5, 0.6), "default": (1.0, 1.0),
+                                   "high": (2.0, 1.5)}[effort]
                 # Clamp client-supplied caps to server ceilings — never trust the
                 # client to bound its own spend.
                 try:
-                    req_usd = float(msg.get("max_usd", 0.5))
-                    req_iter = int(msg.get("max_iterations", 24))
+                    req_usd = float(msg.get("max_usd", 0.5)) * _usd_f
+                    req_iter = int(round(int(msg.get("max_iterations", 24)) * _iter_f))
                 except (TypeError, ValueError):
-                    req_usd, req_iter = 0.5, 24
+                    req_usd, req_iter = 0.5 * _usd_f, int(24 * _iter_f)
                 budget = Budget(
                     max_usd=max(0.0, min(req_usd, _MAX_USD_CEILING)),
                     max_iterations=max(1, min(req_iter, _MAX_ITER_CEILING)),
@@ -102,25 +110,29 @@ async def run_socket(websocket: WebSocket, session_id: str):
                 state["broker"], state["budget"] = broker, budget
                 plan_first = bool(msg.get("plan_first", False))
                 subtasks = msg.get("subtasks") or None
-                # review is tri-state: omit -> "auto" (QA substantive tasks); an explicit
-                # bool from the UI toggle overrides (force-on / force-off).
-                review = bool(msg["review"]) if "review" in msg else "auto"
+                # review is tri-state: an explicit UI toggle (Force QA) always wins; else
+                # effort sets the default — High turns QA on, Low off, Default -> "auto".
+                if "review" in msg:
+                    review = bool(msg["review"])
+                else:
+                    review = {"high": True, "low": False}.get(effort, "auto")
                 parallel = bool(msg.get("parallel", False))
                 stream = bool(msg.get("stream", True))
                 attachments = msg.get("attachments") or None
                 acceptance = (msg.get("acceptance") or "").strip()
+                model_override = (msg.get("model_override") or "").strip()
 
                 def worker(text=text, budget=budget, broker=broker, run_id=run_id,
                            plan_first=plan_first, subtasks=subtasks, review=review,
                            parallel=parallel, stream=stream, attachments=attachments,
-                           acceptance=acceptance):
+                           acceptance=acceptance, model_override=model_override):
                     status = "done"
                     try:
                         run_turn(session_id, text, budget=budget, emit=emit,
                                  approve=broker.approve, plan_first=plan_first,
                                  subtasks=subtasks, review=review,
                                  parallel=parallel, stream=stream, attachments=attachments,
-                                 acceptance=acceptance)
+                                 acceptance=acceptance, model_override=model_override)
                     except Exception as e:
                         status = "error"
                         emit({"type": "error", "text": f"{type(e).__name__}: {e}"})

@@ -20,9 +20,23 @@ import os
 import json
 import logging
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 import yaml
 
 log = logging.getLogger(__name__)
+
+# ---- run-scoped model override (the composer's "Model" picker) ---------------
+# When a user pins a specific model for a run, model_chain prepends it (keeping the
+# normal routing chain as FALLBACK, so a pinned model that's down still degrades
+# gracefully). It's a ContextVar, not a global, so concurrent runs/sessions can't
+# clobber each other's choice. Worker threads (parallel delegations) don't inherit
+# contextvars, so the orchestrator captures + re-binds this exactly like the budget.
+# Routing/classify stays on the cheap auto-picked model — a pin shouldn't make every
+# tiny classify call pay for a big model.
+_model_override: ContextVar = ContextVar("model_override", default=None)
+_OVERRIDE_EXCLUDE = {"classify"}
 
 _DIR = os.path.dirname(__file__)
 _DEFAULT_PATH = os.path.join(_DIR, "..", "config", "models.yaml")
@@ -68,6 +82,23 @@ class ModelRegistry:
             log.warning("could not load discovered models from %s: %s", DISCOVERED_PATH, e)
             return []
 
+    # ---- run-scoped model override (composer "Model" picker) -------------
+    def set_model_override(self, model):
+        """Pin (or clear with None/"") the model for the current execution context."""
+        _model_override.set((model.strip() or None) if isinstance(model, str) else None)
+
+    def get_model_override(self):
+        return _model_override.get()
+
+    @contextmanager
+    def use_model_override(self, model):
+        """Bind the override for a block — re-binds it inside worker threads."""
+        tok = _model_override.set(model or None)
+        try:
+            yield
+        finally:
+            _model_override.reset(tok)
+
     # ---- tier resolution -------------------------------------------------
     def tier(self, name: str) -> dict:
         return self.cfg["tiers"][name]
@@ -75,6 +106,9 @@ class ModelRegistry:
     def model_for_tier(self, name: str, task_type: str = None) -> str:
         if self.model_strategy() == "cheapest":
             return self.model_chain(name, task_type, max_len=1)[0]
+        override = self.get_model_override()
+        if override and task_type not in _OVERRIDE_EXCLUDE:
+            return override
         return self.cfg["tiers"][name]["model"]
 
     def max_tokens_for_tier(self, name: str) -> int:
@@ -273,6 +307,11 @@ class ModelRegistry:
             _add(mid)
         if not chain:
             _add(self.cfg["tiers"][tier]["model"])
+        # A run-scoped pin goes to the FRONT (routing chain stays as fallback), except
+        # for cheap routing calls (classify) which keep their auto-picked model.
+        override = self.get_model_override()
+        if override and task_type not in _OVERRIDE_EXCLUDE:
+            chain = [override] + [m for m in chain if m != override]
         return chain[:max_len]
 
     # ---- live swap (used by the UI) -------------------------------------
