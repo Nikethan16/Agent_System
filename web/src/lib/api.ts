@@ -187,6 +187,8 @@ export const api = {
     GET(`/api/sessions/${id}/file/at?path=${encodeURIComponent(path)}&checkpoint=${encodeURIComponent(checkpoint)}`),
   fileDiff: (id: string, path: string) =>
     GET(`/api/sessions/${id}/file/diff?path=${encodeURIComponent(path)}`),
+  previewHtml: (id: string, path: string) =>
+    GET(`/api/sessions/${id}/preview?path=${encodeURIComponent(path)}`),
   rawFileUrl: (id: string, path: string) =>
     `/api/sessions/${id}/file/raw?path=${encodeURIComponent(path)}`,
 };

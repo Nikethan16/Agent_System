@@ -60,6 +60,18 @@ def read_file(session_id: str, path: str = Query(...)):
     return {"path": path, "ext": ext, "binary": False, "content": content}
 
 
+@router.get("/{session_id}/preview")
+def preview(session_id: str, path: str = Query(...)):
+    """A self-contained version of an HTML artifact — local CSS/JS/images inlined — so a
+    multi-file app renders fully in the sandboxed srcDoc iframe (which can't fetch siblings)."""
+    from .. import htmlbundle
+    root = db.session_workspace(session_id)
+    html = htmlbundle.bundle(root, path)
+    if html is None:
+        raise HTTPException(404, "file not found")
+    return {"html": html}
+
+
 @router.get("/{session_id}/file/raw")
 def file_raw(session_id: str, path: str = Query(...)):
     """Serve a workspace file's RAW bytes with a guessed content-type. The text `/file`

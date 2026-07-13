@@ -46,6 +46,22 @@ function DiffView({ text }: { text: string }) {
   );
 }
 
+// Live HTML preview. Fetches a BUNDLED version (local CSS/JS/images inlined by the
+// server) so a multi-file app renders fully — srcDoc alone can't load sibling files.
+// Falls back to the raw file content if the bundle call fails.
+function HtmlPreview({ id, path, fallback }: { id: string | null; path: string; fallback: string }) {
+  const [html, setHtml] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    setHtml(null);
+    if (id) api.previewHtml(id, path).then((r) => live && setHtml(r?.html ?? fallback)).catch(() => live && setHtml(fallback));
+    else setHtml(fallback);
+    return () => { live = false; };
+  }, [id, path]);
+  return <iframe sandbox="allow-scripts" srcDoc={html ?? "<!doctype html><body style='font:14px system-ui;color:#888;padding:12px'>Loading preview…"}
+    title="preview" className="w-full h-full min-h-[300px] bg-white rounded-lg border border-light-border" />;
+}
+
 function Body({ sel, view, diff, id }: { sel: any; view: string; diff: string; id: string | null }) {
   const isHtml = sel.ext === ".html";
   const isMd = sel.ext === ".md";
@@ -59,7 +75,7 @@ function Body({ sel, view, diff, id }: { sel: any; view: string; diff: string; i
   if (isPdf && id) return <iframe src={api.rawFileUrl(id, sel.path)} title="pdf" className="w-full h-full min-h-[420px] rounded-lg border border-light-border bg-white" />;
   if (sel.binary) return <div className="text-light-muted text-xs">Binary file ({sel.ext}). {id && <a className="text-accent-terracotta underline" href={api.rawFileUrl(id, sel.path)} target="_blank" rel="noreferrer">Open raw</a>}</div>;
   if (view === "diff") return <DiffView text={diff} />;
-  if (view === "preview" && isHtml) return <iframe sandbox="allow-scripts" srcDoc={sel.content} title="preview" className="w-full h-full min-h-[300px] bg-white rounded-lg border border-light-border" />;
+  if (view === "preview" && isHtml) return <HtmlPreview id={id} path={sel.path} fallback={sel.content || ""} />;
   if (view === "preview" && isMd) return <div className="prose-msg text-sm"><ReactMarkdown remarkPlugins={[remarkGfm]}>{sel.content || ""}</ReactMarkdown></div>;
   if (view === "preview" && isMermaid) return <Mermaid code={sel.content || ""} />;
   if (view === "preview" && isSvg) return <Svg markup={sel.content || ""} />;
