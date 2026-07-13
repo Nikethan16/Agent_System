@@ -67,6 +67,33 @@ def _strip_token(s: str, url: str, clean_url: str, token: str = "") -> str:
     return s
 
 
+# ---- server-side clone (project setup, not an agent tool) ------------------
+def clone_into(url: str, dest: str, branch: str = "") -> tuple:
+    """Clone `url` INTO the existing (empty) directory `dest`. Used when creating a
+    project FROM a repo — unlike git_clone (which targets the agent's current workspace),
+    this takes an explicit path. Returns (ok: bool, message: str), credentials scrubbed.
+    Guards the host against SSRF (private/loopback/metadata) for http(s) URLs."""
+    if not url or not url.startswith(("https://", "http://", "git@")):
+        return False, "url must start with https://, http://, or git@"
+    if url.startswith(("https://", "http://")):
+        try:
+            from tools.web import _guard_url
+            _guard_url(url)                         # block private/loopback/metadata hosts
+        except Exception as e:
+            return False, f"refused (SSRF guard): {e}"
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    clone_url = url
+    if token and url.startswith("https://"):
+        clone_url = re.sub(r"^https://", f"https://oauth2:{token}@", url, count=1)
+    args = ["clone"]
+    if branch:
+        args += ["--branch", re.sub(r"[^A-Za-z0-9._/-]", "", branch)[:100]]
+    args += [clone_url, "."]                        # into the (empty) dest dir
+    rc, stdout, stderr = _git(args, cwd=dest, timeout=300)
+    msg = _strip_token((stdout + "\n" + stderr).strip(), clone_url, url, token=token)
+    return rc == 0, msg
+
+
 # ---- public tool functions -------------------------------------------------
 
 def git_clone(url: str, directory: str = "") -> str:

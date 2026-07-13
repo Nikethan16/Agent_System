@@ -7,8 +7,12 @@ export default function ProjectModal({ pid, onClose }: { pid: string; onClose: (
   const proj = projects.find((p) => p.id === pid);
   const [instr, setInstr] = useState(proj?.instructions || "");
   const [files, setFiles] = useState<any[]>([]);
+  const [repo, setRepo] = useState<any>(null);
   const reload = () => api.projectFiles(pid).then(setFiles);
-  useEffect(() => { reload(); setInstr(proj?.instructions || ""); }, [pid]);
+  useEffect(() => {
+    reload(); setInstr(proj?.instructions || "");
+    api.projectRepo(pid).then(setRepo).catch(() => setRepo(null));
+  }, [pid]);
   if (!proj) return null;
   const save = async () => { await api.updateProject(pid, { instructions: instr }); await loadProjects(); };
 
@@ -24,6 +28,24 @@ export default function ProjectModal({ pid, onClose }: { pid: string; onClose: (
         <textarea value={instr} onChange={(e) => setInstr(e.target.value)} onBlur={save} rows={4}
           placeholder="Shared guidance/context injected into every chat in this project…"
           className="w-full mt-1 mb-5 bg-surface-container-low dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg p-2.5 text-sm outline-none focus:border-accent-terracotta" />
+
+        {repo?.repo && (
+          <div className="mb-5 border border-light-border dark:border-dark-border rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="material-symbols-outlined text-[16px] text-accent-terracotta">account_tree</span>
+              <span className="text-[13px] font-medium">{repo.branch}</span>
+              <span className="text-[11px] text-light-muted">{repo.changed} uncommitted change{repo.changed === 1 ? "" : "s"}</span>
+            </div>
+            {repo.url && <div className="text-[10px] text-light-muted font-code truncate mb-2">{repo.url}</div>}
+            {repo.recent?.length > 0 && (
+              <div className="space-y-0.5">
+                {repo.recent.map((c: string, i: number) => (
+                  <div key={i} className="text-[11px] text-light-muted font-code truncate">{c}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center justify-between mb-2">
           <label className="text-[11px] uppercase tracking-widest text-light-muted">Knowledge files</label>

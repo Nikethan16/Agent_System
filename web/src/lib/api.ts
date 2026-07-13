@@ -98,9 +98,11 @@ export const api = {
   createSession: (title = "New chat", project_id = "") => POST("/api/sessions", { title, project_id }),
 
   listProjects: () => GET("/api/projects"),
-  createProject: (name: string) => POST("/api/projects", { name }),
+  createProject: (name: string, repo_url = "", branch = "") =>
+    POST("/api/projects", { name, repo_url, branch }),
   updateProject: (pid: string, body: any) => PATCH(`/api/projects/${pid}`, body),
   deleteProject: (pid: string) => DELETE(`/api/projects/${pid}`),
+  projectRepo: (pid: string) => GET(`/api/projects/${pid}/repo`),
   projectFiles: (pid: string) => GET(`/api/projects/${pid}/files`),
   addProjectFile: (pid: string, file: File) => UPLOAD(`/api/projects/${pid}/files`, file),
   removeProjectFile: (pid: string, name: string) =>

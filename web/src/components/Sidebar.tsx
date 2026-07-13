@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useStore } from "../lib/store";
 import ProjectModal from "./ProjectModal";
+import NewProjectModal from "./NewProjectModal";
 import Sunburst from "./Sunburst";
 
 // Short "3h ago" / "yesterday" / "Jul 4" label from an ISO timestamp.
@@ -34,8 +35,9 @@ function bucketOf(iso?: string): string {
 export default function Sidebar({ open = false, onClose, email = "", onOpenSettings, onLogout }:
   { open?: boolean; onClose?: () => void; email?: string; onOpenSettings?: () => void; onLogout?: () => void } = {}) {
   const { sessions, currentId, newSession, selectSession, deleteSession, renameSession,
-          projects, activeProject, setActiveProject, createProject, toggleStar, theme, toggleTheme } = useStore();
+          projects, activeProject, setActiveProject, toggleStar, theme, toggleTheme } = useStore();
   const [projModal, setProjModal] = useState(false);
+  const [newProj, setNewProj] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const dark = theme === "dark";
   const [editing, setEditing] = useState<string | null>(null);
@@ -84,7 +86,7 @@ export default function Sidebar({ open = false, onClose, email = "", onOpenSetti
       <div className="px-3 mb-2">
         <div className="flex items-center gap-1.5">
           <select value={activeProject}
-            onChange={(e) => { if (e.target.value === "__new__") { const n = prompt("Project name"); if (n) createProject(n); } else setActiveProject(e.target.value); }}
+            onChange={(e) => { if (e.target.value === "__new__") { setNewProj(true); } else setActiveProject(e.target.value); }}
             className="flex-1 text-[12px] bg-transparent hover:bg-white/50 dark:hover:bg-dark-surface rounded-lg px-2 py-1.5 outline-none text-on-surface-variant dark:text-light-muted cursor-pointer">
             <option value="">All chats</option>
             {projects.map((p) => <option key={p.id} value={p.id}>📁 {p.name}</option>)}
@@ -99,6 +101,7 @@ export default function Sidebar({ open = false, onClose, email = "", onOpenSetti
         </div>
       </div>
       {projModal && activeProject && <ProjectModal pid={activeProject} onClose={() => setProjModal(false)} />}
+      {newProj && <NewProjectModal onClose={() => setNewProj(false)} />}
 
       <nav className="flex-1 overflow-y-auto scrollbar px-2 pb-2">
         {shown.length === 0 && (

@@ -69,7 +69,7 @@ type State = {
   loadCommands: () => Promise<void>;
   setDraft: (v: string) => void;
   loadProjects: () => Promise<void>;
-  createProject: (name: string) => Promise<void>;
+  createProject: (name: string, repoUrl?: string, branch?: string) => Promise<any>;
   setActiveProject: (pid: string) => Promise<void>;
   submit: (text: string) => void;
   send: (text: string) => void;
@@ -247,10 +247,16 @@ export const useStore = create<State>((set, get) => ({
     set({ projects: await api.listProjects() });
   },
 
-  async createProject(name) {
-    const p = await api.createProject(name);
+  async createProject(name, repoUrl = "", branch = "") {
+    const p = await api.createProject(name, repoUrl, branch);
     set({ projects: [p, ...get().projects] });
+    // Surface the clone outcome when creating from a repo (never silently swallow a failure).
+    if (repoUrl) {
+      if (p?.clone?.ok) get().pushToast(`Cloned into “${p.name}”.`, "success");
+      else get().pushToast(`Clone failed: ${p?.clone?.message || "unknown error"}`, "error");
+    }
     await get().setActiveProject(p.id);
+    return p;
   },
 
   async setActiveProject(pid) {

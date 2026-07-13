@@ -10,6 +10,8 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 class CreateIn(BaseModel):
     name: str = "New project"
+    repo_url: str = ""      # optional: clone this git repo into the project workspace
+    branch: str = ""        # optional branch to check out on clone
 
 
 class UpdateIn(BaseModel):
@@ -20,6 +22,8 @@ class UpdateIn(BaseModel):
 
 @router.post("")
 def create(body: CreateIn):
+    if body.repo_url.strip():
+        return projects.create_from_repo(body.name, body.repo_url, body.branch)
     return projects.create(body.name)
 
 
@@ -58,6 +62,14 @@ def project_spend(pid: str):
 def delete(pid: str):
     projects.delete(pid)
     return {"ok": True}
+
+
+@router.get("/{pid}/repo")
+def repo(pid: str):
+    """Git status of the project's workspace (branch / changed files / recent commits)."""
+    if not projects.get(pid):
+        raise HTTPException(404, "project not found")
+    return projects.repo_info(pid)
 
 
 @router.get("/{pid}/files")

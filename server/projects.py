@@ -21,6 +21,7 @@ class Project(SQLModel, table=True):
     name: str = "New project"
     instructions: str = ""          # custom guidance prepended to every chat in the project
     budget_usd: float = 0.0         # cumulative spend cap for this project (0 = unlimited)
+    repo_url: str = ""              # if created from a git repo, its origin URL (for the repo panel)
     created_at: str = Field(default_factory=_now)
 
 
@@ -36,6 +37,29 @@ def create(name: str = "New project") -> dict:
         s.add(p); s.commit(); s.refresh(p)
         _dir(p.id)
         return p.model_dump()
+
+
+def create_from_repo(name: str, url: str, branch: str = "") -> dict:
+    """Create a project and clone `url` into its shared workspace, so every session in
+    the project works on the real repo (the hosted equivalent of 'open a folder'). The
+    project is created regardless; the clone result is returned under `clone` so the UI
+    can surface a failure without losing the project."""
+    from .db import project_workspace
+    from tools import github as gh
+    p = create(name or "New project")
+    pid = p["id"]
+    ws = project_workspace(pid)
+    # Clone only into an EMPTY workspace (a fresh project) — never clobber existing files.
+    if any(os.scandir(ws)):
+        return {**p, "clone": {"ok": False, "message": "workspace is not empty — not cloning"}}
+    ok, msg = gh.clone_into(url.strip(), ws, branch=branch.strip())
+    if ok:
+        with DBSession(engine) as s:
+            row = s.get(Project, pid)
+            if row:
+                row.repo_url = url.strip()
+                s.add(row); s.commit()
+    return {**get(pid), "clone": {"ok": ok, "message": (msg or "")[:2000]}}
 
 
 def list_all() -> list:
@@ -95,6 +119,30 @@ def remove_file(pid: str, name: str):
     p = os.path.join(_dir(pid), os.path.basename(name))
     if os.path.isfile(p):
         os.remove(p)
+
+
+def repo_info(pid: str) -> dict:
+    """Git status of the project's workspace, for the repo panel: branch, changed files,
+    and recent commits. {repo: False} when the workspace isn't a git repo."""
+    from .db import project_workspace
+    from tools import github as gh
+    ws = project_workspace(pid)
+    if not os.path.isdir(os.path.join(ws, ".git")):
+        return {"repo": False}
+
+    def g(args):
+        rc, out, err = gh._git(args, cwd=ws)
+        return (out if rc == 0 else "").strip()
+
+    changed = [ln for ln in g(["status", "--porcelain"]).splitlines() if ln.strip()]
+    return {
+        "repo": True,
+        "url": (get(pid) or {}).get("repo_url", ""),
+        "branch": g(["rev-parse", "--abbrev-ref", "HEAD"]) or "(detached)",
+        "changed": len(changed),
+        "files": changed[:100],                       # porcelain lines (status + path)
+        "recent": g(["log", "--oneline", "-8"]).splitlines()[:8],
+    }
 
 
 def file_texts(pid: str) -> dict:

@@ -111,7 +111,7 @@ def _migrate():
         ],
         "session": [("project_id", "TEXT DEFAULT ''"), ("starred", "INTEGER DEFAULT 0")],
         "spend": [("project_id", "TEXT DEFAULT ''")],
-        "project": [("budget_usd", "REAL DEFAULT 0")],
+        "project": [("budget_usd", "REAL DEFAULT 0"), ("repo_url", "TEXT DEFAULT ''")],
     }
     # Indexes for columns added by ALTER above — create_all() only indexes tables it
     # creates FRESH, so a pre-existing table (the live DB) never gets these otherwise.
@@ -164,6 +164,14 @@ def session_workspace(session_id: str) -> str:
     pid = _project_id_of(sid)
     name = ("project_" + safe_id(pid)) if pid else sid
     path = os.path.join(WORKSPACES_DIR, name)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def project_workspace(pid: str) -> str:
+    """The shared code workspace for a project (where a cloned repo lives). Same folder
+    every session in the project resolves to via session_workspace()."""
+    path = os.path.join(WORKSPACES_DIR, "project_" + safe_id(pid))
     os.makedirs(path, exist_ok=True)
     return path
 
