@@ -5,17 +5,18 @@ import { useStore } from "../lib/store";
 // shared workspace so every session in the project works on the real code (OpenCode-style
 // "open a repo"). Empty URL = a normal empty project.
 export default function NewProjectModal({ onClose }: { onClose: () => void }) {
-  const { createProject } = useStore();
+  const { createProject, localMode, localRoot } = useStore();
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
+  const [localPath, setLocalPath] = useState("");
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
     const nm = name.trim() || (url.trim() ? repoName(url) : "New project");
     setBusy(true);
     try {
-      await createProject(nm, url.trim(), branch.trim());
+      await createProject(nm, url.trim(), branch.trim(), localPath.trim());
       onClose();
     } finally {
       setBusy(false);
@@ -51,6 +52,18 @@ export default function NewProjectModal({ onClose }: { onClose: () => void }) {
           <div className="mt-3">
             <label className="text-[11px] uppercase tracking-widest text-light-muted">Branch <span className="normal-case tracking-normal">(optional)</span></label>
             <input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="default branch" className={field} />
+          </div>
+        )}
+
+        {localMode && (
+          <div className="mt-4 pt-4 border-t border-light-border/60 dark:border-dark-border">
+            <label className="text-[11px] uppercase tracking-widest text-light-muted">Local folder <span className="normal-case tracking-normal">(edit in place)</span></label>
+            <input value={localPath} onChange={(e) => setLocalPath(e.target.value)}
+              placeholder={localRoot ? `${localRoot}${localRoot.includes("\\") ? "\\" : "/"}myrepo` : "/path/to/folder"} className={field} />
+            <p className="text-[11px] text-light-muted mt-1.5">
+              The agent edits these real files in place. Must be inside
+              <code className="font-code mx-1">{localRoot || "your home folder"}</code>. Takes precedence over a Git URL.
+            </p>
           </div>
         )}
 

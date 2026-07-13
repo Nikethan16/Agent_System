@@ -130,6 +130,15 @@ def health():
     return {"ok": True}
 
 
+@app.get("/api/config", dependencies=_auth)
+def client_config():
+    """Client-facing feature flags. `local_mode` gates the New Project 'local folder'
+    field — only ON when AGENT_LOCAL_MODE=1 (never on the public VM)."""
+    from . import localmode
+    return {"local_mode": localmode.enabled(),
+            "local_root": localmode.allowed_root() if localmode.enabled() else ""}
+
+
 @app.get("/api/spend", dependencies=_auth)
 def spend_status():
     from . import spend

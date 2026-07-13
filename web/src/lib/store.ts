@@ -69,7 +69,9 @@ type State = {
   loadCommands: () => Promise<void>;
   setDraft: (v: string) => void;
   loadProjects: () => Promise<void>;
-  createProject: (name: string, repoUrl?: string, branch?: string) => Promise<any>;
+  createProject: (name: string, repoUrl?: string, branch?: string, localPath?: string) => Promise<any>;
+  localMode: boolean;
+  localRoot: string;
   setActiveProject: (pid: string) => Promise<void>;
   submit: (text: string) => void;
   send: (text: string) => void;
@@ -171,6 +173,8 @@ export const useStore = create<State>((set, get) => ({
   acceptance: "",
   effort: "default",
   modelOverride: "",
+  localMode: false,
+  localRoot: "",
   attachments: [],
   commands: [],
   draft: "",
@@ -179,9 +183,10 @@ export const useStore = create<State>((set, get) => ({
   async init() {
     applyTheme(get().theme);   // restore the persisted theme on load
     try {
-      const [m, ag, sk, cmds, sessions, projects] = await Promise.all([api.models(), api.agents(), api.skills(), api.commands(), api.listSessions(), api.listProjects()]);
+      const [m, ag, sk, cmds, sessions, projects, cfg] = await Promise.all([api.models(), api.agents(), api.skills(), api.commands(), api.listSessions(), api.listProjects(), api.config().catch(() => ({}))]);
       set({ tiers: m.tiers, catalog: m.catalog, resolved: m.resolved || {},
-            strategy: m.strategy || "fixed", agents: ag, skills: sk || [], commands: cmds || [], sessions, projects, connected: true });
+            strategy: m.strategy || "fixed", agents: ag, skills: sk || [], commands: cmds || [], sessions, projects, connected: true,
+            localMode: !!cfg?.local_mode, localRoot: cfg?.local_root || "" });
       let list = sessions;
       if (!list.length) {
         const s = await api.createSession("New chat");
@@ -247,13 +252,15 @@ export const useStore = create<State>((set, get) => ({
     set({ projects: await api.listProjects() });
   },
 
-  async createProject(name, repoUrl = "", branch = "") {
-    const p = await api.createProject(name, repoUrl, branch);
+  async createProject(name, repoUrl = "", branch = "", localPath = "") {
+    const p = await api.createProject(name, repoUrl, branch, localPath);
     set({ projects: [p, ...get().projects] });
     // Surface the clone outcome when creating from a repo (never silently swallow a failure).
     if (repoUrl) {
       if (p?.clone?.ok) get().pushToast(`Cloned into “${p.name}”.`, "success");
       else get().pushToast(`Clone failed: ${p?.clone?.message || "unknown error"}`, "error");
+    } else if (localPath && p?.local?.ok) {
+      get().pushToast(`Local project → ${p.local.path}`, "success");
     }
     await get().setActiveProject(p.id);
     return p;

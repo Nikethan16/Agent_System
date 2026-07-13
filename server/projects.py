@@ -22,6 +22,7 @@ class Project(SQLModel, table=True):
     instructions: str = ""          # custom guidance prepended to every chat in the project
     budget_usd: float = 0.0         # cumulative spend cap for this project (0 = unlimited)
     repo_url: str = ""              # if created from a git repo, its origin URL (for the repo panel)
+    local_path: str = ""            # local-folder mode: a real dir the agent edits in place
     created_at: str = Field(default_factory=_now)
 
 
@@ -60,6 +61,23 @@ def create_from_repo(name: str, url: str, branch: str = "") -> dict:
                 row.repo_url = url.strip()
                 s.add(row); s.commit()
     return {**get(pid), "clone": {"ok": ok, "message": (msg or "")[:2000]}}
+
+
+def create_local(name: str, path: str) -> dict:
+    """Create a project bound to a REAL local folder (desktop mode). Gated + confined by
+    localmode.validate_path. Returns {error} on refusal (feature off / outside root / not a
+    dir); otherwise the project with the resolved path stored so its sessions edit it live."""
+    from . import localmode
+    ok, resolved = localmode.validate_path(path)
+    if not ok:
+        return {"error": resolved}
+    p = create(name or os.path.basename(resolved.rstrip("/\\")) or "Local project")
+    with DBSession(engine) as s:
+        row = s.get(Project, p["id"])
+        if row:
+            row.local_path = resolved
+            s.add(row); s.commit()
+    return {**get(p["id"]), "local": {"ok": True, "path": resolved}}
 
 
 def list_all() -> list:

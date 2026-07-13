@@ -12,6 +12,7 @@ class CreateIn(BaseModel):
     name: str = "New project"
     repo_url: str = ""      # optional: clone this git repo into the project workspace
     branch: str = ""        # optional branch to check out on clone
+    local_path: str = ""    # optional: bind to a real local folder (local mode only)
 
 
 class UpdateIn(BaseModel):
@@ -22,6 +23,11 @@ class UpdateIn(BaseModel):
 
 @router.post("")
 def create(body: CreateIn):
+    if body.local_path.strip():
+        r = projects.create_local(body.name, body.local_path)
+        if r.get("error"):
+            raise HTTPException(400, r["error"])
+        return r
     if body.repo_url.strip():
         return projects.create_from_repo(body.name, body.repo_url, body.branch)
     return projects.create(body.name)

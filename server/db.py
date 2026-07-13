@@ -111,7 +111,8 @@ def _migrate():
         ],
         "session": [("project_id", "TEXT DEFAULT ''"), ("starred", "INTEGER DEFAULT 0")],
         "spend": [("project_id", "TEXT DEFAULT ''")],
-        "project": [("budget_usd", "REAL DEFAULT 0"), ("repo_url", "TEXT DEFAULT ''")],
+        "project": [("budget_usd", "REAL DEFAULT 0"), ("repo_url", "TEXT DEFAULT ''"),
+                    ("local_path", "TEXT DEFAULT ''")],
     }
     # Indexes for columns added by ALTER above — create_all() only indexes tables it
     # creates FRESH, so a pre-existing table (the live DB) never gets these otherwise.
@@ -162,15 +163,47 @@ def session_workspace(session_id: str) -> str:
     code present. Standalone chats keep their own isolated per-session workspace."""
     sid = safe_id(session_id)
     pid = _project_id_of(sid)
+    local = _local_workspace(pid) if pid else ""
+    if local:
+        return local
     name = ("project_" + safe_id(pid)) if pid else sid
     path = os.path.join(WORKSPACES_DIR, name)
     os.makedirs(path, exist_ok=True)
     return path
 
 
+def _project_local_path(pid: str) -> str:
+    """The stored local_path for a project (raw query — Project lives in projects.py, so
+    we can't import its model here without a cycle). Empty on any error/missing column."""
+    if not pid:
+        return ""
+    try:
+        with engine.connect() as conn:
+            row = conn.exec_driver_sql(
+                "SELECT local_path FROM project WHERE id = ?", (pid,)).fetchone()
+        return (row[0] or "") if row else ""
+    except Exception:
+        return ""
+
+
+def _local_workspace(pid: str) -> str:
+    """A project's REAL local folder — only when local mode is on AND the stored path is
+    still valid (re-validated every time, so disabling the flag or moving the root instantly
+    stops serving it). Empty otherwise -> the caller falls back to the sandboxed workspace."""
+    lp = _project_local_path(pid)
+    if not lp:
+        return ""
+    from . import localmode
+    ok, resolved = localmode.validate_path(lp)
+    return resolved if ok else ""
+
+
 def project_workspace(pid: str) -> str:
-    """The shared code workspace for a project (where a cloned repo lives). Same folder
-    every session in the project resolves to via session_workspace()."""
+    """The shared code workspace for a project (where a cloned repo / local folder lives).
+    Same folder every session in the project resolves to via session_workspace()."""
+    local = _local_workspace(pid)
+    if local:
+        return local
     path = os.path.join(WORKSPACES_DIR, "project_" + safe_id(pid))
     os.makedirs(path, exist_ok=True)
     return path
