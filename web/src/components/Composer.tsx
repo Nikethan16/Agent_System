@@ -279,8 +279,9 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
         className="w-full px-3 pt-2 pb-1 bg-transparent resize-none outline-none text-[15px] leading-6 min-h-[40px] placeholder-light-muted"
       />
       <div className="flex items-center justify-between px-1 pt-1.5 gap-2">
-        {/* LEFT: attach + inline Mode/Model/Effort + run-options (advanced behind the sliders) */}
-        <div className="flex items-center gap-1 min-w-0 overflow-x-auto scrollbar">
+        {/* LEFT: attach + inline Mode/Model/Effort + run-options (advanced behind the sliders).
+            NOTE: no overflow-* here — it would clip the upward-opening dropdowns. Wrap instead. */}
+        <div className="flex flex-wrap items-center gap-1 min-w-0">
           <label title="Attach a file (added as context)"
             className="w-9 h-9 shrink-0 rounded-full text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg flex items-center justify-center transition cursor-pointer">
             <span className="material-symbols-outlined text-[22px]">add</span>
@@ -288,11 +289,11 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
               const f = e.target.files?.[0]; if (f) addAttachment(f); e.currentTarget.value = "";
             }} />
           </label>
-          <BarSelect label="Mode" icon="construction" value={planFirst ? "plan" : "build"}
+          <BarSelect label="Mode" icon="edit_note" value={planFirst ? "plan" : "build"}
             options={modeOpts} onPick={(v) => setPlanFirst(v === "plan")} />
-          <BarSelect label="Model" icon="neurology" value={modelOverride}
+          <BarSelect label="Model" icon="memory" value={modelOverride}
             options={modelOpts} onPick={setModelOverride} />
-          <BarSelect label="Effort" icon="bolt" value={effort}
+          <BarSelect label="Effort" icon="speed" value={effort}
             options={effortOpts} onPick={(v) => setEffort(v as "low" | "default" | "high")} />
           <div className="relative shrink-0" ref={popRef}>
             <button onClick={() => setOpts(!opts)} title="Run options — approval, plan-first, QA, parallel, limits" aria-label="Run options"
