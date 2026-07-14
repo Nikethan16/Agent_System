@@ -161,7 +161,7 @@ function HistoryView({ id, path }: { id: string; path: string }) {
 }
 
 export default function FilesPanel() {
-  const { files, selected, openFile, loadFiles, currentId, messages } = useStore();
+  const { files, selected, openFile, currentId, messages } = useStore();
 
   // Files touched by the most recent run (with +/- deltas) get their own section so
   // "what changed just now" is separated from the rest of the workspace.
@@ -253,10 +253,6 @@ export default function FilesPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-5 pt-4 pb-2">
-        <h4 className="text-[13px] font-semibold">Workspace</h4>
-        <IconBtn icon="refresh" on={() => loadFiles()} title="Refresh" />
-      </div>
       <div className="overflow-y-auto scrollbar" style={{ maxHeight: selected ? "45%" : "100%" }}>
         <Section label="Project files" count={files.length} />
         {files.length === 0 && <div className="text-light-muted text-xs px-5 py-2">No files yet — anything the agents build lands here.</div>}

@@ -104,7 +104,8 @@ export default function App() {
   return (
     <div className="h-screen overflow-hidden text-on-surface dark:text-dark-text">
       <Sidebar open={leftOpen} onClose={() => setLeftOpen(false)}
-        email={email} onOpenSettings={() => setSettings(true)} onLogout={logout} />
+        email={email} onOpenSettings={() => setSettings(true)} onLogout={logout}
+        onOpenArtifacts={() => setRightOpen(true)} />
       {/* Mobile backdrop when a drawer is open */}
       {(leftOpen || rightOpen) && (
         <div className="fixed inset-0 bg-black/30 z-30 md:hidden"
