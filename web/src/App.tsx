@@ -12,13 +12,6 @@ import CommandPalette from "./components/CommandPalette";
 import Toasts from "./components/Toasts";
 import Sunburst from "./components/Sunburst";
 
-const SUGGESTIONS = [
-  { icon: "code", label: "Write & run code", prompt: "Write a Python function to check if a number is prime, then run it on a few examples." },
-  { icon: "travel_explore", label: "Research a topic", prompt: "Research the top 3 trends in AI agents for 2026 and summarize them with sources." },
-  { icon: "description", label: "Draft a document", prompt: "Draft a one-page project brief for a small task-tracking web app." },
-  { icon: "table_chart", label: "Make a spreadsheet", prompt: "Create a simple monthly budget spreadsheet with categories, amounts, and a total." },
-];
-
 function timeGreeting() {
   const h = new Date().getHours();
   if (h < 12) return "Good morning";
@@ -26,26 +19,18 @@ function timeGreeting() {
   return "Good evening";
 }
 
-// The Claude-style welcome: a centered serif greeting with the composer right below it
-// and a few example chips. Shown only when the conversation is empty.
+// The welcome screen: a centered clean-sans greeting with the composer right below it.
+// Shown only when the conversation is empty.
 function WelcomeScreen() {
-  const { submit } = useStore();
   return (
     <div className="flex-1 overflow-y-auto scrollbar flex flex-col items-center justify-center px-gutter">
       <div className="w-full max-w-[720px] -mt-12 pb-8">
         <div className="flex items-center justify-center gap-3 mb-8">
           <Sunburst size={30} />
-          <h2 className="font-body-prose text-[30px] md:text-[36px] leading-none text-on-surface dark:text-dark-text">{timeGreeting()}</h2>
+          <h2 className="font-headline text-[30px] md:text-[35px] leading-none font-semibold tracking-tight text-on-surface dark:text-dark-text">{timeGreeting()}, Nikethan</h2>
         </div>
         <Composer variant="center" />
-        <div className="flex flex-wrap gap-2 justify-center mt-5">
-          {SUGGESTIONS.map((s) => (
-            <button key={s.label} onClick={() => submit(s.prompt)}
-              className="flex items-center gap-2 text-[13px] px-3.5 py-2 rounded-full border border-light-border dark:border-dark-border bg-white/50 dark:bg-dark-surface/50 hover:bg-white dark:hover:bg-dark-surface hover:border-accent-terracotta/40 transition text-on-surface-variant dark:text-light-muted">
-              <span className="material-symbols-outlined text-[18px] text-accent-terracotta">{s.icon}</span>{s.label}
-            </button>
-          ))}
-        </div>
+        <p className="text-center text-[12px] text-light-muted mt-3">Ask anything, or drop a file. Agents plan, build, and verify — you watch it happen.</p>
       </div>
     </div>
   );
