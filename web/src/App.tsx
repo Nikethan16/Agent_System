@@ -9,6 +9,7 @@ import RightPanel from "./components/RightPanel";
 import SettingsModal from "./components/SettingsModal";
 import BenchmarkModal from "./components/BenchmarkModal";
 import CommandPalette from "./components/CommandPalette";
+import SchedulesPanel from "./components/SchedulesPanel";
 import Toasts from "./components/Toasts";
 import Sunburst from "./components/Sunburst";
 
@@ -37,10 +38,11 @@ function WelcomeScreen() {
 }
 
 export default function App() {
-  const { init, connected, running, cost, messages, files } = useStore();
+  const { init, connected, running, cost, messages, files, currentId } = useStore();
   const [settings, setSettings] = useState(false);
   const [bench, setBench] = useState(false);
   const [palette, setPalette] = useState(false);      // ⌘K command palette
+  const [view, setView] = useState<"chat" | "scheduled">("chat");  // main-area view
   const [leftOpen, setLeftOpen] = useState(false);    // mobile sidebar drawer
   // Workspace panel: docked open by default on desktop (3-column layout), closed on mobile.
   const [rightOpen, setRightOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1024);
@@ -105,7 +107,8 @@ export default function App() {
     <div className="h-screen overflow-hidden text-on-surface dark:text-dark-text">
       <Sidebar open={leftOpen} onClose={() => setLeftOpen(false)}
         email={email} onOpenSettings={() => setSettings(true)} onLogout={logout}
-        onOpenArtifacts={() => setRightOpen(true)} />
+        onOpenSearch={() => setPalette(true)} onOpenScheduled={() => setView("scheduled")}
+        onGoChat={() => setView("chat")} />
       {/* Mobile backdrop when a drawer is open */}
       {(leftOpen || rightOpen) && (
         <div className="fixed inset-0 bg-black/30 z-30 md:hidden"
@@ -138,7 +141,15 @@ export default function App() {
             </button>
           </div>
         </header>
-        {hasMessages ? (
+        {view === "scheduled" ? (
+          <div className="flex-1 overflow-y-auto scrollbar px-gutter py-6">
+            <div className="max-w-[860px] mx-auto">
+              <h2 className="font-headline text-[26px] font-semibold tracking-tight mb-1">Scheduled</h2>
+              <p className="text-[13px] text-light-muted mb-6">Tasks that run on a schedule — reminders, recurring builds, monitors.</p>
+              <SchedulesPanel />
+            </div>
+          </div>
+        ) : hasMessages ? (
           <>
             <Chat />
             <Composer variant="bottom" />
