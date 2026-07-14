@@ -31,6 +31,42 @@ function fmtBytes(n?: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const money = (n?: number) => "$" + (n || 0).toFixed(2);
+
+// A clean usage-and-cost mini chart for the workspace panel: today's spend, remaining
+// against the daily cap, and a last-7-days spark. Reads /api/spend/overview.
+function UsageMini() {
+  const [d, setD] = useState<any>(null);
+  useEffect(() => { api.spendOverview().then(setD).catch(() => {}); }, []);
+  if (!d) return null;
+  const hist = (d.history || []).slice(-7);
+  const max = Math.max(1e-9, ...hist.map((h: any) => h.usd));
+  const cap = d.cap || 0;
+  return (
+    <div className="mx-4 mt-3 mb-4">
+      <p className="text-[10px] uppercase tracking-[0.12em] text-light-muted font-semibold mb-2">Usage &amp; cost</p>
+      <div className="border border-light-border dark:border-dark-border rounded-xl p-3 bg-white dark:bg-dark-surface">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[19px] font-semibold tabular-nums">{money(d.spent_today)}</span>
+          <span className="text-[11px] text-light-muted">today{cap > 0 && <> · <span className="text-emerald-600 dark:text-emerald-400">{money(d.remaining)} left</span> of {money(cap)}</>}</span>
+        </div>
+        <div className="flex items-end gap-1.5 h-14 mt-3">
+          {hist.map((h: any, i: number) => (
+            <div key={i} title={`${h.day.slice(5)}: ${money(h.usd)}`}
+              className="flex-1 rounded-t relative bg-accent-terracotta/15">
+              <div className="absolute inset-x-0 bottom-0 rounded-t bg-accent-terracotta"
+                style={{ height: `${Math.max(6, (h.usd / max) * 100)}%` }} />
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-between mt-1.5 text-[9px] text-light-muted font-code">
+          <span>{hist[0]?.day?.slice(5)}</span><span>today</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DiffView({ text }: { text: string }) {
   if (!text.trim()) return <div className="text-light-muted text-xs">No changes vs the last checkpoint.</div>;
   return (
@@ -218,15 +254,17 @@ export default function FilesPanel() {
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between px-5 pt-4 pb-2">
-        <h4 className="text-[13px] font-semibold">Artifacts</h4>
+        <h4 className="text-[13px] font-semibold">Workspace</h4>
         <IconBtn icon="refresh" on={() => loadFiles()} title="Refresh" />
       </div>
       <div className="overflow-y-auto scrollbar" style={{ maxHeight: selected ? "45%" : "100%" }}>
-        {files.length === 0 && <div className="text-light-muted text-xs px-5 py-3">No files yet.</div>}
+        <Section label="Project files" count={files.length} />
+        {files.length === 0 && <div className="text-light-muted text-xs px-5 py-2">No files yet — anything the agents build lands here.</div>}
         {changed.length > 0 && <Section label="Changed this run" count={changed.length} />}
         {changed.map((f) => <FileRow key={f.path} f={f} />)}
         {context.length > 0 && changed.length > 0 && <Section label="Context" count={context.length} />}
         {context.map((f) => <FileRow key={f.path} f={f} />)}
+        <UsageMini />
       </div>
 
       {selected && (

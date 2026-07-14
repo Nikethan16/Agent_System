@@ -42,7 +42,8 @@ export default function App() {
   const [bench, setBench] = useState(false);
   const [palette, setPalette] = useState(false);      // ⌘K command palette
   const [leftOpen, setLeftOpen] = useState(false);    // mobile sidebar drawer
-  const [rightOpen, setRightOpen] = useState(false);  // artifacts panel (desktop + mobile)
+  // Workspace panel: docked open by default on desktop (3-column layout), closed on mobile.
+  const [rightOpen, setRightOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1024);
   const [auth, setAuth] = useState<"checking" | "login" | "in">("checking");
   const [email, setEmail] = useState("");
   const hasMessages = messages.length > 0;
@@ -83,9 +84,10 @@ export default function App() {
     prevFiles.current = files.length;
   }, [files.length]);
 
-  // Keep the artifacts panel out of the way on the empty welcome screen.
+  // On MOBILE, keep the workspace panel out of the way on the empty welcome screen.
+  // On desktop it stays docked (the 3-column layout) so files + usage are always visible.
   useEffect(() => {
-    if (!hasMessages) setRightOpen(false);
+    if (!hasMessages && typeof window !== "undefined" && window.innerWidth < 1024) setRightOpen(false);
   }, [hasMessages]);
 
   if (auth === "checking") {
