@@ -6,9 +6,10 @@ import NewProjectModal from "./NewProjectModal";
 import Sunburst from "./Sunburst";
 
 export default function Sidebar({ open = false, onClose, email = "", onOpenSettings, onLogout,
-  onOpenSearch, onOpenScheduled, onGoChat }:
+  onOpenSearch, onOpenScheduled, onGoChat, onOpenProject }:
   { open?: boolean; onClose?: () => void; email?: string; onOpenSettings?: () => void;
-    onLogout?: () => void; onOpenSearch?: () => void; onOpenScheduled?: () => void; onGoChat?: () => void } = {}) {
+    onLogout?: () => void; onOpenSearch?: () => void; onOpenScheduled?: () => void;
+    onGoChat?: () => void; onOpenProject?: (pid: string) => void } = {}) {
   const { sessions, currentId, newSession, selectSession, deleteSession, renameSession,
           projects, activeProject, setActiveProject, loadProjects, toggleStar, theme, toggleTheme,
           connected, spend } = useStore();
@@ -130,6 +131,7 @@ export default function Sidebar({ open = false, onClose, email = "", onOpenSetti
                         <>
                           <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setProjMenu(null); }} />
                           <div className="absolute right-0 top-full mt-1 w-44 bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl shadow-xl p-1 z-50 fadeup" onClick={(e) => e.stopPropagation()}>
+                            <button onClick={() => { setActiveProject(p.id); onOpenProject?.(p.id); setProjMenu(null); onClose?.(); }} className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] hover:bg-surface-container-low dark:hover:bg-dark-bg text-left"><span className="material-symbols-outlined text-[16px] text-light-muted">dashboard</span>Project home</button>
                             <button onClick={() => { setSettingsPid(p.id); setProjMenu(null); }} className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] hover:bg-surface-container-low dark:hover:bg-dark-bg text-left"><span className="material-symbols-outlined text-[16px] text-light-muted">settings</span>Project settings</button>
                             <button onClick={() => renameProject(p.id, p.name)} className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] hover:bg-surface-container-low dark:hover:bg-dark-bg text-left"><span className="material-symbols-outlined text-[16px] text-light-muted">edit</span>Rename</button>
                             <div className="h-px bg-light-border/60 dark:bg-dark-border my-1" />

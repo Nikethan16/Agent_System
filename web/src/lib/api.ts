@@ -104,6 +104,7 @@ export const api = {
   updateProject: (pid: string, body: any) => PATCH(`/api/projects/${pid}`, body),
   deleteProject: (pid: string) => DELETE(`/api/projects/${pid}`),
   projectRepo: (pid: string) => GET(`/api/projects/${pid}/repo`),
+  projectSpend: (pid: string) => GET(`/api/projects/${pid}/spend`),
   projectFiles: (pid: string) => GET(`/api/projects/${pid}/files`),
   addProjectFile: (pid: string, file: File) => UPLOAD(`/api/projects/${pid}/files`, file),
   removeProjectFile: (pid: string, name: string) =>

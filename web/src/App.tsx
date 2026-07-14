@@ -9,7 +9,9 @@ import RightPanel from "./components/RightPanel";
 import SettingsModal from "./components/SettingsModal";
 import BenchmarkModal from "./components/BenchmarkModal";
 import CommandPalette from "./components/CommandPalette";
-import SchedulesPanel from "./components/SchedulesPanel";
+import ScheduledView from "./components/ScheduledView";
+import ProjectHome from "./components/ProjectHome";
+import ProjectModal from "./components/ProjectModal";
 import Toasts from "./components/Toasts";
 import Sunburst from "./components/Sunburst";
 
@@ -42,7 +44,9 @@ export default function App() {
   const [settings, setSettings] = useState(false);
   const [bench, setBench] = useState(false);
   const [palette, setPalette] = useState(false);      // ⌘K command palette
-  const [view, setView] = useState<"chat" | "scheduled">("chat");  // main-area view
+  const [view, setView] = useState<"chat" | "scheduled" | "project">("chat");  // main-area view
+  const [projectPid, setProjectPid] = useState<string>("");        // project shown by ProjectHome
+  const [projSettings, setProjSettings] = useState<string | null>(null);  // project-settings modal
   const [leftOpen, setLeftOpen] = useState(false);    // mobile sidebar drawer
   // Workspace panel: docked open by default on desktop (3-column layout), closed on mobile.
   const [rightOpen, setRightOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1024);
@@ -108,6 +112,7 @@ export default function App() {
       <Sidebar open={leftOpen} onClose={() => setLeftOpen(false)}
         email={email} onOpenSettings={() => setSettings(true)} onLogout={logout}
         onOpenSearch={() => setPalette(true)} onOpenScheduled={() => setView("scheduled")}
+        onOpenProject={(pid) => { setProjectPid(pid); setView("project"); }}
         onGoChat={() => setView("chat")} />
       {/* Mobile backdrop when a drawer is open */}
       {(leftOpen || rightOpen) && (
@@ -142,13 +147,10 @@ export default function App() {
           </div>
         </header>
         {view === "scheduled" ? (
-          <div className="flex-1 overflow-y-auto scrollbar px-gutter py-6">
-            <div className="max-w-[860px] mx-auto">
-              <h2 className="font-headline text-[26px] font-semibold tracking-tight mb-1">Scheduled</h2>
-              <p className="text-[13px] text-light-muted mb-6">Tasks that run on a schedule — reminders, recurring builds, monitors.</p>
-              <SchedulesPanel />
-            </div>
-          </div>
+          <ScheduledView />
+        ) : view === "project" && projectPid ? (
+          <ProjectHome pid={projectPid} onOpenSettings={() => setProjSettings(projectPid)}
+            onOpenChat={() => setView("chat")} />
         ) : hasMessages ? (
           <>
             <Chat />
@@ -160,6 +162,7 @@ export default function App() {
       </main>
       <RightPanel open={rightOpen} onClose={() => setRightOpen(false)} />
       {settings && <SettingsModal onClose={() => setSettings(false)} onOpenBench={() => { setSettings(false); setBench(true); }} />}
+      {projSettings && <ProjectModal pid={projSettings} onClose={() => setProjSettings(null)} />}
       {bench && <BenchmarkModal onClose={() => setBench(false)} />}
       {palette && <CommandPalette
         onClose={() => setPalette(false)}
