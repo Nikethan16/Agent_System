@@ -4,7 +4,48 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## ⚡ LATEST (2026-07-12) — full E2E test round, 13 fixes, staged multi-agent pipeline (branch `claude/commands-and-lsp`, MERGED to `main`)
+## ⚡ LATEST (2026-07-13/14) — 7 features shipped to `main` (DEPLOYED) + a UI redesign on branch `ui-redesign` (NOT merged)
+
+**Read this whole section before touching anything.** Two separate bodies of work this session:
+
+### A) Shipped to `main` and LIVE on the VM (7 commits, `75aabf5..2548918`, CI + Deploy both green)
+| Commit | What |
+|---|---|
+| `3c94642` | **Parallel research fan-out** — the staged pipeline's research stage now splits into independent sub-questions and runs them concurrently (`_split_research` + `_run_agents_parallel` in `core/orchestrator.py`). Dependent stages stay sequential (A/B-proven). Worker threads re-bind workspace/budget/span. |
+| `d946208` | **Disk janitor** (`scripts/cleanup.py`) — prunes ORPHANED + AGED traces/checkpoints. Server runs the safe sweep at startup (`AGENT_DISABLE_JANITOR=1` opts out). `--workspaces`/`--docker` are opt-in. `docker/build-verify-image.sh` now prunes the dangling image. |
+| `4e1991f` + `a63a9a5` | **Composer: inline Mode · Model · Effort.** Effort (Low/Default/High) scales budget+iterations and flips the QA default (in `server/api/ws.py`). Model pin = run-scoped ContextVar in `core/registry.py` (prepends to every chain, routing stays as fallback, **excluded from `classify`**); parallel workers re-bind it. `/api/models` now flags `available`. |
+| `54aab3c` | **Project from a Git repo** — `POST /api/projects` accepts `repo_url`+`branch`; clones into the project's shared workspace (`tools/github.clone_into`, SSRF-guarded). `GET /api/projects/{id}/repo` = branch/changes/commits. |
+| `0a0ec33` | **Multi-file HTML preview** — `server/htmlbundle.py` inlines local CSS/JS/images so a multi-file app renders in the sandboxed `srcDoc` iframe. `GET /api/sessions/{id}/preview`. |
+| `2548918` | **Local-folder mode** — bind a project to a REAL folder (`server/localmode.py`). Gated by `AGENT_LOCAL_MODE=1` + confined to `AGENT_LOCAL_ROOT` (default: home), realpath-checked, re-validated on every workspace lookup. **The VM never sets these — keep it that way.** |
+
+Validated: **297 pytest + 170 smoke green**, web builds, each feature verified live before commit.
+
+### B) UI REDESIGN — branch `ui-redesign`, 5 commits, **NOT pushed, NOT merged** (`main` is clean/deployed)
+`2c7909c` warm-cream theme + clay accent + clean-sans greeting · `f39523f` docked Workspace panel (project files + usage chart) · `6451dbe` sidebar nav + Pinned/Recents + clean panel · `836c886` ChatGPT-style nav (drop Home/Artifacts, expandable Projects, Scheduled view) · `7c76859` Scheduled tasks page + Project home with charts.
+
+**The owner's LOCKED design direction — do not re-litigate:**
+- **Warm cream canvas + clay accent, clean sans. NO serif, NO blue/indigo.** (An earlier iris/graphite proposal was rejected outright.)
+- **No suggestion chips** on the welcome screen. **No "Home"** and **no "Artifacts"** nav item. No ⌘K badge on New chat.
+- Settings + Dark mode live **in the profile menu** (account footer), not the nav.
+- Right panel = a single **Workspace** (project files + usage chart), **no visible tab bar** (Rewind/Skills/Tasks/Trace live behind a ⋯ menu).
+- Reference the owner kept pointing at: ChatGPT/Claude desktop sidebars (clean, expandable Projects).
+
+### Next tasks (owner's latest feedback — NONE of these are built yet)
+1. **Vision model** — owner wants **screenshot understanding** (vision INPUT only; NOT image generation). Agreed pick: **Qwen-VL on DeepInfra**, firing **only when an image is attached** (text tasks stay on the current fleet). ⚠️ **Owner asked for a COST estimate first and it was never answered** — answer that before wiring.
+2. **Purge stale dev test projects** — the local dev DB is full of test projects (`only-this`, `capped`, `budget-test`, `overview-proj`, `status`, `uncapped`) that clutter the sidebar. Local dev data only — NOT on prod.
+3. **Per-chat ⋯ menu** — replace the hover star/close icons with a proper menu: **Rename · Pin · Move to project/folder · Delete**.
+4. **Project → Folders → Chats hierarchy** — folders under a project, chats under folders. Needs a data-model change (a `Folder` table or `session.folder_id` + additive migration in `server/db.py:_migrate`), API, and sidebar UI. Biggest remaining item.
+5. **New-project popup** — owner reported it opening "in the sidebar"; `NewProjectModal` already renders centered — verify against what they actually saw before changing.
+6. **Merge the redesign** — owner reviews `ui-redesign`, then merge → `main` → auto-deploy.
+
+### Gotchas (cost real time this session)
+- **The browser screenshot API times out locally.** Verify UI via `javascript_tool` computed styles / `innerText`, not screenshots.
+- **Section labels are CSS-uppercased** (`text-transform: uppercase`) — case-sensitive regex on `innerText` gives **false negatives** ("PROJECTS" not "Projects"). Bit me twice.
+- **Don't half-build and stop to ask.** The owner locked the design and got (rightly) frustrated when work landed in partial increments with questions attached. Build the agreed thing fully, then show it.
+- Local run: `AGENT_DISABLE_JANITOR=1 .venv/Scripts/python.exe -m uvicorn server.app:app --port 8800 --host 127.0.0.1` (no login locally → account footer reads "Account").
+- The VM's verify Docker image **was rebuilt** by the owner this session — that item is done.
+
+## (2026-07-12) — full E2E test round, 13 fixes, staged multi-agent pipeline (branch `claude/commands-and-lsp`, MERGED to `main`)
 Ran a **full end-to-end test round** (live UI + engine-level, on real seeded repos), found 11
 issues, and fixed **all** of them plus added a multi-agent pipeline. **~16 commits, all
 validated: 260 pytest + 170 smoke green, `tsc` clean, `npm build` clean; doc-gen + the new
