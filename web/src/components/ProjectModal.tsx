@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useStore } from "../lib/store";
 import { api } from "../lib/api";
 
@@ -16,7 +17,7 @@ export default function ProjectModal({ pid, onClose }: { pid: string; onClose: (
   if (!proj) return null;
   const save = async () => { await api.updateProject(pid, { instructions: instr }); await loadProjects(); };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-6" onClick={onClose}>
       <div className="w-full max-w-lg bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-2xl p-6 max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
@@ -69,6 +70,7 @@ export default function ProjectModal({ pid, onClose }: { pid: string; onClose: (
         <button onClick={async () => { if (confirm("Delete this project? Its chats stay but lose the shared context.")) { await api.deleteProject(pid); await loadProjects(); await setActiveProject(""); onClose(); } }}
           className="mt-6 text-[11px] uppercase tracking-wide text-red-500 hover:brightness-110">Delete project</button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
