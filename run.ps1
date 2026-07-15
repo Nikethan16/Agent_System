@@ -15,7 +15,9 @@ if (-not (Test-Path "web/dist")) {
   npm --prefix web install
   npm --prefix web run build
 }
-# Prefer the project venv's uvicorn if it exists (no manual activation needed).
-$uvicorn = if (Test-Path ".venv\Scripts\uvicorn.exe") { ".venv\Scripts\uvicorn.exe" } else { "uvicorn" }
+# Run uvicorn via the venv's python (-m), NOT uvicorn.exe: the .exe launchers bake in
+# an absolute path to python at venv-creation time, so they break if the repo is moved
+# (e.g. C:\ -> D:\). python.exe -m uvicorn is immune to that.
+$py = if (Test-Path ".venv\Scripts\python.exe") { ".venv\Scripts\python.exe" } else { "python" }
 Write-Host "Starting server at http://localhost:8800" -ForegroundColor Green
-& $uvicorn server.app:app --reload --port 8800
+& $py -m uvicorn server.app:app --reload --port 8800
