@@ -111,7 +111,15 @@ export const api = {
     DELETE(`/api/projects/${pid}/files/${encodeURIComponent(name)}`),
 
   renameSession: (id: string, title: string) => PATCH(`/api/sessions/${id}`, { title }),
+  moveSession: (id: string, project_id: string | null, folder_id: string | null) =>
+    POST(`/api/sessions/${id}/move`, { project_id, folder_id }),
   star: (id: string) => POST(`/api/sessions/${id}/star`, {}),
+  listFolders: (project_id?: string) =>
+    GET("/api/folders" + (project_id ? `?project_id=${encodeURIComponent(project_id)}` : "")),
+  createFolder: (project_id: string, name = "New folder") =>
+    POST("/api/folders", { project_id, name }),
+  renameFolder: (id: string, name: string) => PATCH(`/api/folders/${id}`, { name }),
+  deleteFolder: (id: string) => DELETE(`/api/folders/${id}`),
   feedback: (id: string, value: string) => POST(`/api/sessions/${id}/feedback`, { value }),
   deleteSession: (id: string) => DELETE(`/api/sessions/${id}`),
   messages: (id: string) => GET(`/api/sessions/${id}/messages`),

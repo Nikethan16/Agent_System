@@ -70,6 +70,7 @@ class Session(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
     title: str = "New chat"
     project_id: str = Field(default="", index=True)
+    folder_id: str = Field(default="", index=True)   # a Folder under the project ("" = loose)
     starred: bool = False
     created_at: str = Field(default_factory=_now)
     updated_at: str = Field(default_factory=_now)
@@ -100,6 +101,16 @@ class Checkpoint(SQLModel, table=True):
     created_at: str = Field(default_factory=_now)
 
 
+class Folder(SQLModel, table=True):
+    """A grouping of chats WITHIN a project: Project -> Folders -> Chats. Deleting a
+    folder keeps its chats (they fall back to the project root, folder_id="")."""
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    project_id: str = Field(default="", index=True)
+    name: str = "New folder"
+    created_at: str = Field(default_factory=_now)
+    updated_at: str = Field(default_factory=_now)
+
+
 def _migrate():
     """Additive migrations for columns introduced after a table already existed."""
     wanted = {
@@ -109,7 +120,8 @@ def _migrate():
             ("fact_key", "TEXT DEFAULT ''"),    # dedupe key for semantic facts
             ("updated_at", "TEXT DEFAULT ''"),  # facts/summaries change over time
         ],
-        "session": [("project_id", "TEXT DEFAULT ''"), ("starred", "INTEGER DEFAULT 0")],
+        "session": [("project_id", "TEXT DEFAULT ''"), ("starred", "INTEGER DEFAULT 0"),
+                    ("folder_id", "TEXT DEFAULT ''")],
         "spend": [("project_id", "TEXT DEFAULT ''")],
         "project": [("budget_usd", "REAL DEFAULT 0"), ("repo_url", "TEXT DEFAULT ''"),
                     ("local_path", "TEXT DEFAULT ''")],
@@ -119,6 +131,8 @@ def _migrate():
     indexes = [
         ("spend", "ix_spend_project_id", "project_id"),
         ("session", "ix_session_project_id", "project_id"),
+        ("session", "ix_session_folder_id", "folder_id"),
+        ("folder", "ix_folder_project_id", "project_id"),
         ("memory", "ix_memory_scope", "scope"),
         ("memory", "ix_memory_kind", "kind"),
     ]
@@ -259,6 +273,78 @@ def rename_session(session_id: str, title: str):
         s.commit()
         s.refresh(obj)          # reload attrs expired by commit before dumping
         return obj.model_dump()
+
+
+def move_session(session_id: str, project_id=None, folder_id=None):
+    """Move a chat to a different project and/or folder. Pass a value to change it,
+    None to leave it as-is. Clearing the project also clears the folder (a folder
+    belongs to a project); a folder_id is only kept when it belongs to the resulting
+    project, so a stale cross-project folder can't attach."""
+    with DBSession(engine) as obj_s:
+        obj = obj_s.get(Session, session_id)
+        if not obj:
+            return None
+        if project_id is not None:
+            obj.project_id = project_id or ""
+        if folder_id is not None:
+            obj.folder_id = folder_id or ""
+        if not obj.project_id:
+            obj.folder_id = ""                 # loose chats can't sit in a folder
+        if obj.folder_id:
+            f = obj_s.get(Folder, obj.folder_id)
+            if not f or (f.project_id or "") != (obj.project_id or ""):
+                obj.folder_id = ""             # folder must belong to the target project
+        obj.updated_at = _now()
+        obj_s.add(obj)
+        obj_s.commit()
+        obj_s.refresh(obj)
+        return obj.model_dump()
+
+
+# ---- folders (Project -> Folders -> Chats) ---------------------------------
+def create_folder(project_id: str, name: str = "New folder"):
+    with DBSession(engine) as s:
+        f = Folder(project_id=project_id or "", name=name or "New folder")
+        s.add(f)
+        s.commit()
+        s.refresh(f)
+        return f.model_dump()
+
+
+def list_folders(project_id: str = None) -> list:
+    with DBSession(engine) as s:
+        rows = s.exec(select(Folder).order_by(Folder.name)).all()
+        out = [r.model_dump() for r in rows]
+    if project_id is not None:
+        out = [r for r in out if (r.get("project_id") or "") == project_id]
+    return out
+
+
+def rename_folder(folder_id: str, name: str):
+    with DBSession(engine) as s:
+        f = s.get(Folder, folder_id)
+        if not f:
+            return None
+        f.name = name
+        f.updated_at = _now()
+        s.add(f)
+        s.commit()
+        s.refresh(f)
+        return f.model_dump()
+
+
+def delete_folder(folder_id: str) -> bool:
+    """Delete a folder; its chats fall back to the project root (folder_id="")."""
+    with DBSession(engine) as s:
+        f = s.get(Folder, folder_id)
+        if not f:
+            return False
+        for sess in s.exec(select(Session).where(Session.folder_id == folder_id)).all():
+            sess.folder_id = ""
+            s.add(sess)
+        s.delete(f)
+        s.commit()
+        return True
 
 
 def delete_session(session_id: str):

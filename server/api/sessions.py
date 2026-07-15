@@ -19,6 +19,11 @@ class RenameIn(BaseModel):
     title: str
 
 
+class MoveIn(BaseModel):
+    project_id: Optional[str] = None
+    folder_id: Optional[str] = None
+
+
 @router.post("")
 def create(body: CreateIn):
     return db.create_session(body.title, body.project_id).model_dump()
@@ -51,6 +56,14 @@ def delete(session_id: str):
         raise HTTPException(404, "session not found")
     db.delete_session(session_id)
     return {"ok": True}
+
+
+@router.post("/{session_id}/move")
+def move(session_id: str, body: MoveIn):
+    s = db.move_session(session_id, project_id=body.project_id, folder_id=body.folder_id)
+    if not s:
+        raise HTTPException(404, "session not found")
+    return s
 
 
 @router.post("/{session_id}/star")

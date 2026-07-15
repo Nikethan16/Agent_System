@@ -33,6 +33,7 @@ type State = {
   commands: { name: string; description: string; argument_hint: string }[];
   draft: string;
   projects: any[];
+  folders: any[];
   activeProject: string;
   files: any[];
   checkpoints: any[];
@@ -69,6 +70,11 @@ type State = {
   loadCommands: () => Promise<void>;
   setDraft: (v: string) => void;
   loadProjects: () => Promise<void>;
+  loadFolders: () => Promise<void>;
+  createFolder: (projectId: string, name?: string) => Promise<any>;
+  renameFolder: (id: string, name: string) => Promise<void>;
+  deleteFolder: (id: string) => Promise<void>;
+  moveSession: (id: string, projectId: string | null, folderId: string | null) => Promise<void>;
   createProject: (name: string, repoUrl?: string, branch?: string, localPath?: string) => Promise<any>;
   localMode: boolean;
   localRoot: string;
@@ -153,6 +159,7 @@ export const useStore = create<State>((set, get) => ({
   agents: [],
   skills: [],
   projects: [],
+  folders: [],
   activeProject: "",
   files: [],
   checkpoints: [],
@@ -183,9 +190,9 @@ export const useStore = create<State>((set, get) => ({
   async init() {
     applyTheme(get().theme);   // restore the persisted theme on load
     try {
-      const [m, ag, sk, cmds, sessions, projects, cfg] = await Promise.all([api.models(), api.agents(), api.skills(), api.commands(), api.listSessions(), api.listProjects(), api.config().catch(() => ({}))]);
+      const [m, ag, sk, cmds, sessions, projects, folders, cfg] = await Promise.all([api.models(), api.agents(), api.skills(), api.commands(), api.listSessions(), api.listProjects(), api.listFolders().catch(() => []), api.config().catch(() => ({}))]);
       set({ tiers: m.tiers, catalog: m.catalog, resolved: m.resolved || {},
-            strategy: m.strategy || "fixed", agents: ag, skills: sk || [], commands: cmds || [], sessions, projects, connected: true,
+            strategy: m.strategy || "fixed", agents: ag, skills: sk || [], commands: cmds || [], sessions, projects, folders: folders || [], connected: true,
             localMode: !!cfg?.local_mode, localRoot: cfg?.local_root || "" });
       let list = sessions;
       if (!list.length) {
@@ -252,6 +259,38 @@ export const useStore = create<State>((set, get) => ({
     set({ projects: await api.listProjects() });
   },
 
+  async loadFolders() {
+    set({ folders: await api.listFolders().catch(() => []) });
+  },
+
+  async createFolder(projectId, name = "New folder") {
+    const f = await api.createFolder(projectId, name);
+    set({ folders: [...get().folders, f] });
+    return f;
+  },
+
+  async renameFolder(id, name) {
+    await api.renameFolder(id, name);
+    set({ folders: get().folders.map((f) => (f.id === id ? { ...f, name } : f)) });
+  },
+
+  async deleteFolder(id) {
+    await api.deleteFolder(id);
+    set({
+      folders: get().folders.filter((f) => f.id !== id),
+      // chats in the deleted folder fall back to the project root
+      sessions: get().sessions.map((s) => (s.folder_id === id ? { ...s, folder_id: "" } : s)),
+    });
+  },
+
+  async moveSession(id, projectId, folderId) {
+    const updated = await api.moveSession(id, projectId, folderId);
+    set({
+      sessions: get().sessions.map((s) =>
+        s.id === id ? { ...s, project_id: updated.project_id, folder_id: updated.folder_id } : s),
+    });
+  },
+
   async createProject(name, repoUrl = "", branch = "", localPath = "") {
     const p = await api.createProject(name, repoUrl, branch, localPath);
     set({ projects: [p, ...get().projects] });
@@ -268,9 +307,12 @@ export const useStore = create<State>((set, get) => ({
 
   async setActiveProject(pid) {
     set({ activeProject: pid });
-    const list = await api.listSessions(pid || undefined);
-    set({ sessions: list });
-    if (list.length) await get().selectSession(list[0].id);
+    // Keep the FULL session list in state so the sidebar still shows loose chats and
+    // every OTHER project's chats — filter only for which chat to open here.
+    const all = await api.listSessions();
+    set({ sessions: all });
+    const inScope = all.filter((s: any) => (s.project_id || "") === (pid || ""));
+    if (inScope.length) await get().selectSession(inScope[0].id);
     else await get().newSession();
   },
 

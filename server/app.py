@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from . import db, jobs, scheduler, ratelimit
 from .auth import require_auth
 from .api import sessions, workspace, models, ws
+from .api import folders as folders_api
 from .api import jobs as jobs_api
 from .api import projects as projects_api
 from .api import memory as memory_api
@@ -55,6 +56,7 @@ async def _rate_limit(request: Request, call_next):
 _auth = [Depends(require_auth)]
 app.include_router(models.router, dependencies=_auth)
 app.include_router(sessions.router, dependencies=_auth)
+app.include_router(folders_api.router, dependencies=_auth)
 app.include_router(workspace.router, dependencies=_auth)
 app.include_router(jobs_api.router, dependencies=_auth)
 app.include_router(projects_api.router, dependencies=_auth)
