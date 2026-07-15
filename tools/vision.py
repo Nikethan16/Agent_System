@@ -13,13 +13,18 @@ import mimetypes
 
 from core import toolbelt
 from core.tools import _safe
-from core.llm import complete, Budget, current_budget
+from core.llm import complete_chain, Budget, current_budget
 from core.registry import registry
 from core.boundary import wrap as _wrap_untrusted
 
 
-def _vision_model() -> str:
-    return os.environ.get("VISION_MODEL") or registry.model_chain("tier2", task_type="vision")[0]
+def _vision_chain() -> list:
+    """The vision fallback chain (primary first). VISION_MODEL pins a single model;
+    otherwise use the routing 'vision' chain so a rate-limited/dead VLM falls back."""
+    forced = os.environ.get("VISION_MODEL")
+    if forced:
+        return [forced]
+    return registry.model_chain("tier2", task_type="vision") or []
 
 
 def see_image(path: str, question: str = "Describe this image in detail.") -> str:
@@ -33,13 +38,16 @@ def see_image(path: str, question: str = "Describe this image in detail.") -> st
         mime = mimetypes.guess_type(full)[0] or "image/png"
         with open(full, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
-        model = _vision_model()
+        chain = _vision_chain()
+        if not chain:
+            return ("ERROR: no vision model available (set DEEPINFRA_API_KEY for the "
+                    "Qwen-VL fleet, or VISION_MODEL to pin one).")
         # Charge the active run's budget (a child cap bounds this one call); fall back to a
         # standalone capped budget only when called outside a run.
         parent = current_budget()
         b = parent.child(max_usd=0.25, max_iterations=2) if parent else Budget(max_usd=0.25, max_iterations=2)
-        resp, _ = complete(
-            model,
+        resp, _ = complete_chain(
+            chain,
             [{"role": "user", "content": [
                 {"type": "text", "text": question},
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}]}],
