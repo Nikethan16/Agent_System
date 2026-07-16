@@ -9,7 +9,7 @@ registering them into the tool registry. core itself stays offline.
 """
 import os
 
-from fastapi import FastAPI, Depends, Request
+from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -139,6 +139,17 @@ def client_config():
     from . import localmode
     return {"local_mode": localmode.enabled(),
             "local_root": localmode.allowed_root() if localmode.enabled() else ""}
+
+
+@app.get("/api/local/browse", dependencies=_auth)
+def local_browse(path: str = ""):
+    """Directory navigator for the New Project folder picker (local mode only). Lists the
+    subfolders of `path` (default: AGENT_LOCAL_ROOT), confined to that root."""
+    from . import localmode
+    ok, payload = localmode.browse(path)
+    if not ok:
+        raise HTTPException(400, payload)
+    return payload
 
 
 @app.get("/api/spend", dependencies=_auth)
