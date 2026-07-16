@@ -227,6 +227,16 @@ devices can reach it.
 > it over an HTTPS address only on your private network. The simple step above is plenty for
 > personal use.
 
+> **Public HTTPS URL that survives reboots (optional).** If you use `tailscale funnel` to get
+> a public `*.ts.net` URL, applying it by hand doesn't reliably come back after a reboot. Install
+> the funnel as a service so it's re-published on every boot:
+> ```bash
+> sudo cp /home/ubuntu/agent_system/deploy/agentfunnel.service /etc/systemd/system/
+> sudo systemctl daemon-reload && sudo systemctl enable --now agentfunnel
+> tailscale funnel status      # shows the public URL
+> ```
+> See `deploy/README.md` for details.
+
 ### Step I — Automatic backups
 
 Your only un-rebuildable data (chats, memory, files) lives in the `data/` folder. Schedule a

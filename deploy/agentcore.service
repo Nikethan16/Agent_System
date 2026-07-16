@@ -1,0 +1,14 @@
+[Unit]
+Description=AGENT CORE
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/agent_system
+ExecStart=/home/ubuntu/agent_system/.venv/bin/uvicorn server.app:app --host 0.0.0.0 --port 8800
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
