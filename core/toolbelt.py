@@ -151,7 +151,7 @@ def _obj(props, required=None):
 
 # ---- built-in OFFLINE sandboxed tools (file/shell) --------------------------
 from .tools import (read_file, write_file, edit_file, list_files, run_bash,  # noqa: E402
-                    parse_document, grep, glob, apply_patch, diagnostics, repo_map)
+                    parse_document, grep, glob, apply_patch, diagnostics, repo_map, check_page)
 
 register_fn(
     "read_file", lambda path, offset=1, limit=None: read_file(path, offset, limit),
@@ -236,6 +236,23 @@ register_fn(
     "spans several files or several spots. Each hunk is located tolerantly (like edit_file); "
     "an unmatchable hunk is refused and reported. Use write_file for a brand-new file.",
     RISK_WRITE,
+)
+register_fn(
+    "check_page",
+    lambda path, expect_text="", click=None: check_page(path, expect_text, click),
+    _obj({"path": {"type": "string",
+                   "description": "the HTML file in the workspace to render, e.g. 'index.html'"},
+          "expect_text": {"type": "string",
+                          "description": "optional: text that should be visible on the page"},
+          "click": {"type": "array", "items": {"type": "string"},
+                    "description": "optional: CSS selectors to click, then re-check for errors"}},
+         ["path"]),
+    "Render an HTML file from the workspace in a HEADLESS BROWSER (in the sandbox) and report "
+    "whether it actually WORKS: does it render (non-blank), any JavaScript/console errors, the "
+    "computed theme colors, and (with selectors) whether clicking them succeeds. ALWAYS run this "
+    "to verify a web UI you built or changed — a syntax/text check cannot catch a blank screen, a "
+    "JS crash, a dead button, or a theme that doesn't apply. Fix anything it reports before finishing.",
+    RISK_SAFE,
 )
 import os as _os
 _docker_configured = bool(_os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip())

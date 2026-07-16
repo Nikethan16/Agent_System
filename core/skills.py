@@ -214,7 +214,11 @@ def _score(task_words: set, raw_task: str, s: Skill) -> int:
         # actually wants that file format — never on generic description overlap like
         # "document"/"report"/"README". Match on a distinctive format word only, with a
         # word boundary so "password"/"keyword" can't trigger "word", etc.
-        hits = sum(1 for sig in sigs if re.search(r"\b" + re.escape(sig), raw_task))
+        # Whole-word match (leading AND trailing \b): without the trailing boundary a
+        # signal was a PREFIX match, so "memo" fired docx on "memoize", "word" on "wording",
+        # etc. (observed live: a memoize-cache task pulled in the whole docx skill).
+        hits = sum(1 for sig in sigs
+                   if re.search(r"\b" + re.escape(sig.strip()) + r"\b", raw_task))
         return (2 + hits) if hits else 0
     hay = set((s.name or "").lower().replace("-", " ").split())
     hay |= set(s.keywords)

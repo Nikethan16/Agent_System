@@ -9,10 +9,43 @@ Routing cost is near-zero because it uses the tier1 (cheapest) model. Robustness
     never be able to escalate a trivial message into a tool-spin.
 """
 import json
+import re
 import time
 
 from .llm import complete_chain, Budget, BudgetExceeded
 from .registry import registry
+
+_THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+
+def _extract_route_json(txt: str) -> dict:
+    """Pull the routing JSON out of a model reply that may include reasoning traces,
+    prose, or code fences. The old naive first-'{' .. last-'}' span broke when a
+    reasoning model emitted text CONTAINING braces before the JSON (observed live:
+    JSONDecodeError -> heuristic fallback every route). Strategy: strip <think> blocks
+    and fences, then try each BALANCED {...} candidate (last first — the JSON trails the
+    reasoning), returning the first that parses and has a 'tier' key."""
+    if not txt:
+        raise ValueError("empty classifier reply")
+    s = _THINK.sub("", txt).replace("```json", "").replace("```", "")
+    candidates, stack, start = [], [], None
+    for i, ch in enumerate(s):
+        if ch == "{":
+            if not stack:
+                start = i
+            stack.append(ch)
+        elif ch == "}" and stack:
+            stack.pop()
+            if not stack and start is not None:
+                candidates.append(s[start:i + 1])
+    for cand in reversed(candidates):          # JSON usually comes AFTER any reasoning
+        try:
+            d = json.loads(cand)
+            if isinstance(d, dict) and "tier" in d:
+                return d
+        except Exception:
+            continue
+    return json.loads(s[s.find("{"): s.rfind("}") + 1])   # last-resort naive span
 
 CLASSIFIER_SYS = (
     "You are a task router. Output ONLY valid JSON, no prose, no code fences:\n"
@@ -117,29 +150,38 @@ def classify(task: str, budget: Budget = None) -> dict:
     # keys within each model; the outer retry below covers a transient that exhausts it.
     chain = registry.model_chain(tier_name, task_type="classify")
     last_err = None
-    for attempt in range(_RETRIES + 1):
+    # Try each model in the classify chain until one returns PARSEABLE routing JSON. A model
+    # that errors OR returns non-JSON / empty content is skipped for the next — so one flaky
+    # classifier reply no longer sinks the whole route to the heuristic (observed: a healthy
+    # model returning junk/empty output dropped straight to the keyword fallback).
+    # complete_chain([model]) keeps per-model key rotation; only if EVERY model fails do we
+    # fall to the heuristic below.
+    for model in chain:
         try:
             resp, _ = complete_chain(
-                chain,
+                [model],
                 [{"role": "system", "content": CLASSIFIER_SYS},
                  {"role": "user", "content": task}],
                 max_tokens=200, budget=budget, temperature=0,
             )
             if not getattr(resp, "choices", None):
                 raise ValueError("empty response (no choices)")
-            txt = resp.choices[0].message.content.strip()
-            txt = txt[txt.find("{"): txt.rfind("}") + 1]   # tolerate stray text
-            data = json.loads(txt)
+            msg = resp.choices[0].message
+            # Some reasoning models leave `content` empty and put everything (incl. the JSON)
+            # in `reasoning_content` — fall back to it so we don't drop to the heuristic when
+            # the model actually answered.
+            txt = (getattr(msg, "content", None)
+                   or getattr(msg, "reasoning_content", None) or "").strip()
+            data = _extract_route_json(txt)   # robust: strips reasoning/fences, balanced-brace parse
             assert data["tier"] in (1, 2, 3)
-            # Category is exposed as "task_type" so it never collides with the
-            # event-level "type" key the orchestrator adds (e.g. "route"). Tolerate
-            # an older model still emitting "type".
+            # Category is exposed as "task_type" so it never collides with the event-level
+            # "type" key the orchestrator adds. Tolerate an older model still emitting "type".
             data["task_type"] = data.pop("type", data.get("task_type", "unknown"))
             data.setdefault("requires_web", False)
             data.setdefault("reason", "")
-            # Show the model the AGENT will actually use (task-aware chain primary), not
-            # the tier-cheapest — otherwise the UI displays e.g. a free NIM model while a
-            # coding task really runs on the paid DeepSeek chain.
+            # Show the model the AGENT will actually use (task-aware chain primary), not the
+            # tier-cheapest — otherwise the UI shows a free NIM model while a coding task runs
+            # on the paid DeepSeek chain.
             data["routed_model"] = registry.model_for_tier(
                 f"tier{data['tier']}", task_type=data.get("task_type"))
             if key:                                  # cache only successful classifications
@@ -151,10 +193,9 @@ def classify(task: str, budget: Budget = None) -> dict:
             raise   # a real budget stop must propagate, never be masked as a fallback
         except Exception as e:
             last_err = e
-            if attempt < _RETRIES and _is_transient(e):
-                time.sleep(_BACKOFF_SECONDS)   # brief backoff, then retry once
-                continue
-            break
+            if _is_transient(e):
+                time.sleep(_BACKOFF_SECONDS)   # brief backoff before the next model
+            continue
 
     # Safe fallback: a keyword heuristic picks tier+type (capped at tier 2 — a single
     # specialist, never the tool-heavy planner) instead of dumping everything to
