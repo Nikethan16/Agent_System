@@ -128,7 +128,9 @@ names stable and update the UI if you add one:
 plus the platform/security additions: `manager_review`, `approval_request`,
 `blocked`, `denied`, `stopping`, `run_complete`, `critic` (QA verdict), `token`
 (streamed final-answer deltas), `memory` (notes recalled from past chats),
-`agent_token` (per-agent streamed tokens when `stream=True`), `skill` (Agent
+`agent_token` (per-agent streamed tokens when `stream=True`), `thinking` (the
+model's streamed chain-of-thought / `reasoning_content` on reasoning models,
+rendered as a collapsible "thought process" block in the UI), `skill` (Agent
 Skills applied to a step), `fallback` (model failover — primary unavailable/
 rate-limited → switched to the next model in the chain), and `retry` (a failed/
 empty agent step is automatically retried). (`done` is an internal

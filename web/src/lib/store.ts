@@ -5,7 +5,7 @@ import { downloadBlob } from "./util";
 export type Ev = any;
 export type FileChange = { path: string; status: string; added: number; removed: number };
 export type RunMeta = { durationMs?: number; tokens?: number; cost?: number; iterations?: number; cachedTokens?: number; files?: FileChange[] };
-export type Msg = { id: string; role: "user" | "assistant"; content: string; events: Ev[]; pending?: boolean; live?: string; local?: boolean; meta?: RunMeta };
+export type Msg = { id: string; role: "user" | "assistant"; content: string; events: Ev[]; pending?: boolean; live?: string; thinking?: string; local?: boolean; meta?: RunMeta };
 
 // Stable client id for a message (used as the React key so edit/branch can't
 // attach stale component state to the wrong message).
@@ -800,6 +800,9 @@ function handleEvent(set: any, get: any, ev: Ev) {
       break;
     case "agent_token":
       patchLastAssistant(set, get, (m) => ({ ...m, live: (m.live || "") + (ev.text || "") }));
+      break;
+    case "thinking":  // streamed chain-of-thought (reasoning models)
+      patchLastAssistant(set, get, (m) => ({ ...m, thinking: (m.thinking || "") + (ev.text || "") }));
       break;
     case "thought":
     case "done":

@@ -695,10 +695,12 @@ def generate_image(prompt, model, budget: Budget = None, size="1024x1024", n=1):
 
 
 def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
-                    temperature=0.2, on_token=None):
+                    temperature=0.2, on_token=None, on_reasoning=None):
     """
     Streaming text generation (no tools) through the single call point + Budget.
     Calls `on_token(piece)` for each content delta and returns (full_text, cost).
+    `on_reasoning(piece)` fires for the model's THINKING channel (reasoning_content) on
+    reasoning models — used to stream the chain-of-thought live, like Claude Code.
     Used for the final/synthesized answer so the UI can type it out live.
     """
     if budget:
@@ -722,6 +724,13 @@ def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
             pieces.append(piece)
             if on_token:
                 on_token(piece)
+        if on_reasoning:                      # stream the THINKING channel (reasoning models)
+            try:
+                rp = getattr(chunk.choices[0].delta, "reasoning_content", None)
+            except Exception:
+                rp = None
+            if rp:
+                on_reasoning(rp)
         if getattr(chunk, "usage", None):
             try:
                 cost = litellm.completion_cost(completion_response=chunk) or cost
@@ -774,7 +783,8 @@ def embed(texts, model, budget: Budget = None):
 
 
 def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
-                          budget: Budget = None, temperature=0.2, on_token=None):
+                          budget: Budget = None, temperature=0.2, on_token=None,
+                          on_reasoning=None):
     """
     Streaming WITH tool-calling: streams content deltas via on_token and assembles
     any tool calls from their deltas. Returns (assistant_message_dict, cost) where the
@@ -806,6 +816,10 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
                 content.append(piece)
                 if on_token:
                     on_token(piece)
+            if on_reasoning:                  # stream the THINKING channel (reasoning models)
+                rp = getattr(delta, "reasoning_content", None)
+                if rp:
+                    on_reasoning(rp)
             for tcd in (getattr(delta, "tool_calls", None) or []):
                 idx = getattr(tcd, "index", 0) or 0
                 slot = tcs.setdefault(idx, {"id": None, "name": "", "args": ""})
@@ -846,7 +860,7 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
 
 def stream_complete_chain(models, messages, tools=None, max_tokens=4096,
                           budget: Budget = None, temperature=0.2,
-                          on_token=None, on_fallback=None):
+                          on_token=None, on_fallback=None, on_reasoning=None):
     """Streaming variant of complete_chain: tries each model in order, falling back on
     failure. Returns (assistant_message_dict, cost) — same shape as stream_complete_tools.
     on_token(piece) is called for each content delta from the first successful model.
@@ -859,7 +873,8 @@ def stream_complete_chain(models, messages, tools=None, max_tokens=4096,
         try:
             return stream_complete_tools(model, messages, tools=tools,
                                          max_tokens=max_tokens, budget=budget,
-                                         temperature=temperature, on_token=on_token)
+                                         temperature=temperature, on_token=on_token,
+                                         on_reasoning=on_reasoning)
         except BudgetExceeded:
             raise
         except _BUG:

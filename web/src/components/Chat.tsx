@@ -158,6 +158,31 @@ function stepSummary(s: Step): string {
   return parts.join(" · ") || s.subtask || "working";
 }
 
+// One tool call inside a step. Write/edit calls expand to the full code they wrote
+// (syntax-highlighted); everything else stays a one-line arg summary.
+function ToolRow({ t }: { t: Ev }) {
+  const code = writeCode(t);
+  const argStr = code ? (t.args?.path || "")
+    : Object.entries(t.args || {}).map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 32)}`).join(" ");
+  const head = (
+    <div className="text-[11px] font-code text-on-surface-variant dark:text-light-muted flex items-start gap-1.5">
+      <span className="text-accent-terracotta">{t.name}</span>
+      <span className="truncate opacity-80">{argStr}</span>
+      {code && <span className="ml-auto shrink-0 text-light-muted">{code.split("\n").length} lines</span>}
+      {t.result != null && String(t.result).startsWith("exit=") && (
+        <span className="ml-auto shrink-0 text-emerald-600 dark:text-emerald-400">{String(t.result).split("\n")[0]}</span>
+      )}
+    </div>
+  );
+  if (!code) return head;
+  return (
+    <details className="group/code">
+      <summary className="cursor-pointer list-none">{head}</summary>
+      <div className="mt-1"><CodeBlock lang={codeLang(t.args?.path)} code={code} /></div>
+    </details>
+  );
+}
+
 function StepCard({ step, defaultOpen }: { step: Step; defaultOpen: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   const failed = step.notes.find((n) => ["error", "blocked", "denied"].includes(n.type));
@@ -171,15 +196,7 @@ function StepCard({ step, defaultOpen }: { step: Step; defaultOpen: boolean }) {
       </button>
       {open && (
         <div className="border-t border-light-border/50 dark:border-dark-border px-3 py-2 bg-surface-container-low/60 dark:bg-dark-bg/40 space-y-1">
-          {step.tools.map((t, i) => (
-            <div key={i} className="text-[11px] font-code text-on-surface-variant dark:text-light-muted flex items-start gap-1.5">
-              <span className="text-accent-terracotta">{t.name}</span>
-              <span className="truncate opacity-80">{Object.entries(t.args || {}).map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 32)}`).join(" ")}</span>
-              {t.result != null && String(t.result).startsWith("exit=") && (
-                <span className="ml-auto text-emerald-600 dark:text-emerald-400">{String(t.result).split("\n")[0]}</span>
-              )}
-            </div>
-          ))}
+          {step.tools.map((t, i) => <ToolRow key={i} t={t} />)}
           {step.notes.map((n, i) => {
             const d = describe(n);
             if (!d) return null;
@@ -331,10 +348,90 @@ function UserMessage({ m, index }: { m: Msg; index: number }) {
   );
 }
 
+// The model's live chain-of-thought (reasoning_content). Auto-expanded and scrolling
+// while the model is still thinking; collapses to a click-to-expand summary once done.
+function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (live && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+  }, [text, live]);
+  const body = (
+    <div ref={bodyRef} className="max-h-52 overflow-y-auto font-code text-[12px] leading-5 text-on-surface-variant dark:text-light-muted whitespace-pre-wrap">
+      {text}{live && <span className="caret" />}
+    </div>
+  );
+  const label = (
+    <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-widest text-light-muted font-bold">
+      {live && <span className="w-1.5 h-1.5 rounded-full bg-light-muted animate-pulse" />}
+      {live ? "thinking…" : "thought process"}
+    </span>
+  );
+  const box = "mb-2 rounded-xl border border-light-border dark:border-dark-border bg-surface-container-low dark:bg-dark-bg/40 px-3 py-2";
+  if (live) return <div className={box}>{<div className="mb-1">{label}</div>}{body}</div>;
+  return (
+    <details className={box}>
+      <summary className="cursor-pointer list-none select-none">{label}</summary>
+      <div className="mt-1">{body}</div>
+    </details>
+  );
+}
+
+// The code content a write/edit tool call carries (write_file.content / edit_file.new_string).
+function writeCode(ev?: Ev): string | null {
+  if (!ev || !WRITE_TOOLS.includes(ev.name)) return null;
+  const c = ev.args?.content ?? ev.args?.new_string;
+  return typeof c === "string" && c.length ? c : null;
+}
+function latestWrite(events: Ev[]): Ev | undefined {
+  for (let i = events.length - 1; i >= 0; i--)
+    if (events[i].type === "tool" && writeCode(events[i])) return events[i];
+  return undefined;
+}
+function codeLang(path?: string): string | undefined {
+  const ext = (path || "").split(".").pop()?.toLowerCase();
+  const map: Record<string, string> = { js: "javascript", ts: "typescript", jsx: "jsx", tsx: "tsx",
+    py: "python", html: "html", css: "css", json: "json", md: "markdown", sh: "bash", yaml: "yaml", yml: "yaml" };
+  return ext ? map[ext] : undefined;
+}
+
+// "Watch the code being written" — reveals the file the run is currently writing. The
+// content is the real tool-call payload (tool-calling requests are non-streamed to keep
+// weak build models reliable), revealed progressively client-side so it reads live.
+function LiveCode({ ev }: { ev?: Ev }) {
+  const code = writeCode(ev) || "";
+  const path = ev?.args?.path || "file";
+  const [shown, setShown] = useState(0);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    setShown(0);
+    if (!code) return;
+    const step = Math.max(8, Math.floor(code.length / 100));
+    const id = setInterval(() => setShown((n) => {
+      const next = n + step;
+      if (next >= code.length) clearInterval(id);
+      return Math.min(next, code.length);
+    }), 24);
+    return () => clearInterval(id);
+  }, [code]);
+  useEffect(() => { if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight; }, [shown]);
+  if (!code) return null;
+  return (
+    <div className="mt-2 rounded-xl border border-light-border dark:border-dark-border bg-surface-container-low dark:bg-dark-bg/60 overflow-hidden">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 text-[9px] uppercase tracking-widest text-accent-terracotta font-bold border-b border-light-border/50 dark:border-dark-border">
+        <span className="w-1.5 h-1.5 rounded-full bg-accent-terracotta animate-pulse" /> writing <span className="font-code normal-case tracking-normal opacity-80">{path}</span>
+      </div>
+      <div ref={bodyRef} className="max-h-64 overflow-y-auto px-3 py-2">
+        <pre className="font-code text-[12px] leading-5 text-on-surface-variant dark:text-light-muted whitespace-pre-wrap">{code.slice(0, shown)}<span className="caret" /></pre>
+      </div>
+    </div>
+  );
+}
+
 function Message({ m, index, isLast }: { m: Msg; index: number; isLast?: boolean }) {
   if (m.role === "user") return <UserMessage m={m} index={index} />;
   return (
     <div className="fadeup group">
+      {m.thinking ? <ThinkingBlock text={m.thinking} live={!!m.pending} /> : null}
       {m.content ? (
         <div className="prose-msg text-on-surface dark:text-dark-text">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD}>{m.content}</ReactMarkdown>
@@ -353,6 +450,7 @@ function Message({ m, index, isLast }: { m: Msg; index: number; isLast?: boolean
           <div className="font-code text-[12px] leading-5 text-on-surface-variant dark:text-light-muted whitespace-pre-wrap">{m.live}<span className="caret" /></div>
         </div>
       ) : null}
+      {m.pending ? <LiveCode ev={latestWrite(m.events)} /> : null}
       {m.events.length > 0 && <Activity m={m} running={m.pending} />}
       {m.content && !m.pending && <ResponseFooter m={m} last={isLast} hideStats={hasRunDetail(m.events, false)} />}
     </div>

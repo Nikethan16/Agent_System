@@ -677,7 +677,8 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
                 msg_dict, _ = stream_complete_chain(
                     chain, messages, tools=active_tools, max_tokens=max_tok,
                     budget=budget, on_fallback=_fb,
-                    on_token=lambda t: _emit({"type": "agent_token", "agent": "lead", "text": t}))
+                    on_token=lambda t: _emit({"type": "agent_token", "agent": "lead", "text": t}),
+                    on_reasoning=lambda t: _emit({"type": "thinking", "agent": "lead", "text": t}))
                 msg_content = msg_dict.get("content") or ""
                 msg_tool_calls = msg_dict.get("tool_calls") or []
                 messages.append(msg_dict)
@@ -870,7 +871,9 @@ def _finalize_from_board(board, task, budget, emit, stream=False):
         if stream and emit:
             text, _ = stream_complete(model, msgs, max_tokens=max_tok, budget=budget,
                                       on_token=lambda t: emit({"type": "agent_token",
-                                                                "agent": "lead", "text": t}))
+                                                                "agent": "lead", "text": t}),
+                                      on_reasoning=lambda t: emit({"type": "thinking",
+                                                                   "agent": "lead", "text": t}))
             return text
         resp, _ = complete(model, msgs, max_tokens=max_tok, budget=budget)
         return resp.choices[0].message.content
