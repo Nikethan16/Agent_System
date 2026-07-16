@@ -67,6 +67,18 @@ def _strip_token(s: str, url: str, clean_url: str, token: str = "") -> str:
     return s
 
 
+def _auth_url(url: str, token: str) -> str:
+    """Return an https URL with `token` injected for password-less auth, FIRST stripping any
+    credentials already present so we never double-inject. Double-injection produced
+    `https://oauth2:<t>@oauth2:<t>@github.com/...` which git rejects ("Port number...") — the
+    bug that made every push fail after a token-authed clone. Non-https URLs and an empty
+    token are returned unchanged."""
+    if not token or not url.startswith("https://"):
+        return url
+    bare = re.sub(r"^(https://)[^/@]*@", r"\1", url, count=1)   # drop any user:pass@ already there
+    return re.sub(r"^https://", f"https://oauth2:{token}@", bare, count=1)
+
+
 # ---- server-side clone (project setup, not an agent tool) ------------------
 def clone_into(url: str, dest: str, branch: str = "") -> tuple:
     """Clone `url` INTO the existing (empty) directory `dest`. Used when creating a
@@ -198,12 +210,8 @@ def git_push(branch: str = "", remote: str = "origin") -> str:
     # Get the remote URL and inject the token for auth (never exposes token on CLI)
     rc, remote_url, _ = _git(["remote", "get-url", remote])
     remote_url = remote_url.strip()
-    auth_url = remote_url
-    if token and remote_url.startswith("https://"):
-        # Strip any credentials already in the URL first, so we never double-inject the
-        # token (which corrupts the URL and fails the push).
-        bare = re.sub(r"^(https://)[^/@]*@", r"\1", remote_url, count=1)
-        auth_url = re.sub(r"^https://", f"https://oauth2:{token}@", bare, count=1)
+    auth_url = _auth_url(remote_url, token)
+    if auth_url != remote_url:
         _git(["remote", "set-url", remote, auth_url], cwd=ws)
 
     try:
