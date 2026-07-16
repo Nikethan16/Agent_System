@@ -107,6 +107,7 @@ export default function HealthPanel() {
               <thead className="text-light-muted text-left">
                 <tr className="border-b border-light-border dark:border-dark-border">
                   <th className="py-1 pr-2 font-medium">model</th>
+                  <th className="py-1 px-2 font-medium text-right">reliab</th>
                   <th className="py-1 px-2 font-medium text-right">calls</th>
                   <th className="py-1 px-2 font-medium text-right">errors</th>
                   <th className="py-1 px-2 font-medium text-right">avg s</th>
@@ -118,7 +119,16 @@ export default function HealthPanel() {
               <tbody className="font-code">
                 {models.map((m) => (
                   <tr key={m.model} className="border-b border-light-border/40 dark:border-dark-border/40">
-                    <td className="py-1 pr-2 truncate max-w-[150px]" title={m.model}>{shortModel(m.model)}</td>
+                    <td className="py-1 pr-2 truncate max-w-[150px]" title={m.model}>
+                      <span className="inline-flex items-center gap-1.5">
+                        {shortModel(m.model)}
+                        {m.degraded && <span title="High recent error rate — the router is deprioritizing this model"
+                          className="shrink-0 text-[8px] uppercase tracking-wide font-bold px-1 py-px rounded bg-red-500/12 text-red-600 dark:text-red-400">degraded</span>}
+                      </span>
+                    </td>
+                    <td className={`py-1 px-2 text-right ${m.degraded ? "text-red-500" : m.reliability != null && m.reliability < 0.9 ? "text-amber-500" : "text-emerald-600 dark:text-emerald-400"}`}>
+                      {m.reliability != null ? `${Math.round(m.reliability * 100)}%` : "–"}
+                    </td>
                     <td className="py-1 px-2 text-right">{m.calls}</td>
                     <td className={`py-1 px-2 text-right ${m.errors ? "text-red-500" : ""}`}>{m.errors}</td>
                     <td className="py-1 px-2 text-right">{m.avg_latency ?? "–"}</td>

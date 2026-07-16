@@ -147,6 +147,12 @@ def summary() -> list:
                 "cached_tokens": a["cached_tokens"],
                 "cache_hit_rate": round(a["cached_tokens"] / pt, 3) if pt else None,
             })
+    # Rolling reliability + the degraded flag read the recent-call window and re-acquire
+    # _lock, so compute them AFTER releasing it (a plain Lock isn't re-entrant). This is the
+    # signal the router acts on — is_degraded models get deprioritized in registry.ranked_for.
+    for r in rows:
+        r["reliability"] = round(reliability(r["model"]), 3)
+        r["degraded"] = is_degraded(r["model"])
     rows.sort(key=lambda r: -r["calls"])
     return rows
 
