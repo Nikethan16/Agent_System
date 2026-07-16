@@ -83,13 +83,55 @@ def _wants_delegation(task: str) -> bool:
     return sum(1 for p in _DOMAIN_PATS.values() if p.search(t)) >= 2
 
 
+# Genuine EXTERNAL/online research intent. STRICTER than _DOMAIN_PATS["research"] on purpose:
+# bare "current"/"web" caused false positives — e.g. "report the CURRENT environment" in a
+# pure-local coding task got mis-routed into a heavy research+build pipeline. Require an
+# explicit online/lookup cue.
+_EXTERNAL_RESEARCH = re.compile(
+    r"\b(search (?:the )?(?:web|internet|online)|on the (?:web|internet)|google it|"
+    r"look (?:it |them )?up online|browse the|"
+    r"latest (?:news|version|release|prices?|docs?|documentation|developments?)|"
+    r"current (?:news|events|prices?|version|weather|rates?)|"
+    r"recent (?:news|developments?|changes?)|find out (?:about|the latest)|https?://)", re.I)
+
+# Explicit INDEPENDENCE cues -> the task splits into parts that don't depend on each other,
+# so the LEAD can run them as parallel delegations (delegate_parallel). Conservative on
+# purpose: dependent work must stay a single tight loop (dependent build steps can't be
+# parallelized — you can't test code before it exists).
+_PARALLEL_CUES = re.compile(
+    r"\b(in parallel|concurrently|simultaneously|at the same time|independent(?:ly)?|"
+    r"unrelated|separate (?:modules|files|components|tasks|scripts|utilities)|"
+    r"(?:each|several|multiple|three|four|3|4) (?:independent|unrelated|separate))", re.I)
+
+
+def _wants_parallel(task: str) -> bool:
+    """True when the task explicitly describes independent parts that can run concurrently."""
+    return bool(_PARALLEL_CUES.search(task or ""))
+
+
 def _wants_pipeline(task: str) -> bool:
-    """True when the task needs BOTH research (external/current info) AND a build/implement
-    component — the case a lone specialist can't cover (a research agent has no run_bash;
-    a coder won't go find current information). Those run as a staged research -> plan ->
-    implement -> review pipeline. Pure coding or pure research stays a single agent."""
+    """True only when the task needs GENUINE external/online research AND a build component —
+    the one case no lone specialist covers (a research agent has no run_bash; a coder won't
+    fetch current online info). Routed to the LEAD master loop (shared context + delegation),
+    NOT a rigid re-reading relay. Pure local coding never triggers this."""
     t = task or ""
-    return bool(_DOMAIN_PATS["research"].search(t) and _DOMAIN_PATS["build"].search(t))
+    return bool(_EXTERNAL_RESEARCH.search(t) and _DOMAIN_PATS["build"].search(t))
+
+
+# File-producing / document-generation intent (pptx/docx/xlsx/pdf). These tasks must ACTUALLY
+# run their generator and produce the binary file, so the verify gate is armed even when the
+# classifier labels them "general"/"writing" (observed: a "make a PPT" task wrote a generator
+# script but never ran it -> no artifact, because verify wasn't armed). Narrow on purpose:
+# only real binary-doc formats, NOT a plain markdown report/essay (the doc agent writes those
+# directly with no generator to run).
+_DOCGEN_INTENT = re.compile(
+    r"\b(\.pptx|\.docx|\.xlsx|\.pdf|powerpoint|power\s?point|slide\s?deck|\bdeck\b|"
+    r"presentation|spreadsheet|excel|workbook|word\s+document)\b", re.I)
+
+
+def _produces_file(task: str) -> bool:
+    """True when the task must generate an actual document/binary file (run a generator)."""
+    return bool(_DOCGEN_INTENT.search(task or ""))
 
 
 # Which specialist actually PRODUCES the deliverable in the pipeline's implement stage.
@@ -918,27 +960,31 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     cls = classify(_user_request(task), budget=budget)
     tier = cls.get("tier", 2)
     task_type = cls.get("task_type")
-    # Research + build in one task -> the staged research->plan->implement->review pipeline
-    # (a lone specialist can't do both). This is the most specific multi-agent route.
-    use_pipeline = _wants_pipeline(_user_request(task))
-    if use_pipeline:
-        tier = 3
-        cls = {**cls, "tier": tier,
-               "reason": (str(cls.get("reason", "")) + " · research+build → pipeline").strip(" ·")}
-    # Otherwise: cross-domain coordination -> the LEAD master loop (delegates to specialists)
-    # instead of a lone specialist that can only cover one domain. Conservative (see helper).
-    elif tier < 3 and _wants_delegation(_user_request(task)):
+    req = _user_request(task)
+    # DEFAULT = a single agent in one tight Claude-Code-style loop (one shared context, full
+    # tools). Escalate to the LEAD master loop — which delegates and runs INDEPENDENT steps
+    # concurrently via delegate_parallel — ONLY when the task genuinely needs coordination:
+    #   * explicit independent multi-part WORK (parallelizable), or
+    #   * genuine external-research + build (research agent + coder must cooperate), or
+    #   * explicit cross-domain coordination (>=2 domains).
+    # Dependent single-domain work (incl. normal coding) stays a single agent — A/B-proven
+    # faster + more correct than fragmenting it across a delegated relay.
+    if _wants_parallel(req) and any(p.search(req) for p in _DOMAIN_PATS.values()):
+        esc_reason = "independent parts → parallel LEAD"
+    elif _wants_pipeline(req):
+        esc_reason = "research+build → LEAD"
+    elif _wants_delegation(req):
+        esc_reason = "multi-domain → LEAD"
+    else:
+        esc_reason = ""
+    if esc_reason:
         tier = 3
         if task_type in _TIER3_SINGLE_AGENT_TYPES:
-            task_type = "general"      # force the LEAD path — a single build agent can't span domains
+            task_type = "general"      # force the LEAD path (a single build agent can't coordinate/parallelize)
         cls = {**cls, "tier": tier, "task_type": task_type,
-               "reason": (str(cls.get("reason", "")) + " · multi-domain → LEAD").strip(" ·")}
+               "reason": (str(cls.get("reason", "")) + " · " + esc_reason).strip(" ·")}
     _emit({**cls, "type": "route"})
     review = _resolve_review(review, tier, task_type)
-
-    if use_pipeline:
-        return _pipeline(task, budget, emit, approve, review,
-                         task_type=task_type, acceptance=acceptance, stream=stream)
 
     # Plan-first preview.
     if plan_only:
@@ -959,7 +1005,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         # build to research/doc/general — which have no run_bash and just narrate or flail
         # (observed live: a "host my calculator" request went to research, which wrote a Flask
         # app it never ran). Repin such tasks to the right builder.
-        if (task_type in ("coding", "frontend", "data")
+        if ((task_type in ("coding", "frontend", "data") or _produces_file(req))
                 and not {"edit_file", "run_bash"}.issubset(set(getattr(agent, "tools", None) or []))):
             _want = "frontend" if task_type == "frontend" else "coder"
             _repl = team.agents.get(_want)
@@ -992,7 +1038,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         # a moderate "write X and run it" task must still actually execute, or be flagged
         # UNVERIFIED — otherwise it relies on the model choosing to be honest (testing showed
         # a complex build routed tier-2 and the gate didn't arm).
-        _verify = tier >= 2 and (task_type or "") in ("coding", "data")
+        _verify = tier >= 2 and ((task_type or "") in ("coding", "data") or _produces_file(req))
         result = _do_subtask(agent_id, agent_task, budget, emit, approve, "", review, stream,
                              task_type=task_type, acceptance=acceptance, tier=downgrade_tier,
                              use_skills=(tier >= 2),

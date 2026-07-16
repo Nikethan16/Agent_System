@@ -183,8 +183,9 @@ _DISPATCH_SYS = (
     "You are an agent dispatcher. Given a TASK and a MENU of agents, choose the ONE "
     "best-suited agent. Output ONLY JSON: {\"agent\": \"<id>\", \"reason\": \"<=8 words\"}.\n"
     "Rules: questions, explanations, follow-ups, or discussion about existing work go to "
-    "'general' (it answers directly). To BUILD an app, UI, website, game, tool, or calculator, "
-    "pick 'frontend' (or 'coder'); pick 'coder' whenever NEW code must be written or run. Pick "
+    "'general' (it answers directly). Pick 'frontend' ONLY for a web/visual UI to look at "
+    "(HTML/CSS/JS/React — a page, website, dashboard, or game). For ALL other code — libraries, "
+    "modules, CLIs, scripts, backend, APIs, data, algorithms — pick 'coder'. Pick "
     "'doc' for producing a document, and 'research' ONLY for looking things up online — NEVER "
     "send a build/create/implement task to 'research' (it cannot run code).\n"
     "MENU:\n{menu}"
@@ -210,12 +211,28 @@ _MAKE = ("write", "build", "create", "implement", "generate", "make a", "add ", 
          "refactor", "debug", "run ")
 
 
+# Strong NON-visual code signals -> coder, even if a broad frontend keyword ("app",
+# "game", "dashboard") also matched. Without this, a backend/library task ("build a
+# caching library / a CLI / a parser module") could land on 'frontend' (which defaults to
+# a single previewable HTML) just because it shares a generic word. Web signals override.
+_CODER_STRONG = ("library", "module", "package", "class ", "decorator", "backend", "cli",
+                 "sdk", "algorithm", "parser", "endpoint", "server", "database", "schema",
+                 "pytest", "unit test", " api", "microservice", "daemon")
+_WEB_STRONG = ("html", "css", "frontend", "front-end", "front end", "react", "web page",
+               "webpage", "website", "web app", "web ui", "landing page", " ui ", "browser",
+               " dom", "tailwind", "vue", "svelte")
+
+
 def _fallback_select(task: str) -> str:
     t = task.lower()
     # Explanation / follow-up questions go to the (tool-less) general agent, NOT the
     # coder — even when the word "code" appears (e.g. "explain this code").
     if any(k in t for k in _EXPLAIN) and not any(k in t for k in _MAKE):
         return "general"
+    # Non-visual code (library/module/CLI/backend) -> coder, unless it's genuinely web UI.
+    if (any(k in t for k in _CODER_STRONG) and not any(k in t for k in _WEB_STRONG)
+            and "coder" in agents.agents):
+        return "coder"
     for agent_id, kws in _KEYWORDS:
         if agent_id in agents.agents and any(k in t for k in kws):
             return agent_id

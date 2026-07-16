@@ -617,8 +617,27 @@ def complete_chain(models, messages, tools=None, max_tokens=4096, budget: Budget
             return resp
         except BudgetExceeded:
             raise                                  # hard cap — do not fall back
-        except _BUG:
-            raise                                  # our bug — surface it, don't mask
+        except _BUG as e:
+            # A 4xx is usually OUR bug (bad prompt/schema) -> surface it, don't mask. BUT an
+            # invalid / stale MODEL NAME also comes back as a 400 on some providers (e.g.
+            # DeepSeek: "supported API model names are ..."), and THAT is fallbackable — a
+            # stale id in a chain must fail over to the next model, not break the whole run.
+            _msg = str(e).lower()
+            _bad_model = any(s in _msg for s in (
+                "does not exist", "not found", "no such model", "unknown model",
+                "invalid model", "model_not_found", "supported api model", "supported model"))
+            if not _bad_model:
+                raise                              # genuine request/schema bug
+            last_exc = e
+            _trip_breaker(model)                   # bench the stale id so later calls skip it
+            nxt = chain[i + 1] if i + 1 < len(chain) else None
+            metrics.record(model, 0.0, ok=False, fallback=bool(nxt), error="BadModelId")
+            if nxt and on_fallback:
+                try:
+                    on_fallback(model, nxt, f"invalid/stale model id: {str(e)[:100]}")
+                except Exception:
+                    pass
+            continue
         except EmptyResponse as e:
             # A2: a benign empty completion (free-tier throttle / safety filter) is NOT a
             # model-health signal — fall back WITHOUT counting it toward the breaker.

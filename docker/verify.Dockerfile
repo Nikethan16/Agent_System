@@ -44,6 +44,27 @@ RUN pip install --no-cache-dir \
         Pillow \
         lxml defusedxml
 
+# This platform's OWN runtime deps, so the agent can run THIS repo's test suite OFFLINE
+# (working on this project is the primary "point it at my repo" case — without these, tests
+# that `import yaml` / `import sqlmodel` / `from core.llm import ...` fail on ModuleNotFound
+# even though the code is correct, so the agent's in-loop verification is untrustworthy).
+# The heavy transitive deps (onnxruntime via markitdown, pandas, numpy) are installed above,
+# so this layer is mostly litellm + light libs. Keep in sync with requirements.txt.
+RUN pip install --no-cache-dir \
+        litellm tenacity \
+        pyyaml python-dotenv \
+        sqlmodel python-multipart \
+        pyflakes ruff
+
+# Headless-browser verification (the `check_page` tool): Playwright + Chromium so the agent can
+# actually RENDER a UI it built and catch what a text/syntax check can't — a blank screen, a JS
+# crash, a dead button, a theme that doesn't apply. --with-deps pulls the OS libraries Chromium
+# needs. Browsers go to a fixed path that stays readable in the read-only container at run time.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
+RUN pip install --no-cache-dir playwright \
+    && playwright install --with-deps chromium
+COPY check_page.py /opt/check_page.py
+
 # A couple of widely-used JS test runners, global so they resolve offline.
 RUN npm install -g --no-audit --no-fund vitest jest 2>/dev/null || true
 

@@ -319,11 +319,26 @@ def _postedit_warning(path: str, content: str) -> str:
 def write_file(path: str, content: str) -> str:
     try:
         full = _safe(path)
+        # Reject an oversized single write. A model has to emit the ENTIRE escaped body in one
+        # tool call, and past ~30KB it routinely truncates or botches the JSON (observed: large
+        # single-file app builds silently fail / get clobbered). Force the reliable pattern:
+        # a small skeleton, then fill sections with edit_file. Tunable via AGENT_WRITE_MAX_CHARS.
+        _wmax = int(os.environ.get("AGENT_WRITE_MAX_CHARS", "32000"))
+        if len(content) > _wmax:
+            return (f"ERROR: {len(content)} chars is too large to write reliably in a single call "
+                    f"(limit {_wmax}). A huge one-shot write truncates. Instead: write a SMALLER "
+                    f"skeleton now (page structure + design-system CSS + state layer + a clearly "
+                    f"named placeholder marker or empty container per remaining section), then add "
+                    f"each section ONE AT A TIME with edit_file. Build large files incrementally.")
         if os.path.isfile(full) and _stale(full):
             return (f"ERROR: {path} changed since you last read it — re-read it with read_file "
                     "before overwriting, so you don't clobber newer content.")
         os.makedirs(os.path.dirname(full), exist_ok=True)
-        with open(full, "w") as f:
+        # Force UTF-8: without it, open() uses the OS locale encoding (cp1252 on Windows),
+        # so any smart punctuation the model emits (em-dash "—" -> byte 0x97, curly quotes)
+        # is written as invalid bytes that make a .py file unparseable. Every other file op
+        # in this module already pins utf-8; write_file was the lone exception.
+        with open(full, "w", encoding="utf-8", newline="") as f:
             f.write(content)
         _record_mtime(full)        # this tool's own write isn't a stale-conflict next time
         return f"Wrote {len(content)} chars to {path}" + _postedit_warning(path, content)
@@ -937,6 +952,100 @@ def run_bash(command: str) -> str:
             os.unlink(cid_file)
         except Exception:
             pass
+
+
+def check_page(path: str, expect_text: str = "", click=None) -> str:
+    """Render a workspace HTML file in a HEADLESS BROWSER (inside the sandbox) and report whether
+    it actually works — this is how you VERIFY a UI you built. A text/syntax check can't catch a
+    blank screen, a JavaScript crash, a dead button, or a theme that doesn't apply; this can.
+    `expect_text` = text that should be visible; `click` = CSS selectors to click and re-check."""
+    if os.environ.get("AGENT_DISABLE_BASH", "").strip() in ("1", "true", "yes"):
+        return "ERROR: sandbox execution is disabled (AGENT_DISABLE_BASH is set)."
+    image = os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip()
+    if not image:
+        return ("ERROR: AGENT_BASH_DOCKER_IMAGE is not set — the headless-browser check needs the "
+                "verify sandbox image (build docker/build-verify-image.sh).")
+    try:
+        full = _safe(path)
+    except Exception as e:
+        return f"ERROR: {e}"
+    if not os.path.isfile(full):
+        return f"ERROR: {path} does not exist in the workspace."
+    ws = current_workspace()
+    rel = os.path.relpath(full, ws).replace("\\", "/")
+    in_path = f"{_CONTAINER_WS}/{rel}"
+    import json as _json
+    opts_json = _json.dumps({"expect_text": expect_text or "", "click": list(click or [])})
+    timeout = int(os.environ.get("AGENT_CHECKPAGE_TIMEOUT", "90"))
+    import uuid as _uuid_mod
+    cid_file = os.path.join(os.environ.get("TMPDIR", "/tmp"),
+                            f"agent_cid_{_uuid_mod.uuid4().hex}")
+    # Chromium needs more room than a plain shell — bump memory/tmpfs/pids, keep everything else
+    # as locked-down as run_bash (offline, read-only, caps dropped, workspace-only mount).
+    argv = [
+        "docker", "run", "--rm", "--cidfile", cid_file,
+        "--network", "none",
+        "--memory", os.environ.get("AGENT_CHECKPAGE_MEMORY", "1400m"),
+        "--cpus", os.environ.get("AGENT_BASH_DOCKER_CPUS", "1.0"),
+        "--pids-limit", "512",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "--read-only", "--tmpfs", "/tmp:size=512m",
+        "-v", f"{ws}:{_CONTAINER_WS}:rw", "-w", _CONTAINER_WS,
+        image, "python", "/opt/check_page.py", in_path, opts_json,
+    ]
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            with open(cid_file) as _f:
+                cid = _f.read().strip()
+            if cid:
+                subprocess.run(["docker", "kill", cid], capture_output=True, timeout=10)
+        except Exception:
+            pass
+        return f"ERROR: check_page timed out after {timeout}s"
+    except FileNotFoundError:
+        return "ERROR: docker not found — install Docker and ensure it is in PATH"
+    except Exception as e:
+        return f"ERROR running check_page: {e}"
+    finally:
+        try:
+            os.unlink(cid_file)
+        except Exception:
+            pass
+    # The driver prints one JSON object; find the last JSON line in stdout.
+    data = None
+    for line in reversed((out.stdout or "").strip().splitlines()):
+        s = line.strip()
+        if s.startswith("{"):
+            try:
+                data = _json.loads(s)
+                break
+            except Exception:
+                continue
+    if data is None:
+        return (f"check_page could not parse a result (exit={out.returncode}).\n"
+                f"STDOUT:\n{_clip(out.stdout)}\nSTDERR:\n{_clip(out.stderr)}")
+    lines = [f"check_page: {'PASS' if data.get('ok') else 'FAIL'}",
+             f"  rendered: {data.get('rendered')} (visible text {data.get('body_text_len')} chars)",
+             f"  title: {data.get('title', '')!r}",
+             f"  theme: bg={data.get('body_bg')} color={data.get('body_color')}"]
+    if "contains_expect" in data:
+        lines.append(f"  contains expected text: {data.get('contains_expect')}")
+    if data.get("page_errors"):
+        lines.append(f"  JS PAGE ERRORS: {data['page_errors']}")
+    if data.get("console_errors"):
+        lines.append(f"  CONSOLE ERRORS: {data['console_errors']}")
+    if data.get("clicks"):
+        lines.append(f"  clicks: {data['clicks']}")
+    if data.get("notes"):
+        lines.append(f"  notes: {data['notes']}")
+    if data.get("error"):
+        lines.append(f"  error: {data['error']}")
+    if not data.get("ok"):
+        lines.append("  -> FIX before finishing: the page must render non-empty content with NO "
+                     "JS/console errors (and any expected text present).")
+    return "\n".join(lines)
 
 
 # OpenAI-format tool schemas (LiteLLM uses this format for every provider).

@@ -217,7 +217,15 @@ class ModelRegistry:
             pref = [m for m in cands if task_type in (m.get("good_for") or [])]
             if pref:
                 cands = pref
-        cands.sort(key=self._cost_key)
+        # Health-aware ranking: a model that has recently proven flaky (high error rate) drops
+        # to the BACK, so routing prefers a capable + RELIABLE model over the absolute cheapest-
+        # but-broken one. No health data -> nothing degraded -> pure cheapest, exactly as before.
+        try:
+            from . import metrics
+            cands.sort(key=lambda m: (1 if metrics.is_degraded(m.get("id", "")) else 0,
+                                      *self._cost_key(m)))
+        except Exception:
+            cands.sort(key=self._cost_key)
         return [m["id"] for m in cands]
 
     def cheapest_for(self, needed_level: int, task_type: str = None):
