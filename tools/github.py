@@ -127,11 +127,20 @@ def git_clone(url: str, directory: str = "") -> str:
         clone_url = re.sub(r"^https://", f"https://oauth2:{token}@", url, count=1)
 
     args = ["clone", clone_url]
-    target = ""
     if directory:
         # Strip . from allowed set so ".." can never appear in the sanitized name.
         target = re.sub(r"[^a-zA-Z0-9_-]", "_", directory)[:100]
         args.append(target)
+        clone_dir = os.path.join(ws, target)
+    elif not os.listdir(ws):
+        # Empty workspace -> clone INTO it so the repo sits AT the workspace root. Otherwise
+        # git makes a subdir and every later tool (which runs in the workspace root) can't see
+        # the repo — git_status returns "not a git repository" and the whole clone->edit->push
+        # flow breaks. This matches how project repo-mode clones (clone_into with ".").
+        args.append(".")
+        clone_dir = ws
+    else:
+        clone_dir = os.path.join(ws, re.sub(r"\.git$", "", url.rstrip("/").split("/")[-1]))
 
     rc, stdout, stderr = _git(args, cwd=ws)
     # A tokened clone bakes the token into origin's URL. Reset origin to the CLEAN url so
@@ -139,9 +148,7 @@ def git_clone(url: str, directory: str = "") -> str:
     # re-inject the token on top of it (which produced a malformed oauth2:..@oauth2:..@ URL
     # and made every push after a tool-clone fail).
     if rc == 0 and clone_url != url:
-        if not target:
-            target = re.sub(r"\.git$", "", url.rstrip("/").split("/")[-1])
-        _git(["remote", "set-url", "origin", url], cwd=os.path.join(ws, target))
+        _git(["remote", "set-url", "origin", url], cwd=clone_dir)
     # Scrub the authenticated URL and bare token from any output before returning.
     stdout = _strip_token(stdout, clone_url, url, token=token)
     stderr = _strip_token(stderr, clone_url, url, token=token)
