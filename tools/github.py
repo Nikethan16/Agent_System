@@ -90,6 +90,10 @@ def clone_into(url: str, dest: str, branch: str = "") -> tuple:
         args += ["--branch", re.sub(r"[^A-Za-z0-9._/-]", "", branch)[:100]]
     args += [clone_url, "."]                        # into the (empty) dest dir
     rc, stdout, stderr = _git(args, cwd=dest, timeout=300)
+    # Don't persist the token in origin's URL (see git_clone) — reset to the clean url so a
+    # later git_push single-injects correctly instead of doubling the credentials.
+    if rc == 0 and clone_url != url:
+        _git(["remote", "set-url", "origin", url], cwd=dest)
     msg = _strip_token((stdout + "\n" + stderr).strip(), clone_url, url, token=token)
     return rc == 0, msg
 
@@ -111,12 +115,21 @@ def git_clone(url: str, directory: str = "") -> str:
         clone_url = re.sub(r"^https://", f"https://oauth2:{token}@", url, count=1)
 
     args = ["clone", clone_url]
+    target = ""
     if directory:
         # Strip . from allowed set so ".." can never appear in the sanitized name.
-        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", directory)[:100]
-        args.append(safe_name)
+        target = re.sub(r"[^a-zA-Z0-9_-]", "_", directory)[:100]
+        args.append(target)
 
     rc, stdout, stderr = _git(args, cwd=ws)
+    # A tokened clone bakes the token into origin's URL. Reset origin to the CLEAN url so
+    # (1) the token isn't persisted to .git/config on disk, and (2) a later git_push doesn't
+    # re-inject the token on top of it (which produced a malformed oauth2:..@oauth2:..@ URL
+    # and made every push after a tool-clone fail).
+    if rc == 0 and clone_url != url:
+        if not target:
+            target = re.sub(r"\.git$", "", url.rstrip("/").split("/")[-1])
+        _git(["remote", "set-url", "origin", url], cwd=os.path.join(ws, target))
     # Scrub the authenticated URL and bare token from any output before returning.
     stdout = _strip_token(stdout, clone_url, url, token=token)
     stderr = _strip_token(stderr, clone_url, url, token=token)
@@ -187,7 +200,10 @@ def git_push(branch: str = "", remote: str = "origin") -> str:
     remote_url = remote_url.strip()
     auth_url = remote_url
     if token and remote_url.startswith("https://"):
-        auth_url = re.sub(r"^https://", f"https://oauth2:{token}@", remote_url, count=1)
+        # Strip any credentials already in the URL first, so we never double-inject the
+        # token (which corrupts the URL and fails the push).
+        bare = re.sub(r"^(https://)[^/@]*@", r"\1", remote_url, count=1)
+        auth_url = re.sub(r"^https://", f"https://oauth2:{token}@", bare, count=1)
         _git(["remote", "set-url", remote, auth_url], cwd=ws)
 
     try:
