@@ -32,7 +32,7 @@ from . import skills as skill_lib
 from . import playbooks as playbook_lib
 from .agent import _run_one_tool, _looks_like_raw_toolcall, _compact_messages
 from .blackboard import Blackboard
-from .tools import current_workspace, using_workspace, project_notes_block
+from .tools import current_workspace, using_workspace, project_notes_block, repo_map, write_file
 
 MAX_MASTER_ROUNDS = 16     # hard cap on lead loop iterations
 MAX_DELEGATIONS = 10       # hard cap on subagent spawns per run (depth-limited too)
@@ -132,6 +132,32 @@ _DOCGEN_INTENT = re.compile(
 def _produces_file(task: str) -> bool:
     """True when the task must generate an actual document/binary file (run a generator)."""
     return bool(_DOCGEN_INTENT.search(task or ""))
+
+
+# Deterministic complexity signals — a cheap, robust cross-check on the classifier's tier.
+# The classifier is one fast model's snap judgment and DOES under-tier big builds (observed: a
+# full 7-feature app read as tier 2 -> weak flash model -> lame MVP). These signals catch that
+# for free and RAISE the tier so the strong-model floor (tier 3) kicks in. Only build scope.
+_BIG_SCOPE = re.compile(
+    r"\b(full|complete|entire|end[- ]?to[- ]?end|production|whole app|full app|multi[- ]?page|"
+    r"multiple (?:screens|pages|views|modules|features|components))\b", re.I)
+_PRODUCT_NOUN = re.compile(
+    r"\b(app|application|system|platform|tracker|dashboard|website|web app)\b", re.I)
+
+
+def _difficulty_score(task: str) -> int:
+    """A 0-10 deterministic complexity estimate from the request text (no model call)."""
+    t = task or ""
+    score = 0
+    if _BIG_SCOPE.search(t):
+        score += 3
+    feats = len(re.findall(r"(?m)^\s*(?:\d+[.)]|[-*])\s+\S", t))   # a numbered/bulleted feature list
+    score += 3 if feats >= 3 else (1 if feats == 2 else 0)
+    if len(t) > 600:                                               # a long, detailed spec
+        score += 2
+    if _PRODUCT_NOUN.search(t):
+        score += 1
+    return score
 
 
 # Which specialist actually PRODUCES the deliverable in the pipeline's implement stage.
@@ -269,6 +295,86 @@ def _make_plan(task, budget):
         return subs
     except Exception:
         return [task]
+
+
+# ---- phased build: STRONG plans -> cheap flash implements -> STRONG reviews ----------------
+# Cost-effective quality for COMPLEX (tier-3) builds. The insight: an LLM is stateless, so the
+# ONLY thing carried between phases is what we pass. We pass the compact PLAN artifact (not the
+# planner's raw context), so the strong-model calls stay small + cheap and the bulk runs on
+# flash. A stuck flash implement escalates ONCE to the strong model (quality never collapses).
+_BUILD_PLANNER_SYS = (
+    "You are a senior software architect. Produce a CONCRETE, step-by-step IMPLEMENTATION PLAN "
+    "that a single engineer will follow to build the task below. Decide and state: the files to "
+    "create/change, the data model / state shape, the key functions or components, and an ORDERED "
+    "list of small, independently-checkable build steps. Be specific and buildable. Do NOT write "
+    "the application code — only the plan. Honor any theme/design/constraints in the task. Keep it "
+    "tight — no preamble, no filler.")
+
+
+def _build_plan(task, budget, emit=None) -> str:
+    """PLAN phase: a STRONG model turns the task (+ a COMPACT repo map) into a concrete plan.
+    Compact in, compact out — so the frontier model costs little. This plan is the ONLY thing
+    handed to the (cheap) implementer — never the planner's raw conversation."""
+    rmap = ""
+    try:
+        rmap = repo_map(".") or ""
+    except Exception:
+        rmap = ""
+    user = task if not rmap.strip() else f"{task}\n\nREPO MAP (context):\n{rmap[:4000]}"
+    chain = registry.model_chain("tier3", task_type="planning")   # strong model chain
+    try:
+        resp, _ = complete_chain(chain, [{"role": "system", "content": _BUILD_PLANNER_SYS},
+                                         {"role": "user", "content": user}],
+                                 max_tokens=1200, budget=budget, temperature=0.2)
+        return (resp.choices[0].message.content or "").strip()
+    except Exception:
+        return ""
+
+
+def _phased_build(task, budget, emit, approve, review, task_type, acceptance="", stream=True):
+    """STRONG plans -> cheap flash implements the plan -> STRONG reviews -> flash fixes.
+    Escalates a stuck implement to the strong model. Only the compact plan is passed forward."""
+    def _e(ev):
+        if emit:
+            emit(ev)
+    # 1. PLAN (strong, compact I/O)
+    _e({"type": "assign", "agent": "architect", "label": "Planner",
+        "model": registry.model_for_tier("tier3", task_type="planning"),
+        "reason": "phased build: plan on the strong model"})
+    plan = _build_plan(task, budget, emit)
+    if plan:
+        try:
+            write_file("plan.md", plan)
+        except Exception:
+            pass
+        _e({"type": "plan",
+            "subtasks": [ln.strip("-*# ").strip() for ln in plan.splitlines() if ln.strip()][:14],
+            "note": "implementation plan"})
+    # 2. IMPLEMENT (cheap flash coder, given ONLY the compact plan)
+    agent_id = "frontend" if task_type == "frontend" else "coder"
+    impl = task + (f"\n\nFOLLOW THIS IMPLEMENTATION PLAN (already designed for you — execute it "
+                   f"step by step, building incrementally):\n{plan}" if plan else "")
+    if acceptance:
+        impl += "\n\nACCEPTANCE CRITERIA (definition of done):\n" + acceptance
+    result = _do_subtask(agent_id, impl, budget, emit, approve, "", False, stream=True,
+                         task_type=task_type, use_skills=True, verify_run=True, max_rounds=28)
+    # 2b. ESCALATE: a clearly-failed / unverified implement retries ONCE on the strong model.
+    if _looks_failed(result) or "UNVERIFIED" in (result or ""):
+        strong = registry.model_for_tier("tier3", task_type=task_type)
+        _e({"type": "fallback", "agent": agent_id, "from": "flash (implement)", "to": strong,
+            "reason": "implement struggled on flash -> escalate to the strong model"})
+        with registry.use_model_override(strong):
+            result = _do_subtask(agent_id, impl, budget, emit, approve, "", False, stream=True,
+                                 task_type=task_type, use_skills=True, verify_run=True, max_rounds=28)
+    # 3. REVIEW (strong critic) + 4. FIX (flash). _review returns (passed, feedback_string).
+    if review:
+        passed, feedback = _review(task, result, budget, emit, approve, acceptance)
+        if not passed and feedback:
+            fix = ("A reviewer flagged issues — fix ALL of them and re-verify:\n" + feedback
+                   + (f"\n\nORIGINAL PLAN:\n{plan}" if plan else ""))
+            result = _do_subtask(agent_id, fix, budget, emit, approve, "", False, stream=True,
+                                 task_type=task_type, use_skills=True, verify_run=True, max_rounds=20)
+    return result
 
 
 # ---- a single specialist step (with optional QA retry) ---------------------
@@ -961,6 +1067,13 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     tier = cls.get("tier", 2)
     task_type = cls.get("task_type")
     req = _user_request(task)
+    # Blended difficulty: the classifier is one cheap model's snap judgment and under-tiers big
+    # builds. Deterministic scope signals RAISE the tier so the strong-model floor (tier 3 -> a
+    # frontier model, not flash) kicks in for genuinely complex build work.
+    if task_type in ("coding", "frontend", "data") and tier < 3 and _difficulty_score(req) >= 5:
+        tier = 3
+        cls = {**cls, "tier": tier,
+               "reason": (str(cls.get("reason", "")) + " · complex build → tier 3 (strong model)").strip(" ·")}
     # DEFAULT = a single agent in one tight Claude-Code-style loop (one shared context, full
     # tools). Escalate to the LEAD master loop — which delegates and runs INDEPENDENT steps
     # concurrently via delegate_parallel — ONLY when the task genuinely needs coordination:
@@ -1051,6 +1164,15 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     # actually produces working code (see _TIER3_SINGLE_AGENT_TYPES). No tier downgrade —
     # the agent keeps its capable model, and gets the full tier-3 budget/round headroom.
     if task_type in _TIER3_SINGLE_AGENT_TYPES:
+        # Phased build (default): STRONG model plans -> cheap flash implements the plan ->
+        # STRONG model reviews -> flash fixes; a stuck implement escalates to the strong model.
+        # Cost-effective quality for complex builds. AGENT_PHASED_BUILD=0 uses the single
+        # strong-agent path below instead (kept for A/B comparison).
+        if os.environ.get("AGENT_PHASED_BUILD", "1").strip().lower() in ("1", "true", "yes"):
+            final = _phased_build(task, budget, emit, approve, review, task_type,
+                                  acceptance=acceptance, stream=stream)
+            _emit({"type": "final", "text": final, "cost": round(budget.spent_usd, 4)})
+            return final
         agent_id, reason = team.select_agent(task, budget=budget)
         agent = team.agents.get(agent_id)
         # The build agent MUST be able to build AND verify (edit + execute). The

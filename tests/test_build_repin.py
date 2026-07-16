@@ -21,6 +21,10 @@ def _run(monkeypatch, picked_agent):
         seen["agent"] = agent_id
         return "done"
 
+    # These test the single-strong-agent repin path (dispatcher pick -> repin to a builder).
+    # The phased build (default) picks coder/frontend by task_type instead, so disable it here
+    # to exercise the repin logic this test targets.
+    monkeypatch.setenv("AGENT_PHASED_BUILD", "0")
     monkeypatch.setattr(orchestrator, "classify", _fake_classify())
     monkeypatch.setattr(team, "select_agent", lambda *a, **k: (picked_agent, "test pick"))
     monkeypatch.setattr(orchestrator, "_do_subtask", fake_do_subtask)

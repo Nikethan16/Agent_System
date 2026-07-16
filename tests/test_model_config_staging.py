@@ -82,8 +82,10 @@ def test_paid_keys_activate_finalized_plan(reg, monkeypatch):
     assert r.model_chain("tier3", task_type="planning")[0] == "deepseek/deepseek-v4-pro"
     assert r.model_chain("tier3", task_type="reasoning")[0] == "deepseek/deepseek-v4-pro"
     assert r.model_chain("tier3", task_type="math")[0] == "deepseek/deepseek-v4-pro"
-    assert r.model_chain("tier3", task_type="coding")[0] == "deepseek/deepseek-v4-flash"
-    assert r.model_chain("tier3", task_type="frontend")[0] == "deepseek/deepseek-v4-flash"
+    # tier-3 (complex) coding/frontend now lead with a STRONG model — flash was re-tagged to
+    # tier-2 (the build model), so the difficulty-aware floor picks a frontier coder at tier 3.
+    assert r.model_chain("tier3", task_type="coding")[0] == "deepinfra/Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
+    assert r.model_chain("tier3", task_type="frontend")[0] == "deepinfra/Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo"
     assert r.model_chain("tier2", task_type="qa")[0] == "deepinfra/zai-org/GLM-5.1"
     assert r.model_chain("tier2", task_type="review")[0] == "deepinfra/zai-org/GLM-5.1"
     assert r.model_chain("tier2", task_type="research")[0] == "deepinfra/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B"
@@ -122,7 +124,9 @@ def test_partial_keys_partial_activation(reg, monkeypatch):
     _set_free(monkeypatch)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     r = reg()
-    assert r.model_chain("tier3", task_type="coding")[0] == "deepseek/deepseek-v4-flash"
+    # Only the DeepSeek key: DeepInfra coders (Qwen3-Coder/GLM) are inert, and flash is tier-2
+    # now, so tier-3 coding falls through to the NIM free-floor strong coder.
+    assert r.model_chain("tier3", task_type="coding")[0] == "nvidia_nim/qwen/qwen3.5-122b-a10b"
     qa = r.model_chain("tier2", task_type="qa")
     assert qa[0] == "deepseek/deepseek-v4-pro"      # GLM@DeepInfra inert -> V4 Pro leads QA
     assert not any(m.startswith(("zai/", "deepinfra/")) for m in qa)
