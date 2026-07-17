@@ -889,10 +889,23 @@ def _clip(s: str) -> str:
     return (f"{s[:head]}\n... [{len(s) - _BASH_OUT_CAP} chars truncated] ...\n{s[-tail:]}")
 
 
+_NET_GIT = re.compile(r"\bgit\s+(?:[\w./=:-]+\s+)*?(clone|push|pull|fetch)\b")
+
+
 def run_bash(command: str) -> str:
     if os.environ.get("AGENT_DISABLE_BASH", "").strip() in ("1", "true", "yes"):
         return ("ERROR: shell execution is disabled (AGENT_DISABLE_BASH is set). "
                 "Run this app's bash tool only inside a container/VM sandbox.")
+    # Network git ops don't work in the sandbox (isolated network, read-only fs, no host
+    # credentials) — live e2e saw an agent burn 19 bash calls trying `git clone` in the
+    # container. Redirect deterministically to the dedicated host-side git tools.
+    m = _NET_GIT.search(command or "")
+    if m:
+        return (f"BLOCKED: `git {m.group(1)}` cannot work inside the bash sandbox (isolated "
+                "network, no credentials, read-only filesystem). Use the dedicated tool instead: "
+                "git_clone(url) to clone into your workspace, git_push(branch) to push — these "
+                "run on the host with proper auth. Local git commands (status/log/diff/commit) "
+                "are fine via the git_* tools too.")
     ws = current_workspace()
     image = os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip()
     if not image:
