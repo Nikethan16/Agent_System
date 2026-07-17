@@ -190,13 +190,17 @@ final = orch.handle_task("write a function", emit=ev.append, review=True)
 check("simple path returns final", bool(final))
 check("critic ran + retried (fixed)", final == "[fixed]" and _REVIEW["n"] >= 1)
 
-# tier-3 CODING routes to a single self-verifying coder agent (commit 3bcc6a6), NOT the
-# lead master loop — assert that fast path stays intact (one coder, no playbook plan).
+# tier-3 CODING runs the PHASED build (strong plan -> cheap coder implements -> review),
+# NOT the LEAD master loop. Assert the planner + coder both ran and it seeded a BUILD plan
+# (subtasks), not the understand-first PLAYBOOK the LEAD loop uses.
 ev = []
 final = orch.handle_task("build a multi part thing", emit=ev.append)
 assigns = [e.get("agent") for e in ev if e["type"] == "assign"]
-check("tier-3 coding runs the single coder agent (not the master loop)",
-      "coder" in assigns and not any(e.get("type") == "plan" and e.get("todos") for e in ev))
+check("tier-3 coding runs the phased build (planner + coder, not the LEAD master loop)",
+      "architect" in assigns and "coder" in assigns and not any(
+          e.get("type") == "plan"
+          and any("understand" in (t.get("text") or "").lower() for t in (e.get("todos") or []))
+          for e in ev))
 check("tier-3 coding produced a final answer", bool(final))
 
 # tier-3 NON-coding goes through the LEAD master loop: it seeds a playbook todo list,

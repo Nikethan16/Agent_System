@@ -1,0 +1,22 @@
+[Unit]
+Description=AGENT CORE — Tailscale Funnel (public HTTPS for the app on :8800)
+Documentation=https://tailscale.com/kb/1223/funnel
+# Run after the network, tailscaled, and the app itself are up. Re-applying the funnel
+# on every boot means the public URL survives reboots/crashes even if the persisted
+# serve state is ever lost or the tailnet name changes.
+After=network-online.target tailscaled.service agentcore.service
+Wants=network-online.target
+Requires=tailscaled.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Wait up to ~60s for tailscaled to be logged in and Running, THEN (re)publish the
+# funnel to the local app. The wait loop makes this correct regardless of how long
+# tailscaled takes to come up after a cold boot.
+ExecStart=/bin/sh -c 'for i in $(seq 1 30); do /usr/bin/tailscale status >/dev/null 2>&1 && break; sleep 2; done; exec /usr/bin/tailscale funnel --bg 8800'
+# Tear the funnel down when the service is stopped/disabled.
+ExecStop=/usr/bin/tailscale funnel --https=443 off
+
+[Install]
+WantedBy=multi-user.target

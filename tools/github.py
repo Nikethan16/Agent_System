@@ -67,6 +67,18 @@ def _strip_token(s: str, url: str, clean_url: str, token: str = "") -> str:
     return s
 
 
+def _auth_url(url: str, token: str) -> str:
+    """Return an https URL with `token` injected for password-less auth, FIRST stripping any
+    credentials already present so we never double-inject. Double-injection produced
+    `https://oauth2:<t>@oauth2:<t>@github.com/...` which git rejects ("Port number...") — the
+    bug that made every push fail after a token-authed clone. Non-https URLs and an empty
+    token are returned unchanged."""
+    if not token or not url.startswith("https://"):
+        return url
+    bare = re.sub(r"^(https://)[^/@]*@", r"\1", url, count=1)   # drop any user:pass@ already there
+    return re.sub(r"^https://", f"https://oauth2:{token}@", bare, count=1)
+
+
 # ---- server-side clone (project setup, not an agent tool) ------------------
 def clone_into(url: str, dest: str, branch: str = "") -> tuple:
     """Clone `url` INTO the existing (empty) directory `dest`. Used when creating a
@@ -90,6 +102,10 @@ def clone_into(url: str, dest: str, branch: str = "") -> tuple:
         args += ["--branch", re.sub(r"[^A-Za-z0-9._/-]", "", branch)[:100]]
     args += [clone_url, "."]                        # into the (empty) dest dir
     rc, stdout, stderr = _git(args, cwd=dest, timeout=300)
+    # Don't persist the token in origin's URL (see git_clone) — reset to the clean url so a
+    # later git_push single-injects correctly instead of doubling the credentials.
+    if rc == 0 and clone_url != url:
+        _git(["remote", "set-url", "origin", url], cwd=dest)
     msg = _strip_token((stdout + "\n" + stderr).strip(), clone_url, url, token=token)
     return rc == 0, msg
 
@@ -113,10 +129,26 @@ def git_clone(url: str, directory: str = "") -> str:
     args = ["clone", clone_url]
     if directory:
         # Strip . from allowed set so ".." can never appear in the sanitized name.
-        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", directory)[:100]
-        args.append(safe_name)
+        target = re.sub(r"[^a-zA-Z0-9_-]", "_", directory)[:100]
+        args.append(target)
+        clone_dir = os.path.join(ws, target)
+    elif not os.listdir(ws):
+        # Empty workspace -> clone INTO it so the repo sits AT the workspace root. Otherwise
+        # git makes a subdir and every later tool (which runs in the workspace root) can't see
+        # the repo — git_status returns "not a git repository" and the whole clone->edit->push
+        # flow breaks. This matches how project repo-mode clones (clone_into with ".").
+        args.append(".")
+        clone_dir = ws
+    else:
+        clone_dir = os.path.join(ws, re.sub(r"\.git$", "", url.rstrip("/").split("/")[-1]))
 
     rc, stdout, stderr = _git(args, cwd=ws)
+    # A tokened clone bakes the token into origin's URL. Reset origin to the CLEAN url so
+    # (1) the token isn't persisted to .git/config on disk, and (2) a later git_push doesn't
+    # re-inject the token on top of it (which produced a malformed oauth2:..@oauth2:..@ URL
+    # and made every push after a tool-clone fail).
+    if rc == 0 and clone_url != url:
+        _git(["remote", "set-url", "origin", url], cwd=clone_dir)
     # Scrub the authenticated URL and bare token from any output before returning.
     stdout = _strip_token(stdout, clone_url, url, token=token)
     stderr = _strip_token(stderr, clone_url, url, token=token)
@@ -185,9 +217,8 @@ def git_push(branch: str = "", remote: str = "origin") -> str:
     # Get the remote URL and inject the token for auth (never exposes token on CLI)
     rc, remote_url, _ = _git(["remote", "get-url", remote])
     remote_url = remote_url.strip()
-    auth_url = remote_url
-    if token and remote_url.startswith("https://"):
-        auth_url = re.sub(r"^https://", f"https://oauth2:{token}@", remote_url, count=1)
+    auth_url = _auth_url(remote_url, token)
+    if auth_url != remote_url:
         _git(["remote", "set-url", remote, auth_url], cwd=ws)
 
     try:

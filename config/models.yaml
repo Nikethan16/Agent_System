@@ -205,7 +205,9 @@ catalog:
     free: false
     open_source: false
     cost: 7
-    tier_hint: 3
+    tier_hint: 2   # the BUILD model: capable + cheap, but a step below the frontier tier-3
+                   # models (v4-pro / GLM / Qwen3-Coder). So tier-3 (complex) tasks now pick a
+                   # stronger model instead of always landing on flash. Tier 1-2 still use it.
     timeout_s: 90
     good_for: [coding, general, chat, writing, summarize, agentic]
 

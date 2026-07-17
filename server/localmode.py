@@ -42,3 +42,33 @@ def validate_path(path: str):
     if not os.path.isdir(real):
         return False, "path is not an existing directory"
     return True, real
+
+
+def browse(path: str = ""):
+    """List the immediate subfolders of `path` (default: allowed_root) for the UI folder
+    picker. Confined to allowed_root() — a path above/outside it snaps back to the root, so
+    the picker can never navigate to / or C:\\Windows. Returns (ok, payload|error) where
+    payload = {root, path, parent, dirs:[{name, path, is_repo}]}."""
+    if not enabled():
+        return False, "local mode is disabled (set AGENT_LOCAL_MODE=1 on a local run)"
+    root = allowed_root()
+    p = (path or "").strip()
+    real = os.path.realpath(os.path.expanduser(p)) if p else root
+    if not (real == root or real.startswith(root + os.sep)):
+        real = root                          # outside the allowed tree -> snap back to root
+    if not os.path.isdir(real):
+        return False, "not a directory"
+    dirs = []
+    try:
+        for name in sorted(os.listdir(real), key=str.lower):
+            if name.startswith("."):         # hide dotfolders (noise); repos still detected below
+                continue
+            full = os.path.join(real, name)
+            if not os.path.isdir(full):
+                continue
+            dirs.append({"name": name, "path": full,
+                         "is_repo": os.path.isdir(os.path.join(full, ".git"))})
+    except PermissionError:
+        return False, "permission denied"
+    return True, {"root": root, "path": real,
+                  "parent": "" if real == root else os.path.dirname(real), "dirs": dirs}

@@ -99,6 +99,7 @@ export const api = {
 
   listProjects: () => GET("/api/projects"),
   config: () => GET("/api/config"),
+  browseLocal: (path = "") => GET("/api/local/browse?path=" + encodeURIComponent(path)),
   createProject: (name: string, repo_url = "", branch = "", local_path = "") =>
     POST("/api/projects", { name, repo_url, branch, local_path }),
   updateProject: (pid: string, body: any) => PATCH(`/api/projects/${pid}`, body),

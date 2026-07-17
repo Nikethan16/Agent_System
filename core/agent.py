@@ -275,6 +275,7 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
                         chain[0], messages, tools=active_tools,
                         max_tokens=max_tokens, budget=budget,
                         on_token=lambda t: _emit({"type": "agent_token", "agent": label, "text": t}),
+                        on_reasoning=lambda t: _emit({"type": "thinking", "agent": label, "text": t}),
                     )
                     msg = _StreamMsg(md)
                 except BudgetExceeded:
