@@ -118,7 +118,8 @@ A **repo-engineer** agent can clone a repo, create a branch, read/edit/run code 
 commit, push, and open a pull request — all from a single chat prompt. Uses a `repo`
 playbook (clone → plan → branch → implement → verify → push → PR). Push and PR require your
 explicit approval. Repo content is treated as untrusted data (prompt-injection guard).
-Needs `GITHUB_TOKEN` in `.env`.
+Needs `GITHUB_TOKEN` in `.env`. **Verified end-to-end** (2026-07): the agent autonomously
+clones, branches, writes files, runs the tests, commits, pushes, and opens a real PR.
 
 ### 17. Run shell commands in a hardened Docker sandbox
 When `AGENT_BASH_DOCKER_IMAGE` is set, every `run_bash` call runs inside an **ephemeral
@@ -168,6 +169,22 @@ Models on free tiers stall and rate-limit; this layer keeps a run from hanging o
 - **Cost-sensitive routing** — single-file work routes to tier 2 (not 3), greetings take a
   one-call fast-path on an uncontended model, `run_bash` output is clipped, flaky models are
   demoted. `scripts/flow_benchmark.py` measures the before/after on real scenarios.
+- **Model health is visible** — the Settings → Health panel shows each model's rolling
+  **reliability %** and a **degraded** badge (the exact signal the router uses to deprioritize
+  a flaky model), alongside calls/errors/latency/cache-hit-rate.
+
+### 23. Watch it think and write the code (live streaming)
+On reasoning models, the model's **chain-of-thought streams live** into a collapsible
+"thought process" panel (from `reasoning_content`, separate from the answer), then collapses
+once the answer starts — so you can see *how* it reached a result, Claude-Code style. While a
+build runs, a **"writing &lt;file&gt;" panel** reveals the actual code of the current
+write/edit, and each write step in the run summary expands to the full syntax-highlighted file.
+
+### 24. Point it at a local folder from the UI
+In **local mode** (`AGENT_LOCAL_MODE=1`), New Project has a **Browse** button that opens a
+server-side directory navigator — pick a real folder for the agent to edit in place, no
+path-typing and no native OS dialog (so it works on the headless VM too). Confined to
+`AGENT_LOCAL_ROOT`: it can't navigate above the allowed root.
 
 ---
 
@@ -181,7 +198,7 @@ runs at **$0**:
 | Chat, coding, documents, multi-agent, QA, security, memory, checkpoints, projects, jobs, Model Lab | ✅ Working |
 | **Web search** (Tavily key set) | ✅ Working |
 | **Semantic (meaning-based) memory** (Gemini embeddings + NumPy ANN index) | ✅ Working |
-| **Repo-engineer** (clone/branch/edit/commit/push/PR) | ✅ Code done — needs `GITHUB_TOKEN` in server `.env` |
+| **Repo-engineer** (clone/branch/edit/commit/push/PR) | ✅ Verified end-to-end (opens real PRs) — needs `GITHUB_TOKEN` in server `.env` |
 | **Docker sandbox** for shell commands | ✅ Image built on server — needs `AGENT_BASH_DOCKER_IMAGE` env var flip |
 | **Langfuse cloud tracing** | ✅ Local JSONL always-on; needs `LANGFUSE_*` keys for cloud |
 | **Trace viewer** (Trace tab, span tree) | ✅ Working |

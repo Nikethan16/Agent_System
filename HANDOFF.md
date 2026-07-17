@@ -4,7 +4,34 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## ⚡ LATEST (2026-07-13/14) — 7 features shipped to `main` (DEPLOYED) + a UI redesign on branch `ui-redesign` (NOT merged)
+## ⚡ LATEST (2026-07-16/17) — streaming, folder picker, model-health UI, funnel unit, + 2 repo-engineer bug fixes (branch `claude/routing-single-agent-default`, NOT merged)
+
+Continues the phased-build/routing work (`4bec8e5`). **7 commits this session, all green (330 pytest + web build clean).** Each verified live before commit.
+
+| Commit | What |
+|---|---|
+| `09be3c3` | Stream the model's **thinking** (reasoning_content) live + show **code as it's written**. New `thinking` event; `on_reasoning` in `core/llm.py` stream fns; collapsible "thought process" + live "writing <file>" panels in `web/`. Verified on deepseek-v4-pro (926 thinking events streamed, separate from the answer). |
+| `8a6ae7a` | **Folder picker** for local-folder projects — `localmode.browse()` + `GET /api/local/browse` (confined to `AGENT_LOCAL_ROOT`) + a directory navigator in `NewProjectModal`. Works on the headless VM (no native OS dialog). |
+| `071d305` | **Model reliability + degraded** column in the Health panel (`metrics.summary` now carries `reliability`/`degraded`, computed OUTSIDE the lock — reliability() re-acquires it and the Lock isn't re-entrant). |
+| `3d18642` | **Funnel systemd unit** — `deploy/agentfunnel.service` re-publishes the Tailscale funnel every boot (fixes "the VM URL died after reboot"). `deploy/README.md` + SETUP_GUIDE Step H. |
+| `2f79c1a` | **BUG FIX**: after a token-authed clone, `git_push` re-injected the token → `oauth2:..@oauth2:..@` malformed URL → *every push failed*. Clone now stores a clean origin; push strips existing creds first. |
+| `ce058b5` | Regression tests (`_auth_url`, `localmode.browse`, `metrics` reliability) + extracted `_auth_url` helper. |
+| `adf11b2` | **BUG FIX**: `git_clone` cloned into a SUBDIR so every later git tool failed ("not a git repository"); now clones into the workspace root when empty (matches project repo-mode). |
+
+**Repo-engineer validated end-to-end** — both bugs above were found by this test. The real LLM agent ran clone → branch → write files → **run tests** → commit → push → open a real PR autonomously ($0.001, 16s; PR API-confirmed open). ⚠️ Gotcha: on one run the agent pushed the branch but drifted into `run_bash` instead of calling `create_pull_request` — a nondeterministic *behavior* wobble, not a tool bug. Watch for it if you lean on repo mode.
+
+### VM steps still needed (owner — the agent can't reach the VM)
+1. **Repo mode live:** add `GITHUB_TOKEN` to the VM `.env` → `sudo systemctl restart agentcore`. The two fixes above mean clone→push→PR now actually works.
+2. **Funnel auto-start:** `sudo cp deploy/agentfunnel.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now agentfunnel`.
+3. **Docker sandbox** (unlocks `run_bash` + live frontend-verify): confirm `agent-verify:latest` on the VM, set `AGENT_BASH_DOCKER_IMAGE` + `AGENT_BASH_DOCKER_NETWORK=bridge`, unset `AGENT_DISABLE_BASH`.
+
+### Cleanup / gotchas
+- **Throwaway test repo `Nikethan16/repo-engineer-e2e` still exists** (PR #1 open + a `feature/farewell` branch). The `gh` token lacks `delete_repo` — delete it on GitHub, or `gh auth refresh -s delete_repo` and the agent will remove it.
+- **`gh` CLI IS installed & authed now** (accounts `Nikethan16` [active] + `Nikethan-cbc`) — the older "gh not installed" note below is stale.
+- **News/feeds WIP is still local/uncommitted** (owner's, deferred): `config/agents.yaml` mods, `tools/feeds.py`, `config/feeds.yaml`, `tests/test_feeds.py`, WIP hunks in `tools/github.py`+`tools/__init__.py`, `AGENTS.md`. This session's commits used filtered patches to avoid touching them.
+- Local run: `.\run.ps1` → http://localhost:8800. Thinking streams live on reasoning models (deepseek-v4-pro).
+
+## ⚡ EARLIER (2026-07-13/14) — 7 features shipped to `main` (DEPLOYED) + a UI redesign on branch `ui-redesign` (NOT merged)
 
 **Read this whole section before touching anything.** Two separate bodies of work this session:
 
@@ -379,7 +406,10 @@ them (they were deferred). Ask the owner before committing — they chose to kee
   image also exists. For repo mode add `GITHUB_TOKEN`; `bridge` network only for fresh installs.
 - **Python venv is `.venv`** — run as `.venv\Scripts\python.exe …`.
 - **GitHub:** repo is **github.com/Nikethan16/Agent_System** (private). Repo-local commit
-  identity `Nikethan <nikethan160902@gmail.com>` (don't touch global git). `gh` CLI not installed.
+  identity `Nikethan <nikethan160902@gmail.com>` (don't touch global git). **`gh` CLI is
+  installed & authed** (accounts `Nikethan16` [active] + `Nikethan-cbc`; token scopes
+  gist/read:org/repo/workflow — NO `delete_repo`). `git_push`/`create_pull_request` read
+  `GITHUB_TOKEN` from env (derive one with `gh auth token`).
 - **Owner's git prefs:** **no** Claude co-author trailer; split work into logical, version-wise commits.
 - **Deploying:** commit → push to `main` → runner auto-deploys (~2-3 min). Server `.env` is
   **not** in git; a safety classifier blocks the agent writing server secrets — env edits are
