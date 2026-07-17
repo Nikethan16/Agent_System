@@ -352,6 +352,8 @@ def _phased_build(task, budget, emit, approve, review, task_type, acceptance="",
             "note": "implementation plan"})
     # 2. IMPLEMENT (cheap flash coder, given ONLY the compact plan)
     agent_id = "frontend" if task_type == "frontend" else "coder"
+    _e({"type": "assign", "agent": agent_id, "label": "Implementer",
+        "reason": "phased build: cheap coder implements the plan step by step"})
     impl = task + (f"\n\nFOLLOW THIS IMPLEMENTATION PLAN (already designed for you — execute it "
                    f"step by step, building incrementally):\n{plan}" if plan else "")
     if acceptance:
