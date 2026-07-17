@@ -218,6 +218,15 @@ _MAKE = ("write", "build", "create", "implement", "generate", "make a", "add ", 
 _CODER_STRONG = ("library", "module", "package", "class ", "decorator", "backend", "cli",
                  "sdk", "algorithm", "parser", "endpoint", "server", "database", "schema",
                  "pytest", "unit test", " api", "microservice", "daemon")
+
+# Unmistakable work-on-a-git-repo signals -> repo-engineer, decided DETERMINISTICALLY
+# (before the LLM dispatcher). Live e2e (2026-07) saw the LLM pick `frontend` for
+# "clone this GitHub repo and summarize it" — frontend has no git tools, so the run
+# dead-ended in the netless bash sandbox. A github.com URL or clone/PR verb is not
+# ambiguous; don't leave it to a model vote.
+_REPO_STRONG = ("github.com/", "gitlab.com/", "bitbucket.org/", "git clone",
+                "clone the repo", "clone this repo", "clone a repo", "open a pull request",
+                "create a pull request", "raise a pr", "open a pr")
 _WEB_STRONG = ("html", "css", "frontend", "front-end", "front end", "react", "web page",
                "webpage", "website", "web app", "web ui", "landing page", " ui ", "browser",
                " dom", "tailwind", "vue", "svelte")
@@ -225,6 +234,9 @@ _WEB_STRONG = ("html", "css", "frontend", "front-end", "front end", "react", "we
 
 def _fallback_select(task: str) -> str:
     t = task.lower()
+    # Git-repo work first — it's the least ambiguous signal (a URL/clone/PR verb).
+    if any(k in t for k in _REPO_STRONG) and "repo-engineer" in agents.agents:
+        return "repo-engineer"
     # Explanation / follow-up questions go to the (tool-less) general agent, NOT the
     # coder — even when the word "code" appears (e.g. "explain this code").
     if any(k in t for k in _EXPLAIN) and not any(k in t for k in _MAKE):
@@ -241,6 +253,10 @@ def _fallback_select(task: str) -> str:
 
 def select_agent(task: str, budget: Budget = None):
     """Returns (agent_id, reason). LLM pick from the registry menu, with a fallback."""
+    # Deterministic pre-route: an explicit repo URL / clone / PR verb is unambiguous —
+    # route straight to repo-engineer (free, instant, and immune to a bad LLM vote).
+    if any(k in task.lower() for k in _REPO_STRONG) and "repo-engineer" in agents.agents:
+        return "repo-engineer", "explicit git-repo signal (deterministic route)"
     cat = agents.catalog()
     menu = "\n".join(f"- {a.id}: {a.when_to_use}" for a in cat)
     # Dispatch through the classify fallback chain too, so a down primary switches model
