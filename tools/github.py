@@ -26,6 +26,12 @@ def _git(args: list, cwd: str = None, timeout: int = 120) -> tuple:
     """Run a git command in the workspace. Returns (returncode, stdout, stderr)."""
     ws = cwd or current_workspace()
     env = os.environ.copy()
+    # Never let git discover a repository ABOVE the workspace. Session workspaces live
+    # inside the app's own checkout on the server (data/workspaces/...), so without a
+    # ceiling, `git log/status` in a not-yet-cloned workspace silently walks up and
+    # operates on the APPLICATION'S repo (live e2e returned the app's own last commit
+    # for a question about a cloned repo — and a stray `git commit` would land there).
+    env["GIT_CEILING_DIRECTORIES"] = os.path.dirname(os.path.abspath(ws))
     token = env.get("GITHUB_TOKEN", "").strip()
     if token:
         # Use a credential helper via env rather than putting the token on the CLI.
