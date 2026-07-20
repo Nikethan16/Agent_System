@@ -64,8 +64,10 @@ in `scripts/e2e_local.py` has an off-topic detector to regression-test this.
    desktop app (Tauri shell) · zero-downtime deploys.
 
 ### Context for the next chat (don't re-discover)
-- Local server for testing: `AGENT_LOCAL_MODE=1 AGENT_LOCAL_ROOT="C:/Project" .venv/Scripts/python.exe -m uvicorn server.app:app --port 8800`
-  → folder picker works; sample project at `C:\Project\e2e_sample_app` (project "e2e local app" in the local DB).
+- **Local mode is now ON by default**: `AGENT_LOCAL_MODE=1` + `AGENT_LOCAL_ROOT=C:/Project` were
+  added to the local `.env` (2026-07-20), so a plain `.\run.ps1` → http://localhost:8800 has the
+  folder picker. Sample project at `C:\Project\e2e_sample_app` (project "e2e local app" in the
+  local DB, plus e2e build/report sessions with viewable artifacts).
 - Push with `git -c credential.helper= -c credential.helper='!gh auth git-credential' push …`
   (plain push hangs on a credential prompt). `gh` is authed as Nikethan16 (no `delete_repo` scope).
 - The permission allow-list lives in `.claude/settings.local.json` (ssh to the VM + gh pr cmds).
