@@ -4,7 +4,76 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## ⚡ LATEST (2026-07-16/17) — streaming, folder picker, model-health UI, funnel unit, + 2 repo-engineer bug fixes (branch `claude/routing-single-agent-default`, NOT merged)
+## ⚡ LATEST (2026-07-17→20) — FULL E2E TEST ROUND (VM + LOCAL), 3 more live-found fixes shipped, reliability verdict 8/10
+
+**Everything below is MERGED + DEPLOYED** (PRs #17–#20 all merged to `main`; VM auto-deployed).
+Full test report artifact: https://claude.ai/code/artifact/5815ca6e-3a7b-41f2-b4ba-cf44ed44841b
+
+### Live-production e2e (VM) — 19/19 checks passed after fixes
+Drove the deployed app over the real WS + SSH'd the VM (owner granted `.claude/settings.local.json`
+allow-rules for `ssh ubuntu@100.89.151.102` + `gh pr create/merge/view`; SSH key at
+`C:\Users\gaura\Downloads\oracle keys\ssh-key-2026-06-14.key`, wired via `~/.ssh/config`).
+Three NEW bugs found live, each fixed→PR→CI→merged→redeployed→re-verified same day:
+| PR | Bug found live |
+|---|---|
+| #18 | Dispatcher sent "clone this repo" to the **frontend** agent → deterministic repo routing (`_REPO_STRONG` in `core/agents.py`) |
+| #19 | Agents ran `git clone` inside the **netless sandbox** (19 wasted calls) → `run_bash` blocks network-git verbs, redirects to host-side `git_clone`/`git_push` (`core/tools.py:_NET_GIT`) |
+| #20 | **git repo-discovery walked UP out of the workspace** — `git_log` in a fresh session returned the APP's own commits (a stray commit would land in the app repo!) → `GIT_CEILING_DIRECTORIES` in `tools/github.py:_git` |
+Also fixed on the VM directly: `.env` had a literal `ghp_your_token_here` placeholder overriding
+the real GITHUB_TOKEN (removed); funnel restored + made reboot-proof (`agentfunnel.service`
+installed + enabled); `AGENT_BASH_DOCKER_NETWORK=none→bridge`. VM funnel layout: the tailnet
+hostname is now `apps` — the agent app is PUBLIC at `https://apps.tail1d9a60.ts.net` (:443→8800);
+ports :8443 and :10000 belong to the owner's OTHER apps (3000/8000/8801/8802) — don't touch.
+
+### Local e2e battery — 23/23 external checks, day-to-day verdict **8/10**
+Owner pivoted: **VM parked, focus is LOCAL** (local folders / repos / attached reports).
+Battery is preserved as **`scripts/e2e_local.py`** (self-seeding; usage in its docstring):
+fixed planted bugs IN PLACE in a real local folder (external pytest 4/4, tests untouched,
+$0.0016), multi-turn feature-add (5/5), attached-CSV analysis (3/3 numbers exact), habit-tracker
+build with check_page self-verify ($0.011), live web research, graceful missing-file handling,
+local-root escape + traversal rejected. Latency: simple 10–40s, folder-fix ~2min, build ~5min.
+A day of heavy use ≈ $0.05–0.20.
+
+### ⚠️ TOP OPEN BUG — "memory bleed" (found live, NOT yet fixed)
+Episodic memory recall injected a **just-finished unrelated chat** (habit-tracker build) into a
+fresh session; a cheap model **parroted the recalled content as its answer** (user asked about a
+missing xlsx, got "Perfect! The habit tracker is fully functional…"), and the wrong exchange was
+then STORED BACK into memory (pollution compounds). Nondeterministic (~1/10; a stronger model
+answered honestly on repro). **Fix direction:** relevance-gate episodic recall in
+`server/memory.py` (similarity threshold + don't recall same-day unrelated sessions + cap
+injected items), and consider not storing exchanges whose answer the critic failed. Scenario F
+in `scripts/e2e_local.py` has an off-topic detector to regression-test this.
+
+### Pending (ordered) — next session starts here
+1. **Fix the memory bleed** (above) — top reliability item for daily local use.
+2. **VM GITHUB_TOKEN is INVALID (401)** — owner must mint a fine-grained PAT with write access
+   to chosen repos (public-only tokens are read-only!), paste cleanly (the old line had a stray
+   quote + CR from a Windows paste), restart agentcore. Until then the deployed repo-engineer
+   can clone/read but NOT push/PR. (Local has no GITHUB_TOKEN either — same fix if needed locally.)
+3. **PR-completion verifier** — agent occasionally pushes but skips `create_pull_request`
+   (seen once); if the task asked for a PR, check one exists before finishing.
+4. **GitHub-token status card** in Settings (+ startup .env hygiene warnings: placeholders,
+   stray quotes, CR line-endings — both real incidents this round).
+5. **Health-gated deploy** — deploys briefly 502 the public URL; workflow should curl
+   /api/health after restart and fail loudly.
+6. Owner cleanup: delete throwaway repo `Nikethan16/repo-engineer-e2e` (+PR #1), rotate the
+   fine-grained PAT that was pasted into chat, decide fate of local news/feeds WIP (still
+   uncommitted, untouched), `tasks.db` untracked in repo root.
+7. Roadmap (owner interest, in order): repo dashboard UI · vision input (Qwen-VL, ~$0.001/img)
+   · Telegram approvals (bot creds already on VM) · scheduled repo jobs · PR-review agent ·
+   desktop app (Tauri shell) · zero-downtime deploys.
+
+### Context for the next chat (don't re-discover)
+- Local server for testing: `AGENT_LOCAL_MODE=1 AGENT_LOCAL_ROOT="C:/Project" .venv/Scripts/python.exe -m uvicorn server.app:app --port 8800`
+  → folder picker works; sample project at `C:\Project\e2e_sample_app` (project "e2e local app" in the local DB).
+- Push with `git -c credential.helper= -c credential.helper='!gh auth git-credential' push …`
+  (plain push hangs on a credential prompt). `gh` is authed as Nikethan16 (no `delete_repo` scope).
+- The permission allow-list lives in `.claude/settings.local.json` (ssh to the VM + gh pr cmds).
+- Reliability weak spots to keep in mind: memory bleed (above) + cheap-model tool-choice drift
+  (favors run_bash over dedicated tools — now deterministically guarded for git; same pattern
+  may apply elsewhere).
+
+## EARLIER (2026-07-16/17) — streaming, folder picker, model-health UI, funnel unit, + 2 repo-engineer bug fixes (MERGED via PR #17)
 
 Continues the phased-build/routing work (`4bec8e5`). **7 commits this session, all green (330 pytest + web build clean).** Each verified live before commit.
 

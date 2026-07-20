@@ -1,8 +1,36 @@
 # BACKLOG — what's left to do
 
-_Last updated: 2026-06-18. The prioritized list of remaining work. Nothing here is blocking —
+_Last updated: 2026-07-20. The prioritized list of remaining work. Nothing here is blocking —
 the app is complete and deployed live. Items are roughly ordered by value. See `HANDOFF.md`
 for current state and `STATUS.md` for what's already done._
+
+---
+
+## 🔴 From the 2026-07 full e2e round (VM + local) — current priorities
+Findings from driving the REAL deployed app + a local battery (`scripts/e2e_local.py`;
+report: https://claude.ai/code/artifact/5815ca6e-3a7b-41f2-b4ba-cf44ed44841b). The three
+live-found code bugs (dispatch misroute / sandbox network-git / git repo-discovery escape)
+were fixed same-day in PRs #18–#20. Still open, in order:
+
+1. **Memory bleed (top reliability bug):** episodic recall injected a just-finished unrelated
+   chat into a fresh session; a cheap model parroted it as the answer, and the wrong exchange
+   was stored back (pollution compounds). Fix in `server/memory.py`: similarity threshold on
+   recall, recency/off-topic guard, cap injected items; consider not storing critic-failed
+   exchanges. Regression check: `scripts/e2e_local.py F` (off-topic detector).
+2. **VM GITHUB_TOKEN invalid (owner):** mint a fine-grained PAT with write access to selected
+   repos, paste cleanly (previous line had a stray quote + CR), restart. Until then deployed
+   repo-engineer = read/clone only.
+3. **PR-completion verifier:** if the task asked for a PR, verify one exists before final
+   (agent once pushed the branch then drifted into run_bash instead of create_pull_request).
+4. **GitHub-token status card** in Settings + startup `.env` hygiene warnings (placeholder
+   values, stray quotes, CR endings — two real incidents).
+5. **Health-gated deploy:** deploy workflow should curl `/api/health` post-restart (deploys
+   currently 502 the public URL briefly; one live API call died mid-restart).
+6. **Owner cleanup:** delete test repo `Nikethan16/repo-engineer-e2e`; rotate the PAT pasted
+   in chat; decide on the local news/feeds WIP; untracked `tasks.db` in repo root.
+7. **Roadmap next (owner interest):** repo dashboard UI · vision input (Qwen-VL ~$0.001/img)
+   · Telegram approvals (creds already on VM) · scheduled repo jobs · PR-review agent ·
+   desktop app (Tauri shell) · zero-downtime deploys.
 
 ---
 
