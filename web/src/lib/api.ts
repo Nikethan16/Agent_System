@@ -126,6 +126,13 @@ export const api = {
   messages: (id: string) => GET(`/api/sessions/${id}/messages`),
 
   upload: (id: string, file: File) => UPLOAD(`/api/sessions/${id}/upload`, file),
+  // Voice input (speech -> text). available() tells the UI whether to show the mic button.
+  transcribeAvailable: () => GET("/api/transcribe/available"),
+  transcribe: (blob: Blob) => {
+    const fd = new FormData();
+    fd.append("file", blob, "audio.webm");
+    return request("/api/transcribe", { method: "POST", body: fd });
+  },
   truncate: (id: string, keep: number) => POST(`/api/sessions/${id}/truncate`, { keep }),
 
   jobs: (sessionId: string) => GET(`/api/jobs?session_id=${encodeURIComponent(sessionId)}`),

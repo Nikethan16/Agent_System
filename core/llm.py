@@ -709,6 +709,29 @@ def generate_image(prompt, model, budget: Budget = None, size="1024x1024", n=1):
     return resp, cost
 
 
+def transcribe(file, model, budget: Budget = None) -> str:
+    """Speech-to-text through the SAME single call point + Budget. `file` is a path (str) or a
+    file-like object; `model` is a LiteLLM audio model string resolved from config (e.g.
+    `groq/whisper-large-v3`) — never hardcoded. Returns the transcript text. Requires the
+    relevant provider key in .env."""
+    if budget:
+        budget.check()
+    opened = None
+    try:
+        if isinstance(file, str):
+            opened = open(file, "rb")
+            f = opened
+        else:
+            f = file
+        resp = litellm.transcription(model=model, file=f, api_key=_key_for(model))
+    finally:
+        if opened:
+            opened.close()
+    if budget:
+        budget.tick()
+    return (getattr(resp, "text", None) or "").strip()
+
+
 def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
                     temperature=0.2, on_token=None, on_reasoning=None):
     """

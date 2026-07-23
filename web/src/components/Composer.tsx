@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useStore } from "../lib/store";
+import { api } from "../lib/api";
 
 const MODES = ["auto", "careful", "trusted"] as const;
 
@@ -142,6 +143,43 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // Voice input: a mic button records audio and transcribes it (Whisper via a provider) into
+  // the message box. Shown only when speech-to-text is configured on the server.
+  const [micState, setMicState] = useState<"off" | "recording" | "transcribing">("off");
+  const [micAvailable, setMicAvailable] = useState(false);
+  const recRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+
+  useEffect(() => {
+    api.transcribeAvailable().then((r: any) => setMicAvailable(!!r?.available)).catch(() => setMicAvailable(false));
+  }, []);
+
+  const toggleMic = async () => {
+    if (micState === "recording") { recRef.current?.stop(); return; }
+    if (micState === "transcribing") return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setMicState("transcribing");
+        try {
+          const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
+          const r = await api.transcribe(blob);
+          const said = (r?.text || "").trim();
+          if (said) setText((prev) => (prev ? prev.replace(/\s*$/, " ") : "") + said);
+          requestAnimationFrame(() => taRef.current?.focus());
+        } catch (err) { console.error("transcription failed", err); }
+        finally { setMicState("off"); }
+      };
+      rec.start();
+      recRef.current = rec;
+      setMicState("recording");
+    } catch (err) { console.error("mic access denied", err); setMicState("off"); }
+  };
 
   // /command menu: opens while the whole input is a bare "/name" (no space/args yet).
   const slashQuery = /^\/([\w-]*)$/.exec(text.trim());
@@ -304,17 +342,32 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
             {opts && <RunOptions onClose={() => setOpts(false)} onQueue={queue} canQueue={!!text.trim() && !running} />}
           </div>
         </div>
-        {/* RIGHT: send / stop */}
-        {running ? (
-          <button onClick={() => stop()} aria-label="Stop the running task" className="w-9 h-9 rounded-full border border-red-300 text-red-500 flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30 transition">
-            <span className="material-symbols-outlined text-[20px]">stop</span>
-          </button>
-        ) : (
-          <button onClick={go} disabled={!text.trim()} aria-label="Send message"
-            className="w-9 h-9 bg-accent-terracotta hover:bg-accent-deep text-white rounded-full flex items-center justify-center active:scale-95 transition shadow-sm disabled:opacity-30 disabled:hover:bg-accent-terracotta">
-            <span className="material-symbols-outlined text-[20px]">arrow_upward</span>
-          </button>
-        )}
+        {/* RIGHT: mic (voice input) + send / stop */}
+        <div className="flex items-center gap-1 shrink-0">
+          {micAvailable && !running && (
+            <button onClick={toggleMic} type="button"
+              title={micState === "recording" ? "Stop & transcribe" : micState === "transcribing" ? "Transcribing…" : "Speak your message"}
+              aria-label="Voice input"
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition ${
+                micState === "recording" ? "bg-red-500 text-white animate-pulse"
+                : micState === "transcribing" ? "text-accent-terracotta"
+                : "text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg"}`}>
+              <span className={`material-symbols-outlined text-[20px] ${micState === "transcribing" ? "animate-spin" : ""}`}>
+                {micState === "transcribing" ? "progress_activity" : micState === "recording" ? "stop" : "mic"}
+              </span>
+            </button>
+          )}
+          {running ? (
+            <button onClick={() => stop()} aria-label="Stop the running task" className="w-9 h-9 rounded-full border border-red-300 text-red-500 flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950/30 transition">
+              <span className="material-symbols-outlined text-[20px]">stop</span>
+            </button>
+          ) : (
+            <button onClick={go} disabled={!text.trim()} aria-label="Send message"
+              className="w-9 h-9 bg-accent-terracotta hover:bg-accent-deep text-white rounded-full flex items-center justify-center active:scale-95 transition shadow-sm disabled:opacity-30 disabled:hover:bg-accent-terracotta">
+              <span className="material-symbols-outlined text-[20px]">arrow_upward</span>
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
