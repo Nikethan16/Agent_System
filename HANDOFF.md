@@ -4,24 +4,46 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## ⚡ LATEST (2026-07-23) — MEMORY-BLEED ROOT FIX + task-runner + vision-cost + /clear·/compact (LOCAL focus)
+## ⚡ LATEST (2026-07-23) — RENAMED TO "NIKKI" + big reliability + product/UI day (LOCAL focus)
 
-**Committed to `main` (local only — NOT pushed).** 4 version-wise commits; **376 pytest + web build
-clean**; full live e2e re-run **23/23** (was 18/23); task-runner + vision verified live.
+**16 commits to `main` (local only — NOT pushed). 389 pytest + web build clean.** Big day: renamed
+the platform, fixed the real memory bug, added voice/task-runner/folder-mode, and a premium UI pass.
+The local dev DB was **wiped to a clean slate** (backups `data/app.db.bak-cleanslate` +
+`.bak-precleanup`; keys/settings kept). Verify visually by `.\run.ps1` + hard-refresh (Ctrl+Shift+R)
+— screenshots time out on this box, so everything below was verified via tests + API/live WS.
 
+### Reliability / correctness
 | Commit | What |
 |---|---|
-| `40d3784` | **Memory-bleed ROOT CAUSE fixed.** Live testing proved it was NOT episodic recall (the old assumption) — it was **fact-extraction saving a one-off build's spec as GLOBAL facts** (`project_type: Habit Tracker`, its features), which inject into every chat → unrelated chats got hijacked into rebuilding it. Fix: facts scoped to the run (project/session), never global. Plus the owner's chosen isolation model (**standalone chats isolated; same-project chats share**): recall hard-limited to scope; a relevance gate (distinctive-word); write-time self-consistency (don't store an off-topic/parroted or QA-failed answer); stricter fact prompt + a signal-gate that skips the extra model call on task turns. Also **`/clear`** (forget this chat's turns+summary, keep durable facts) + **`/compact`** (summarize+free context) via a non-destructive session context-reset boundary; both in the composer command menu. |
-| `3bd8bab` | **Sequential task-runner** (`server/taskrunner.py`): an explicit numbered/bulleted list (>=2 items) runs each task one-by-one via the pipeline, carrying progress forward, emitting a `program` event (checklist + done/total). One shared Budget (skips remainder if capped); errors isolated. Frontend = live checklist + progress bar (`Chat.tsx` `ProgramProgress`). Per-task prompt insists on real tool use so a step isn't "done" without acting (a live run first exposed a cheap-model narrate-don't-act miss; fixed). |
-| `2fceaee` | **Vision/uncatalogued spend now counted** — litellm's price map lacks the DeepInfra VLM price so vision logged $0 (escaped Budget/daily-cap). Falls back to provider `usage.estimated_cost`. Measured ~$0.0002/screenshot. **Vision already works locally** (Qwen3-VL + DEEPINFRA key in local .env) — it reads screenshots, no image generation. |
-| `499d1b1` | **Settings polish** — Schedules pre-fills a valid spec on type change (Health/Schedules were already well-polished). |
+| `40d3784` | **Memory-bleed ROOT CAUSE fixed.** It was NOT episodic recall — it was **fact-extraction saving a one-off build's spec as GLOBAL facts** (`project_type: Habit Tracker`…), injected into every chat → unrelated chats rebuilt it. Fix: facts scoped to the run, never global. Owner's isolation model (**standalone chats isolated; same-project chats share**): recall hard-limited to scope + distinctive-word relevance gate + write-time self-consistency (don't store off-topic/parroted/QA-failed answers) + stricter fact prompt/signal-gate. Also **`/clear`** + **`/compact`** commands (non-destructive context-reset boundary). |
+| `ced0391` | **Mic-tolerant reads + junk-dir hygiene.** `read_file` auto-reads the closest real file when the name is slightly off (mic "handoff.in" → `HANDOFF.md`) with a note; ambiguous → lists candidates; edit/parse suggest "did you mean". `list_files`/`glob`/`grep` + roadmap walker now hide `.git`/`node_modules`/… (was wasting reads on git internals). |
+| `ad71e86` | **Reliable "what's left" roadmap + `/todo`.** Roadmap now MERGES/PRESERVES todos (a later turn can't wipe it; phased-build path captures todos too); new `/todo` lists open items on demand. |
+| `04032f6` | **Context meter + model name** in the run summary (`context` event = this turn's input size vs the ~24K working budget; model derived from assign/route). |
+| `3bd8bab` | **Sequential task-runner** (`server/taskrunner.py`): a numbered/bulleted list (≥2 items) runs one-by-one with a live checklist (`program` event), shared Budget, isolated errors. Per-task prompt insists on real tool use (fixed a cheap-model narrate-don't-act miss). |
+| `2fceaee` | **Vision/uncatalogued spend now counted** via provider `usage.estimated_cost` (litellm lacked the DeepInfra VLM price → logged $0). ~$0.0002/screenshot. |
 
-Also: **deleted 236 stale test projects** from the local dev DB (backup at `data/app.db.bak-precleanup`); conftest already isolates the test DB so they won't re-accumulate.
+### Product / UI (feels premium now)
+| Commit | What |
+|---|---|
+| `1704406` | **Renamed the platform to "Nikki"** (tab/login/sidebar wordmark; infra names untouched). |
+| `1929f46`+`ea8ee09` | **Voice input** — mic button → **Whisper** speech-to-text (works with the existing DeepInfra key; provider-agnostic via `STT_MODEL`/`GROQ_API_KEY`, endpoint `server/api/voice.py`). Live "Listening…" equalizer + "Transcribing…" feedback. Voice output (talk-back) deferred. |
+| `0a57adb` | **Serif replies (Newsreader) + clean sans UI (Inter) + spinning Nikki mark** while thinking. |
+| `10e21df` | **Resizable Workspace panel** (drag left edge 300–760px, persisted via `--panel-w`). |
+| `11f4f0d` | **Premium artifact canvas** (expand, Esc to close) + **CSV/TSV render as tables**. |
+| `79537f2` | **"Work on a folder"** — the `+` is now a menu: Attach file · Work on a folder (binds a project to a local folder, cwd-style) · **paste a screenshot** into the box. |
+| `c5d8dce` | **UI polish pass** — keyboard **shortcuts overlay** (press `?`; new `⌘⇧O`/`⌘\`), **accent-color picker** (6 presets, Settings → General, via `--accent` var), richer prose (blockquotes/tables/hr), modal pop-in motion. |
+| `499d1b1` | Settings: Schedules pre-fills a valid spec on type change. |
 
 ### Next (owner's call) — nothing blocking; app boots clean, local mode on
-1. **Hands-on visual check** (screenshots time out on this box, so I verified via API/tests): try a numbered list → task-runner checklist; `/clear` + `/compact`; attach a screenshot → vision; fresh chat → confirm no bleed; Schedules spec pre-fill.
-2. Optional: memory-panel "clear this chat" button (/clear covers it); **per-step QA verification** for the task-runner (guarantees each step's work); connectors (deferred).
-3. **News/feeds WIP** (`tools/feeds.py`, `config/feeds.yaml`, `config/agents.yaml` edits, `AGENTS.md`, `docs/NEWS_AGENTS_PLAN.md`, `docs/RELIABILITY_PLAN.md`, `tests/test_feeds.py`) still uncommitted/deferred — decide: finish, branch, or drop. `tasks.db` + synced `skills/` also untracked.
+1. **Hands-on visual pass** on the clean slate: rename, serif replies, spinning mark, mic (`?` for
+   shortcuts), accent picker, resizable panel, `+`→Work-on-a-folder, paste-a-screenshot, a numbered
+   task list → checklist, `/clear` `/compact` `/todo`, fuzzy filename read, context %/model in summary.
+2. **Memory** — owner wants a transparent, editable **markdown knowledge-base** layered on the existing
+   embedding recall (my recommendation: hybrid, not a graph rewrite). Deep Research mode also of interest.
+3. **Voice output (TTS)**, per-step QA verification for the task-runner, connectors — deferred.
+4. **News/feeds WIP** (`tools/feeds.py`, `config/feeds.yaml`, `config/agents.yaml` edits, `AGENTS.md`,
+   `docs/NEWS_AGENTS_PLAN.md`, `docs/RELIABILITY_PLAN.md`, `tests/test_feeds.py`) still uncommitted —
+   decide finish/branch/drop. `tasks.db` + synced `skills/` also untracked. Nothing pushed yet.
 
 ## EARLIER (2026-07-17→20) — FULL E2E TEST ROUND (VM + LOCAL), 3 more live-found fixes shipped, reliability verdict 8/10
 
