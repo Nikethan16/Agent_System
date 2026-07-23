@@ -37,10 +37,11 @@ export default {
       borderRadius: { DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", "2xl": "1rem", full: "9999px" },
       spacing: { "sidebar-width": "260px", "panel-width": "340px", gutter: "24px" },
       fontFamily: {
-        "body-ui": ["Geist", "Inter", "system-ui", "sans-serif"],
-        "display": ["Geist", "Inter", "system-ui", "sans-serif"],
-        "headline": ["Geist", "Inter", "system-ui", "sans-serif"],
-        "body-prose": ["Geist", "Inter", "system-ui", "sans-serif"],
+        // UI chrome (sidebar, buttons, headings) = clean sans; chat replies = reading serif.
+        "body-ui": ["Inter", "system-ui", "sans-serif"],
+        "display": ["Inter", "system-ui", "sans-serif"],
+        "headline": ["Inter", "system-ui", "sans-serif"],
+        "body-prose": ["Newsreader", "Georgia", "serif"],
         "code": ["'JetBrains Mono'", "ui-monospace", "monospace"],
       },
     },

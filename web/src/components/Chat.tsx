@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { useStore, type Msg, type Ev } from "../lib/store";
 import { CodeBlock } from "./CodeBlock";
 import { Mermaid } from "./Mermaid";
+import Sunburst from "./Sunburst";
 
 const MD = {
   code({ className, children, ...props }: any) {
@@ -475,7 +476,7 @@ function Message({ m, index, isLast }: { m: Msg; index: number; isLast?: boolean
         </div>
       ) : m.pending && !m.live ? (
         <div className="flex items-center gap-2 text-light-muted text-sm">
-          <span className="w-1.5 h-1.5 rounded-full bg-accent-terracotta animate-pulse" /> Thinking…
+          <Sunburst size={17} className="nikki-spin" /> Thinking…
         </div>
       ) : null}
       {m.live ? (

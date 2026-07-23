@@ -6,10 +6,16 @@
 html.dark { color-scheme: dark; }
 
 html, body, #root { height: 100%; margin: 0; }
+
+/* Nikki mark: a smooth, slow rotation while the assistant is thinking/answering
+   (calmer than the fast utility spin — closer to Claude's mark). */
+@keyframes nikki-spin { to { transform: rotate(360deg); } }
+.nikki-spin { animation: nikki-spin 2.6s linear infinite; transform-origin: 50% 50%; }
+@media (prefers-reduced-motion: reduce) { .nikki-spin { animation: none; } }
 body {
   background-color: #F3F0E7;
   color: #211E18;
-  font-family: Geist, Inter, system-ui, sans-serif;
+  font-family: Inter, system-ui, sans-serif;
 }
 html.dark body { background-color: #191713; color: #ECE6D9; }
 
@@ -35,12 +41,13 @@ html.dark .scrollbar::-webkit-scrollbar-thumb { background: #332E26; }
 @keyframes fadeup { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .fadeup { animation: fadeup 0.18s ease both; }
 
-/* markdown prose (assistant messages render here) */
-.prose-msg { font-family: Geist, Inter, system-ui, sans-serif; line-height: 1.7; font-size: 16px; }
+/* markdown prose (assistant replies) — an elegant reading serif, roomy line-height.
+   Headings stay in the clean sans for a crisp editorial hierarchy (like Claude). */
+.prose-msg { font-family: Newsreader, Georgia, serif; line-height: 1.72; font-size: 17.5px; letter-spacing: 0.1px; }
 .prose-msg :first-child { margin-top: 0; }
 .prose-msg :last-child { margin-bottom: 0; }
 .prose-msg p { margin: 0 0 0.85em; }
-.prose-msg h1, .prose-msg h2, .prose-msg h3 { font-family: Geist, Inter, sans-serif; font-weight: 600; margin: 1.2em 0 0.5em; }
+.prose-msg h1, .prose-msg h2, .prose-msg h3 { font-family: Inter, system-ui, sans-serif; font-weight: 600; margin: 1.2em 0 0.5em; letter-spacing: -0.01em; }
 .prose-msg ul, .prose-msg ol { margin: 0 0 0.85em; padding-left: 1.4em; }
 .prose-msg li { margin: 0.2em 0; }
 .prose-msg a { color: #9E4B2F; text-decoration: underline; }

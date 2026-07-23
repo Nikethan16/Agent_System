@@ -99,7 +99,7 @@ export default function App() {
   if (auth === "checking") {
     return (
       <div className="h-screen flex items-center justify-center bg-surface dark:bg-dark-bg">
-        <Sunburst size={36} className="animate-pulse" />
+        <Sunburst size={36} className="nikki-spin" />
       </div>
     );
   }
