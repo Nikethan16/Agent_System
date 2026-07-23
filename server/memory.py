@@ -25,11 +25,32 @@ log = logging.getLogger(__name__)
 # (The roadmap's vector store would replace this with a real index.)
 _MAX_SCAN = int(os.environ.get("MEMORY_MAX_SCAN", "2000"))
 # Cosine-similarity cutoff for embedding-based recall (Phase C). Tunable without code.
-_SEMANTIC_THRESHOLD = float(os.environ.get("MEMORY_SEMANTIC_THRESHOLD", "0.60"))
+# Raised from 0.60 → 0.66: at 0.60 a modern embedding model rates two *unrelated* software
+# tasks ("build a habit tracker" vs "open this xlsx") as similar enough to recall — that was
+# the "memory bleed". The distinctive-word gate below is the hard filter; this is extra margin.
+_SEMANTIC_THRESHOLD = float(os.environ.get("MEMORY_SEMANTIC_THRESHOLD", "0.66"))
+# A recalled note must share at least one DISTINCTIVE (non-boilerplate) content word with the
+# query, else it's about a different subject and must not be injected. Set 0 to disable the gate.
+_MIN_DISTINCTIVE = int(os.environ.get("MEMORY_MIN_DISTINCTIVE", "1"))
 
 _WORD = re.compile(r"[a-z0-9]+")
 _STOP = {"the", "and", "for", "with", "that", "this", "you", "are", "was", "but",
          "has", "have", "from", "your", "out", "use", "can", "will", "what", "how"}
+
+# Task boilerplate that appears in almost every request/outcome and therefore carries NO
+# topical signal. Overlap on these words made unrelated tasks look "relevant" (a habit-tracker
+# outcome saying "open the file" matched an "open the xlsx file" question). We ignore them when
+# deciding whether a note is actually about the same subject as the query. "request"/"outcome"
+# are here because remember() prefixes every stored note with them.
+_GENERIC = {
+    "request", "outcome", "file", "files", "open", "read", "attached", "attachment", "attach",
+    "summarize", "summary", "create", "created", "build", "built", "make", "made", "add",
+    "added", "write", "wrote", "show", "get", "got", "using", "used", "run", "ran", "test",
+    "tests", "code", "app", "application", "html", "index", "project", "new", "need", "want",
+    "please", "help", "function", "functional", "feature", "features", "single", "clean",
+    "minimal", "verify", "done", "task", "thing", "something", "fix", "update", "change",
+    "set", "list", "data", "page", "site", "web", "work", "working", "here", "there",
+}
 
 
 class Memory(SQLModel, table=True):
@@ -86,6 +107,44 @@ def _lex(query_tokens: set, doc_tokens: set) -> float:
     return inter / (math.sqrt(len(query_tokens)) * math.sqrt(len(doc_tokens)))
 
 
+def is_self_consistent(request: str, outcome: str, min_len: int = 200) -> bool:
+    """False when a SUBSTANTIAL outcome shares no distinctive word with its own request — a
+    strong sign the answer is off-topic (e.g. a parroted/bled memory), so it must NOT be stored
+    as an episodic note that could be recalled and repeated later. This is the write-time twin
+    of the recall relevance gate and closes the compounding loop even when no QA critic ran.
+
+    A SHORT answer is always considered consistent (a correct one-word reply legitimately shares
+    no words); a request with no distinctive words (pure boilerplate) can't be checked, so we
+    allow it. Disable with MEMORY_MIN_DISTINCTIVE=0."""
+    if _MIN_DISTINCTIVE <= 0 or not outcome or len(outcome) < min_len:
+        return True
+    req_distinctive = set(_tokens(request)) - _GENERIC
+    if not req_distinctive:
+        return True
+    return bool(req_distinctive & set(_tokens(outcome)))
+
+
+def _relevant(query_tokens: set, text: str) -> bool:
+    """Backend-agnostic relevance gate applied to EVERY recalled note before it is injected
+    (the fix for "memory bleed"). A note only passes if it shares a DISTINCTIVE content word
+    with the query — a word that isn't generic task boilerplate. An embedding match can rate
+    two unrelated "build X" tasks as similar, and a weak lexical match can fire on a couple of
+    incidental shared words ("open"/"file"); requiring a real subject-word overlap stops a
+    just-finished unrelated chat from being pulled into a fresh, different question.
+
+    Disable with MEMORY_MIN_DISTINCTIVE=0 (restores pre-fix behavior)."""
+    if _MIN_DISTINCTIVE <= 0:
+        return True
+    if not query_tokens:
+        return False
+    distinctive_q = query_tokens - _GENERIC
+    if not distinctive_q:
+        # Query is entirely boilerplate (rare) — fall back to strong plain overlap so we
+        # don't recall on a single generic word.
+        return len(query_tokens & set(_tokens(text))) >= 3
+    return len(distinctive_q & set(_tokens(text))) >= _MIN_DISTINCTIVE
+
+
 # ---- public API -------------------------------------------------------------
 def remember(text: str, session_id: str = "", kind: str = "turn", scope: str = "") -> None:
     if not text or not text.strip():
@@ -103,10 +162,16 @@ def remember(text: str, session_id: str = "", kind: str = "turn", scope: str = "
 
 
 def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str = None,
-           scope_hint: str = None) -> list:
+           scope_hint: str = None, scopes: list = None) -> list:
     """Top-k relevant past notes (episodic). Uses embeddings if configured, else lexical.
     `scope_hint` (e.g. 'project:<id>') gently boosts notes from the SAME project so a
     project's own history is preferred over unrelated global notes.
+
+    `scopes` (e.g. ['project:<id>'] or ['session:<id>']) HARD-LIMITS recall to those scopes —
+    the isolation guarantee: a standalone chat recalls only its own notes; a project chat
+    recalls only that project's notes. Nothing bleeds between unrelated chats. When `scopes`
+    is set the NumPy fast path is bypassed (it isn't scope-aware) in favor of the row-based
+    paths, which carry each note's scope; the perf cost is negligible at this corpus size.
 
     When an embedding model is configured, tries the NumPy vector index first (fast,
     full-corpus search — no _MAX_SCAN ceiling). Falls back to the Python cosine loop,
@@ -114,11 +179,24 @@ def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str
     def _boost(text_or_scope, sc):
         return sc + (0.08 if scope_hint and text_or_scope == scope_hint else 0.0)
 
+    q_tokens = set(_tokens(query))
+    scope_set = set(scopes) if scopes else None
+
+    def _in_scope(m) -> bool:
+        return scope_set is None or m.scope in scope_set
+
+    def _gate(texts):
+        """Final relevance filter — drop any candidate that isn't actually about the query."""
+        return [t for t in texts if _relevant(q_tokens, t)]
+
     if _embed_model():
         qv = _vec(query)
         if qv:
-            # Fast path: NumPy vectorstore (full-corpus, no _MAX_SCAN ceiling)
+            # Fast path: NumPy vectorstore (full-corpus, no _MAX_SCAN ceiling). Skipped when a
+            # scope filter is active — the index isn't scope-aware, so we use the row paths.
             try:
+                if scope_set is not None:
+                    raise RuntimeError("scoped recall bypasses the vectorstore fast path")
                 from . import vectorstore
                 hits = vectorstore.search(qv, k * 2, kind="turn",
                                           threshold=_SEMANTIC_THRESHOLD)
@@ -139,7 +217,10 @@ def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str
                     boosted = [(_boost(scope_map.get(t, ""), sc), t)
                                for sc, t in hits]
                     boosted.sort(key=lambda x: -x[0])
-                    return [t for _, t in boosted[:k]]
+                    gated = _gate([t for _, t in boosted])
+                    if gated:
+                        return gated[:k]
+                    # hits existed but none passed the relevance gate → fall through
             except Exception:
                 pass  # fall through to legacy Python loop
 
@@ -149,7 +230,8 @@ def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str
                     select(Memory).order_by(Memory.created_at.desc()).limit(_MAX_SCAN)
                 ).all()
             rows = [m for m in rows
-                    if m.kind == "turn" and not (exclude_session and m.session_id == exclude_session)]
+                    if m.kind == "turn" and _in_scope(m)
+                    and not (exclude_session and m.session_id == exclude_session)]
             if rows:
                 scored = []
                 for m in rows:
@@ -163,7 +245,9 @@ def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str
                         scored.append((_boost(m.scope, sc), m.text))
                 if scored:
                     scored.sort(key=lambda x: -x[0])
-                    return [t for _, t in scored[:k]]
+                    gated = _gate([t for _, t in scored])
+                    if gated:
+                        return gated[:k]
                 # fall through to lexical
             else:
                 rows = []
@@ -179,7 +263,8 @@ def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str
                 select(Memory).order_by(Memory.created_at.desc()).limit(_MAX_SCAN)
             ).all()
         rows = [m for m in rows
-                if m.kind == "turn" and not (exclude_session and m.session_id == exclude_session)]
+                if m.kind == "turn" and _in_scope(m)
+                and not (exclude_session and m.session_id == exclude_session)]
     if not rows:
         return []
     q = set(_tokens(query))
@@ -188,7 +273,29 @@ def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str
     scored = [(_boost(m.scope, s), m.text) for m in rows
               for s in [_lex(q, set(_tokens(m.text)))] if s >= min_score]
     scored.sort(key=lambda x: -x[0])
-    return [t for _, t in scored[:k]]
+    return _gate([t for _, t in scored])[:k]
+
+
+def clear_session(session_id: str) -> dict:
+    """Forget what THIS chat remembers: its rolling working summary + its own episodic turn
+    notes. Facts / rules / project-state are deliberately NOT touched here — those are the
+    durable profile, managed from the Memory panel. Returns counts removed."""
+    removed = {"summary": 0, "turns": 0}
+    if not session_id:
+        return removed
+    with DBSession(engine) as s:
+        for m in s.exec(select(Memory).where(Memory.session_id == session_id)).all():
+            if m.kind == "summary":
+                s.delete(m); removed["summary"] += 1
+            elif m.kind == "turn":
+                s.delete(m); removed["turns"] += 1
+        s.commit()
+    try:
+        from . import vectorstore
+        vectorstore.on_write()
+    except Exception:
+        pass
+    return removed
 
 
 def prune(max_turns: int = None) -> int:
@@ -410,12 +517,30 @@ def forget_fact(fact_id: str) -> bool:
 
 
 _FACT_SYS = (
-    "You extract DURABLE facts about the user or their project from a message — the "
-    "kind worth remembering across future conversations (name, role, tech stack, "
-    "languages, recurring preferences like answer style, the project they're building). "
-    "IGNORE one-off task details, questions, and anything transient. If nothing durable "
-    "is present, return an empty list. Output ONLY JSON: "
-    '{"facts":[{"key":"language","value":"Python"}]}'
+    "You extract ONLY durable, cross-conversation facts about the USER or their long-lived "
+    "project PROFILE — things that stay true across many future chats: the user's name or "
+    "role, the primary language/framework they work in, and STANDING preferences (e.g. "
+    "'prefers concise answers'). "
+    "Do NOT extract details of the CURRENT task or a one-off build: not what is being built "
+    "right now, not its features/files/styling, not any value that only matters to this one "
+    "request. When in doubt, extract NOTHING — a wrong 'durable fact' pollutes every future "
+    "chat. "
+    "Example — 'build a habit tracker with add-habit, 7-day checkboxes, streak counter' -> "
+    '{"facts":[]}  (a one-off task, NOT a durable fact). '
+    "Example — 'I'm Priya, a data engineer who works mainly in Python' -> "
+    '{"facts":[{"key":"name","value":"Priya"},{"key":"role","value":"data engineer"},'
+    '{"key":"language","value":"Python"}]}. '
+    'Output ONLY JSON: {"facts":[{"key":"language","value":"Python"}]}'
+)
+
+# Cheap pre-filter: only spend a model call extracting facts when the message actually looks
+# like it states something durable about the user (first-person identity / standing preference).
+# A pure task/command ("build X", "fix Y") carries no durable fact, so we skip the call entirely
+# — this both avoids over-extraction (the habit-tracker bug) and saves a per-turn model call.
+_FACT_SIGNAL = re.compile(
+    r"\b(i'?m|i am|i use|i prefer|i like|i work|i'?ve|my name|my \w+ is|call me|"
+    r"we use|we'?re|our (stack|team|project|company)|from now on|always (use|call|prefer))\b",
+    re.IGNORECASE,
 )
 
 
@@ -424,6 +549,8 @@ def extract_facts(user_text: str, scope: str = "global", budget=None) -> list:
     them. Gated by the caller; never raises (best-effort). Returns the keys stored."""
     if not user_text or len(user_text.strip()) < 8:
         return []
+    if not _FACT_SIGNAL.search(user_text):
+        return []   # no durable-fact signal → skip the extra model call
     try:
         from core.llm import complete
         from core.registry import registry

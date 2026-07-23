@@ -21,6 +21,7 @@ from . import memory
 from . import trace
 from . import projects
 from . import spend
+from . import taskrunner
 
 _HISTORY_TURNS = 12  # how many recent messages to feed back verbatim (older ones get summarized)
 
@@ -92,6 +93,10 @@ def _recent_history_budgeted(session_id: str, max_tokens: int) -> str:
     never overflow. (This replaces the old arbitrary 12-message window.) Always keeps
     at least the most recent message."""
     prior = db.get_messages(session_id)[:-1]   # exclude the just-added current message
+    # /clear boundary: ignore everything before the reset so the model starts fresh here.
+    reset_at = db.context_reset_of(session_id)
+    if reset_at:
+        prior = [m for m in prior if (m.get("created_at") or "") > reset_at]
     if not prior or max_tokens <= 0:
         return ""
     picked, used = [], 0
@@ -148,10 +153,44 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
         # Capture the latest plan/todos so we can persist a resumable roadmap (Phase 3).
         if isinstance(ev, dict) and ev.get("type") == "plan" and ev.get("todos"):
             route_info["todos"] = ev.get("todos")
+        # Capture the QA critic's verdict so we don't store a failed answer into episodic
+        # memory (a stored wrong answer can be recalled + parroted later — pollution compounds).
+        if isinstance(ev, dict) and ev.get("type") == "critic":
+            route_info["critic_passed"] = ev.get("passed")
         db.add_event(session_id, ev)
         trace.trace(session_id, ev)
         if emit:
             emit(ev)
+
+    # Built-in memory commands (handled here, not by the agent). /clear forgets THIS chat's
+    # earlier turns; /compact folds them into a short summary and starts fresh. Both keep the
+    # visible transcript — they only change what context the model is given going forward.
+    _cmd = text.strip().lower()
+    if _cmd in ("/clear", "/reset"):
+        removed = memory.clear_session(session_id)
+        db.set_context_reset(session_id)
+        msg = ("🧹 **Context cleared.** I've forgotten this chat's earlier turns and its saved "
+               f"summary ({removed['turns']} note(s) removed). Your durable facts/rules are kept — "
+               "manage those in the Memory panel. The messages above stay visible for your reference.")
+        db.add_message(session_id, "assistant", msg)
+        _emit({"type": "final", "text": msg, "cost": 0})
+        return msg
+    if _cmd == "/compact":
+        prior = db.get_messages(session_id)[:-1]   # everything except the /compact message
+        reset_at = db.context_reset_of(session_id)
+        if reset_at:
+            prior = [m for m in prior if (m.get("created_at") or "") > reset_at]
+        if prior:
+            memory.update_summary(session_id, prior, budget=budget)
+        db.set_context_reset(session_id)           # start fresh; the summary carries the gist
+        summ = memory.get_summary(session_id)
+        msg = ("🗜️ **Compacted this conversation.** Kept a short summary of what we did and "
+               "cleared the detailed history to free up context.\n\n"
+               + (f"**Summary so far:**\n{summ}" if summ else ""))
+        db.add_message(session_id, "assistant", msg, cost=round(budget.spent_usd, 6))
+        spend.record(budget.spent_usd, project_id=(db.get_session(session_id) or {}).get("project_id", ""))
+        _emit({"type": "final", "text": msg, "cost": round(budget.spent_usd, 6)})
+        return msg
 
     # User-authored /commands: the raw "/name ..." is stored above as the user message
     # (so the chat log shows what was typed); here it's expanded into the actual
@@ -200,8 +239,10 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
         if state_blk:
             blocks.append(state_blk)
 
-    # 1) SEMANTIC memory: durable facts about the user / project ("profile").
-    fact_scopes = ["global"] + ([f"project:{project_id}"] if project_id else [])
+    # 1) SEMANTIC memory: durable facts about the user / project ("profile"). Scope-matched to
+    # the run (global user facts + THIS project, or THIS standalone session) so a one-off build
+    # in one chat can't inject its specifics into unrelated chats (the real "memory bleed").
+    fact_scopes = ["global"] + ([f"project:{project_id}"] if project_id else [f"session:{session_id}"])
     facts = [] if subtasks else memory.get_facts(fact_scopes)
     if facts:
         blocks.append("Durable facts about the user/project (reference only):\n" +
@@ -215,7 +256,10 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
                       "\n".join(f"- {r}" for r in rules[:20]))
 
     # 2) EPISODIC memory: relevant notes recalled from PAST chats (as untrusted DATA).
-    mems = [] if subtasks else memory.recall(text, k=3, exclude_session=session_id, scope_hint=scope)
+    # Recall is HARD-LIMITED to this run's scope — a standalone chat sees only its own notes;
+    # a project chat sees only that project's notes. Nothing bleeds between unrelated chats.
+    mems = [] if subtasks else memory.recall(text, k=3, exclude_session=session_id,
+                                             scope_hint=scope, scopes=[scope])
     if mems:
         _emit({"type": "memory", "items": [m[:200] for m in mems]})
         wrapped = "\n".join(_wrap_untrusted(m, "memory_note", note=False) for m in mems)
@@ -285,13 +329,22 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
     # Bind the session_id as the span context so the LLM observer (server/trace.py)
     # can attribute each model call to the right Langfuse trace without core knowing
     # anything about Langfuse. Worker threads re-bind via use_span_ctx in orchestrator.
+    # Sequential task program: if the message is an explicit ordered list (>=2 numbered/
+    # bulleted items), run each item one-by-one with live progress instead of a single turn.
+    seq = [] if (plan_first or subtasks) else taskrunner.parse_tasks(text)
+
     _span_token = _span_ctx.set(session_id)
     try:
         with using_workspace(workspace):
-            final = handle_task(task, budget=budget, emit=_emit, approve=approve,
-                                plan_only=plan_first, subtasks=subtasks, review=review,
-                                parallel=parallel, stream=stream, acceptance=acceptance,
-                                model_override=model_override)
+            if len(seq) >= 2:
+                final = taskrunner.run_program(seq, context, budget=budget, emit=_emit,
+                                               approve=approve, review=review, stream=stream,
+                                               acceptance=acceptance, model_override=model_override)
+            else:
+                final = handle_task(task, budget=budget, emit=_emit, approve=approve,
+                                    plan_only=plan_first, subtasks=subtasks, review=review,
+                                    parallel=parallel, stream=stream, acceptance=acceptance,
+                                    model_override=model_override)
     finally:
         _span_ctx.reset(_span_token)
 
@@ -301,16 +354,23 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
 
     # ---- update memory (the WRITE path) — skip pure plan previews -----------
     if not plan_first:
-        # EPISODIC: remember this turn's outcome for future cross-chat recall (scoped
-        # to the project/session so it's attributable and project-aware).
-        memory.remember(f"Request: {text}\nOutcome: {(final or '')[:600]}",
-                        session_id=session_id, kind="turn", scope=scope)
+        # EPISODIC: remember this turn's outcome for future cross-chat recall (scoped to the
+        # project/session so it's attributable and project-aware) — UNLESS (a) the QA critic
+        # explicitly FAILED this answer, or (b) the answer is off-topic for its own request
+        # (a parroted/bled reply). Either way, storing it lets it be recalled and repeated in a
+        # later chat, compounding the pollution (memory bleed). (b) catches the case where no
+        # critic ran at all.
+        if route_info.get("critic_passed") is not False and memory.is_self_consistent(text, final or ""):
+            memory.remember(f"Request: {text}\nOutcome: {(final or '')[:600]}",
+                            session_id=session_id, kind="turn", scope=scope)
         tier = route_info.get("tier") or 0
         # SEMANTIC: extract durable facts (cheap tier1, gated, best-effort). SKIP on
         # trivial/chat turns (tier 1) — they rarely carry durable facts and this saves
         # a call on the most common turns (rate-limit friendliness).
         if tier != 1:
-            memory.extract_facts(text, scope="global", budget=budget)
+            # Scope facts to THIS run (project or session), NOT global — a standalone one-off
+            # build must not write project facts that then bleed into every other chat.
+            memory.extract_facts(text, scope=scope, budget=budget)
         # WORKING: once the chat outgrows the verbatim window, fold the messages that
         # scrolled out into the rolling summary.
         all_msgs = db.get_messages(session_id)

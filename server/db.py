@@ -74,6 +74,9 @@ class Session(SQLModel, table=True):
     starred: bool = False
     created_at: str = Field(default_factory=_now)
     updated_at: str = Field(default_factory=_now)
+    # /clear sets this to "now"; the context builder then ignores messages before it (the
+    # visible transcript is kept, but the model starts fresh from this point in the chat).
+    context_reset_at: str = Field(default="")
 
 
 class Message(SQLModel, table=True):
@@ -121,7 +124,7 @@ def _migrate():
             ("updated_at", "TEXT DEFAULT ''"),  # facts/summaries change over time
         ],
         "session": [("project_id", "TEXT DEFAULT ''"), ("starred", "INTEGER DEFAULT 0"),
-                    ("folder_id", "TEXT DEFAULT ''")],
+                    ("folder_id", "TEXT DEFAULT ''"), ("context_reset_at", "TEXT DEFAULT ''")],
         "spend": [("project_id", "TEXT DEFAULT ''")],
         "project": [("budget_usd", "REAL DEFAULT 0"), ("repo_url", "TEXT DEFAULT ''"),
                     ("local_path", "TEXT DEFAULT ''")],
@@ -417,6 +420,26 @@ def get_messages(session_id: str) -> list:
             .order_by(Message.created_at)
         ).all()
         return [r.model_dump() for r in rows]
+
+
+def set_context_reset(session_id: str) -> str:
+    """Mark 'now' as the context boundary (/clear): the context builder ignores messages
+    before this, so the model starts fresh in this chat. Returns the timestamp set."""
+    ts = _now()
+    with DBSession(engine) as s:
+        obj = s.get(Session, session_id)
+        if obj:
+            obj.context_reset_at = ts
+            obj.updated_at = ts
+            s.add(obj)
+            s.commit()
+    return ts
+
+
+def context_reset_of(session_id: str) -> str:
+    with DBSession(engine) as s:
+        obj = s.get(Session, session_id)
+        return (obj.context_reset_at or "") if obj else ""
 
 
 def add_event(session_id: str, ev: dict, message_id: str = None):

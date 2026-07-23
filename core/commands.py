@@ -103,13 +103,25 @@ def load_commands() -> dict:
     return out
 
 
+# Built-in commands handled directly in server/chat.py (not config-dir templates). Listed here
+# so the composer "/" menu + ⌘K palette surface them; typing them works regardless.
+_BUILTIN_COMMANDS = [
+    {"name": "clear", "description": "Forget this chat's earlier turns (start fresh; keeps durable facts)",
+     "argument_hint": ""},
+    {"name": "compact", "description": "Summarize the conversation so far and free up context (like Claude's /compact)",
+     "argument_hint": ""},
+]
+
+
 def list_commands() -> list:
-    """Command metadata for the UI (name/description/argument_hint), name-sorted."""
+    """Command metadata for the UI (name/description/argument_hint), name-sorted. Includes the
+    built-in memory commands plus every config-dir template."""
     cmds = load_commands()
-    return [
+    user = [
         {"name": c["name"], "description": c["description"], "argument_hint": c["argument_hint"]}
-        for c in sorted(cmds.values(), key=lambda c: c["name"])
+        for c in cmds.values()
     ]
+    return sorted(_BUILTIN_COMMANDS + user, key=lambda c: c["name"])
 
 
 def _split(text: str):
