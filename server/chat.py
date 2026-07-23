@@ -113,8 +113,10 @@ def _recent_history_budgeted(session_id: str, max_tokens: int) -> str:
 
 def _workspace_files(workspace: str, limit: int = 40) -> list:
     """Top files produced in the workspace (for the resumable roadmap's artifact list)."""
+    from core.tools import _SKIP_DIRS
     out = []
-    for root, _dirs, files in os.walk(workspace):
+    for root, dirs, files in os.walk(workspace):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]   # don't descend into .git/node_modules/…
         for f in files:
             rel = os.path.relpath(os.path.join(root, f), workspace).replace("\\", "/")
             if rel.startswith(".skills"):

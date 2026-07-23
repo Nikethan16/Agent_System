@@ -119,6 +119,20 @@ def read_file(path: str, offset: int = 1, limit: int = None) -> str:
         full = _safe(path)
     except ValueError as e:
         return f"ERROR: {e}"
+    # Mic-/typo-tolerant: if the exact path is missing, read the closest real file (auto when
+    # there's a confident single match), else list candidates instead of a bare OS error.
+    read_path, note = path, ""
+    if not os.path.exists(full):
+        resolved, cands = _fuzzy_candidates(path)
+        if resolved:
+            try:
+                full, read_path = _safe(resolved), resolved
+                note = (f'NOTE: no file named "{path}"; reading the closest match '
+                        f'"{resolved}" instead.\n\n')
+            except ValueError:
+                pass
+        elif cands:
+            return f'ERROR: no file named "{path}". Did you mean: ' + ", ".join(cands) + "?"
     try:
         offset = max(1, int(offset))
     except (TypeError, ValueError):
@@ -162,7 +176,7 @@ def read_file(path: str, offset: int = 1, limit: int = None) -> str:
     else:
         footer = f"\n\n(End of file — {total} lines.)"
     _record_mtime(full)        # remember this read so a later edit can detect drift
-    return _wrap_untrusted(body + footer, "workspace_file", path=path)
+    return note + _wrap_untrusted(body + footer, "workspace_file", path=read_path)
 
 
 def parse_document(path: str) -> str:
@@ -174,7 +188,7 @@ def parse_document(path: str) -> str:
     except Exception as e:
         return f"ERROR: {e}"
     if not os.path.isfile(full):
-        return f"ERROR: no such file: {path}"
+        return f"ERROR: no such file: {path}." + _did_you_mean(path)
     # Cache the parse keyed on path + mtime + size, so a repeated read is instant but a
     # CHANGED file re-parses (no stale content). Parsing PDFs/DOCX is slow, so this helps.
     _pc = cache.get_cache("parse_document")
@@ -533,7 +547,8 @@ def edit_file(path: str, old_string: str, new_string: str = "",
         return ("ERROR: old_string must be non-empty. To create a new file use "
                 "write_file; to delete text pass the snippet as old_string and \"\" as new_string.")
     if not os.path.isfile(full):
-        return f"ERROR editing {path}: file not found (create it with write_file first)."
+        return (f"ERROR editing {path}: file not found (create it with write_file first)."
+                + _did_you_mean(path))
     if _stale(full):
         return (f"ERROR: {path} changed since you last read it — re-read it with read_file "
                 "before editing, so your edit applies to the current content.")
@@ -713,10 +728,10 @@ def apply_patch(patch: str) -> str:
 
 def list_files(directory: str = ".") -> str:
     try:
-        # Hide the staged skill machinery (.skills/) — it's not the user's project, and
-        # agents told to "explore first" were wasting rounds listing into it. grep/glob
-        # already skip it via _SKIP_DIRS.
-        entries = [f for f in sorted(os.listdir(_safe(directory))) if f != ".skills"]
+        # Hide junk/build/vendor dirs (.git, node_modules, .venv, .skills, …) so agents told
+        # to "explore first" don't waste rounds listing + reading into them (grep/glob already
+        # skip these via the same _SKIP_DIRS).
+        entries = [f for f in sorted(os.listdir(_safe(directory))) if f not in _SKIP_DIRS]
         return "\n".join(entries) or "(empty)"
     except Exception as e:
         return f"ERROR listing {directory}: {e}"
@@ -756,8 +771,12 @@ def fresh_build_slug(text: str):
 # and can't read outside the sandbox. Lets an agent FIND code instead of listing +
 # reading whole files (cheaper + far less context). See THIRD_PARTY.md.
 _SEARCH_CAP = 100
-_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", ".skills", ".mypy_cache",
-              "dist", "build", ".pytest_cache"}
+# Junk/build/vendor dirs an agent should never waste reads on (kept in sync with
+# core/repomap.py:_SKIP_DIRS). Used by list_files, grep, glob, and the fuzzy matcher.
+_SKIP_DIRS = {".git", ".venv", "venv", "env", "__pycache__", "node_modules", ".mypy_cache",
+              ".pytest_cache", ".ruff_cache", "dist", "build", ".next", ".nuxt", ".idea",
+              ".vscode", "site-packages", ".skills", ".cache", "coverage", ".tox", "target",
+              "vendor", ".gradle", "bin", "obj"}
 
 
 def _within_root(path: str, root: str) -> bool:
@@ -847,6 +866,60 @@ def glob(pattern: str, path: str = ".") -> str:
     if truncated:
         out += f"\n... (capped at {_SEARCH_CAP} — narrow the pattern)"
     return out
+
+
+def _fuzzy_candidates(req_path: str, limit: int = 5):
+    """When an exact path doesn't exist, find workspace files whose basename resembles the
+    requested one — e.g. a mis-transcribed "handoff.in" vs the real "HANDOFF.md" (the mic
+    can't be fixed, so the tools are forgiving). Returns (confident_rel | None, candidates).
+    Sandbox-scoped to current_workspace(); skips junk dirs + dotfiles."""
+    base = current_workspace()
+    want = os.path.basename((req_path or "").strip())
+    if not want:
+        return None, []
+    want_l = want.lower()
+    want_stem = os.path.splitext(want_l)[0]
+    files = []                                   # (rel, basename)
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
+        for fn in filenames:
+            if fn.startswith("."):
+                continue
+            fpath = os.path.join(dirpath, fn)
+            if not _within_root(fpath, base):
+                continue
+            files.append((os.path.relpath(fpath, base).replace(os.sep, "/"), fn))
+        if len(files) > 5000:                    # bound the walk on huge trees
+            break
+    if not files:
+        return None, []
+    # 1) exact basename ignoring case — strongest signal
+    exact = [rel for rel, fn in files if fn.lower() == want_l]
+    if len(exact) == 1:
+        return exact[0], exact
+    # 2) same stem, any extension, ignoring case (handoff.in -> HANDOFF.md)
+    stem = [rel for rel, fn in files if os.path.splitext(fn.lower())[0] == want_stem]
+    if not exact and len(stem) == 1:
+        return stem[0], stem
+    # 3) fuzzy similarity on basenames
+    names = list({fn for _, fn in files})
+    close = difflib.get_close_matches(want, names, n=limit, cutoff=0.6)
+    ranked = [rel for cn in close for rel, fn in files if fn == cn]
+    cands = []
+    for rel in exact + stem + ranked:
+        if rel not in cands:
+            cands.append(rel)
+    cands = cands[:limit]
+    if len(cands) == 1 and difflib.SequenceMatcher(
+            None, want_l, os.path.basename(cands[0]).lower()).ratio() >= 0.8:
+        return cands[0], cands
+    return None, cands
+
+
+def _did_you_mean(path: str) -> str:
+    """A ' Did you mean: …' suffix for a not-found error (suggest only, no auto-open)."""
+    _, cands = _fuzzy_candidates(path)
+    return (" Did you mean: " + ", ".join(cands) + "?") if cands else ""
 
 
 def repo_map(subdir: str = ".") -> str:
