@@ -110,6 +110,8 @@ _BUILTIN_COMMANDS = [
      "argument_hint": ""},
     {"name": "compact", "description": "Summarize the conversation so far and free up context (like Claude's /compact)",
      "argument_hint": ""},
+    {"name": "todo", "description": "List what's left on this project's roadmap (open to-do items)",
+     "argument_hint": ""},
 ]
 
 

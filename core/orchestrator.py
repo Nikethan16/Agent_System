@@ -347,8 +347,10 @@ def _phased_build(task, budget, emit, approve, review, task_type, acceptance="",
             write_file("plan.md", plan)
         except Exception:
             pass
+        _subs = [ln.strip("-*# ").strip() for ln in plan.splitlines() if ln.strip()][:14]
         _e({"type": "plan",
-            "subtasks": [ln.strip("-*# ").strip() for ln in plan.splitlines() if ln.strip()][:14],
+            "subtasks": _subs,
+            "todos": [{"text": s, "status": "pending"} for s in _subs],   # so the roadmap captures it
             "note": "implementation plan"})
     # 2. IMPLEMENT (cheap flash coder, given ONLY the compact plan)
     agent_id = "frontend" if task_type == "frontend" else "coder"

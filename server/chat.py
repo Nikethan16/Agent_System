@@ -193,6 +193,30 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
         spend.record(budget.spent_usd, project_id=(db.get_session(session_id) or {}).get("project_id", ""))
         _emit({"type": "final", "text": msg, "cost": round(budget.spent_usd, 6)})
         return msg
+    if _cmd == "/todo":
+        pid = (db.get_session(session_id) or {}).get("project_id", "")
+        _scope = f"project:{pid}" if pid else f"session:{session_id}"
+        st = memory.get_state(_scope)
+        plan = st.get("plan") or []
+        open_items = [p for p in plan if p.get("status") != "done"]
+        done_n = sum(1 for p in plan if p.get("status") == "done")
+        if not plan:
+            msg = ("📋 No roadmap captured yet for this chat/project. Run a multi-step task and "
+                   "I'll track what's left here (it persists across chats in the same project).")
+        else:
+            head = "📋 **What's left**" + (f" — {st['goal']}" if st.get("goal") else "")
+            lines = [head]
+            for p in open_items:
+                mark = "🔸" if p.get("status") == "in_progress" else "▫️"
+                lines.append(f"- {mark} {p.get('text', '')}")
+            if not open_items:
+                lines.append("- ✅ Everything's done!")
+            if done_n:
+                lines.append(f"\n_Completed so far: {done_n}_")
+            msg = "\n".join(lines)
+        db.add_message(session_id, "assistant", msg)
+        _emit({"type": "final", "text": msg, "cost": 0})
+        return msg
 
     # User-authored /commands: the raw "/name ..." is stored above as the user message
     # (so the chat log shows what was typed); here it's expanded into the actual
@@ -393,10 +417,28 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
             todos = route_info.get("todos") or []
             prev = memory.get_state(scope)
             if todos or prev:
-                nxt = next((t.get("text", "") for t in todos if t.get("status") != "done"), "")
+                # MERGE new todos into the prior plan (update status by text, append new) rather
+                # than replacing — so a later turn with a shorter/empty plan can't wipe the
+                # roadmap, and a fresh chat can still list what's left.
+                plan = list(prev.get("plan", []))
+                if todos:
+                    by_text = {(p.get("text") or "").strip().lower(): p for p in plan}
+                    for t in todos:
+                        key = (t.get("text") or "").strip().lower()
+                        if not key:
+                            continue
+                        if key in by_text:
+                            by_text[key]["status"] = t.get("status", by_text[key].get("status", "pending"))
+                        else:
+                            item = {"text": t.get("text", ""), "status": t.get("status", "pending")}
+                            plan.append(item)
+                            by_text[key] = item
+                # "next" = first not-done item across the MERGED plan; keep prev's if none.
+                nxt = next((p.get("text", "") for p in plan if p.get("status") != "done"),
+                           prev.get("next", ""))
                 memory.set_state(scope, {
                     "goal": (prev.get("goal") or text)[:300],
-                    "plan": todos or prev.get("plan", []),
+                    "plan": plan[:50],
                     "next": nxt,
                     "artifacts": _workspace_files(workspace),
                     "last_answer": (final or "")[:400],
