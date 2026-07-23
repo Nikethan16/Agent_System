@@ -4,7 +4,26 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## ⚡ LATEST (2026-07-17→20) — FULL E2E TEST ROUND (VM + LOCAL), 3 more live-found fixes shipped, reliability verdict 8/10
+## ⚡ LATEST (2026-07-23) — MEMORY-BLEED ROOT FIX + task-runner + vision-cost + /clear·/compact (LOCAL focus)
+
+**Committed to `main` (local only — NOT pushed).** 4 version-wise commits; **376 pytest + web build
+clean**; full live e2e re-run **23/23** (was 18/23); task-runner + vision verified live.
+
+| Commit | What |
+|---|---|
+| `40d3784` | **Memory-bleed ROOT CAUSE fixed.** Live testing proved it was NOT episodic recall (the old assumption) — it was **fact-extraction saving a one-off build's spec as GLOBAL facts** (`project_type: Habit Tracker`, its features), which inject into every chat → unrelated chats got hijacked into rebuilding it. Fix: facts scoped to the run (project/session), never global. Plus the owner's chosen isolation model (**standalone chats isolated; same-project chats share**): recall hard-limited to scope; a relevance gate (distinctive-word); write-time self-consistency (don't store an off-topic/parroted or QA-failed answer); stricter fact prompt + a signal-gate that skips the extra model call on task turns. Also **`/clear`** (forget this chat's turns+summary, keep durable facts) + **`/compact`** (summarize+free context) via a non-destructive session context-reset boundary; both in the composer command menu. |
+| `3bd8bab` | **Sequential task-runner** (`server/taskrunner.py`): an explicit numbered/bulleted list (>=2 items) runs each task one-by-one via the pipeline, carrying progress forward, emitting a `program` event (checklist + done/total). One shared Budget (skips remainder if capped); errors isolated. Frontend = live checklist + progress bar (`Chat.tsx` `ProgramProgress`). Per-task prompt insists on real tool use so a step isn't "done" without acting (a live run first exposed a cheap-model narrate-don't-act miss; fixed). |
+| `2fceaee` | **Vision/uncatalogued spend now counted** — litellm's price map lacks the DeepInfra VLM price so vision logged $0 (escaped Budget/daily-cap). Falls back to provider `usage.estimated_cost`. Measured ~$0.0002/screenshot. **Vision already works locally** (Qwen3-VL + DEEPINFRA key in local .env) — it reads screenshots, no image generation. |
+| `499d1b1` | **Settings polish** — Schedules pre-fills a valid spec on type change (Health/Schedules were already well-polished). |
+
+Also: **deleted 236 stale test projects** from the local dev DB (backup at `data/app.db.bak-precleanup`); conftest already isolates the test DB so they won't re-accumulate.
+
+### Next (owner's call) — nothing blocking; app boots clean, local mode on
+1. **Hands-on visual check** (screenshots time out on this box, so I verified via API/tests): try a numbered list → task-runner checklist; `/clear` + `/compact`; attach a screenshot → vision; fresh chat → confirm no bleed; Schedules spec pre-fill.
+2. Optional: memory-panel "clear this chat" button (/clear covers it); **per-step QA verification** for the task-runner (guarantees each step's work); connectors (deferred).
+3. **News/feeds WIP** (`tools/feeds.py`, `config/feeds.yaml`, `config/agents.yaml` edits, `AGENTS.md`, `docs/NEWS_AGENTS_PLAN.md`, `docs/RELIABILITY_PLAN.md`, `tests/test_feeds.py`) still uncommitted/deferred — decide: finish, branch, or drop. `tasks.db` + synced `skills/` also untracked.
+
+## EARLIER (2026-07-17→20) — FULL E2E TEST ROUND (VM + LOCAL), 3 more live-found fixes shipped, reliability verdict 8/10
 
 **Everything below is MERGED + DEPLOYED** (PRs #17–#20 all merged to `main`; VM auto-deployed).
 Full test report artifact: https://claude.ai/code/artifact/5815ca6e-3a7b-41f2-b4ba-cf44ed44841b
