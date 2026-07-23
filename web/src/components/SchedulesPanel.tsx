@@ -12,6 +12,11 @@ const SPEC_HINT: Record<string, string> = {
   weekly: "DOW HH:MM (0=Mon..6=Sun), e.g. 0 09:00",
 };
 
+// A ready-to-use default so switching type never leaves the field blank/invalid.
+const SPEC_DEFAULT: Record<string, string> = {
+  once: "", interval: "3600", daily: "09:00", weekly: "0 09:00",
+};
+
 // "in 2h 14m" / "in 45s" / "due now" — a friendlier read than a bare UTC timestamp.
 function countdown(iso: string): string {
   if (!iso) return "";
@@ -81,7 +86,7 @@ export default function SchedulesPanel() {
         <input value={text} onChange={(e) => setText(e.target.value)} placeholder="task to run, e.g. summarize today's news on AI agents"
           className={inp + " w-full"} />
         <div className="flex items-center gap-2">
-          <select value={kind} onChange={(e) => { setKind(e.target.value); setSpec(""); }} className={inp}>
+          <select value={kind} onChange={(e) => { setKind(e.target.value); setSpec(SPEC_DEFAULT[e.target.value] ?? ""); }} className={inp}>
             <option value="once">once</option><option value="interval">interval</option>
             <option value="daily">daily</option><option value="weekly">weekly</option>
           </select>
