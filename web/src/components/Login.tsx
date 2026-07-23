@@ -31,7 +31,7 @@ export default function Login({ onSuccess }: { onSuccess: (email: string) => voi
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-8">
           <Sunburst size={40} />
-          <h1 className="font-headline text-xl font-semibold mt-3">AGENT <span className="text-accent-terracotta">//</span> CORE</h1>
+          <h1 className="font-headline text-xl font-semibold mt-3">Nikki</h1>
           <p className="text-light-muted text-sm mt-1">Sign in to continue</p>
         </div>
         <form onSubmit={submit} className="bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-sm p-6 space-y-4">
