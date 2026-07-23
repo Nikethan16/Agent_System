@@ -401,11 +401,26 @@ class use_budget:
         return False
 
 
-def _cost_of(resp) -> float:
+def _est_cost_of(resp) -> float:
+    """Provider-reported cost from usage.estimated_cost. litellm's price map doesn't cover
+    every model (vision VLMs especially), so response_cost is 0/None even when the provider
+    billed us — some providers (e.g. DeepInfra) return their own figure here. Using it keeps
+    uncatalogued-model spend counting against the Budget + daily cap (invariant #3)."""
     try:
-        return resp._hidden_params.get("response_cost") or 0.0
+        est = getattr(getattr(resp, "usage", None), "estimated_cost", None)
+        return float(est) if est else 0.0
     except Exception:
         return 0.0
+
+
+def _cost_of(resp) -> float:
+    try:
+        c = resp._hidden_params.get("response_cost")
+        if c:
+            return c
+    except Exception:
+        pass
+    return _est_cost_of(resp)
 
 
 def _tokens_of(resp) -> int:
@@ -733,7 +748,7 @@ def stream_complete(model, messages, max_tokens=4096, budget: Budget = None,
                 on_reasoning(rp)
         if getattr(chunk, "usage", None):
             try:
-                cost = litellm.completion_cost(completion_response=chunk) or cost
+                cost = litellm.completion_cost(completion_response=chunk) or _est_cost_of(chunk) or cost
             except Exception:
                 pass
             tokens = _tokens_of(chunk) or tokens
@@ -833,7 +848,7 @@ def stream_complete_tools(model, messages, tools=None, max_tokens=4096,
                         slot["args"] += fn.arguments
         if getattr(chunk, "usage", None):
             try:
-                cost = litellm.completion_cost(completion_response=chunk) or cost
+                cost = litellm.completion_cost(completion_response=chunk) or _est_cost_of(chunk) or cost
             except Exception:
                 pass
             tokens = _tokens_of(chunk) or tokens
