@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useStore } from "../lib/store";
 import { api } from "../lib/api";
+import WorkOnFolderModal from "./WorkOnFolderModal";
 
 const MODES = ["auto", "careful", "trusted"] as const;
 
@@ -143,6 +144,21 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // "+" menu (attach a file vs. work on a folder) + paste-an-image.
+  const [plusOpen, setPlusOpen] = useState(false);
+  const [folderOpen, setFolderOpen] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const onPaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const it of Array.from(items)) {
+      if (it.type.startsWith("image/")) {
+        const f = it.getAsFile();
+        if (f) { e.preventDefault(); addAttachment(new File([f], `pasted-image.png`, { type: f.type })); }
+      }
+    }
+  };
 
   // Voice input: a mic button records audio and transcribes it (Whisper via a provider) into
   // the message box. Shown only when speech-to-text is configured on the server.
@@ -324,6 +340,7 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
         ref={taRef}
         value={text}
         onChange={onType}
+        onPaste={onPaste}
         onKeyDown={(e) => {
           if (cmdMatches.length && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); pickCommand(cmdMatches[0].name); return; }
           if (mention && matches.length && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); pickFile(matches[0]); return; }
@@ -338,13 +355,33 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
         {/* LEFT: attach + inline Mode/Model/Effort + run-options (advanced behind the sliders).
             NOTE: no overflow-* here — it would clip the upward-opening dropdowns. Wrap instead. */}
         <div className="flex flex-wrap items-center gap-1 min-w-0">
-          <label title="Attach a file (added as context)"
-            className="w-9 h-9 shrink-0 rounded-full text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg flex items-center justify-center transition cursor-pointer">
-            <span className="material-symbols-outlined text-[22px]">add</span>
-            <input type="file" className="hidden" onChange={(e) => {
-              const f = e.target.files?.[0]; if (f) addAttachment(f); e.currentTarget.value = "";
+          <div className="relative shrink-0">
+            <button type="button" onClick={() => setPlusOpen((v) => !v)} title="Add" aria-label="Add a file or folder"
+              className="w-9 h-9 rounded-full text-light-muted hover:text-on-surface dark:hover:text-dark-text hover:bg-surface-container-low dark:hover:bg-dark-bg flex items-center justify-center transition">
+              <span className="material-symbols-outlined text-[22px]">add</span>
+            </button>
+            <input ref={fileRef} type="file" className="hidden" onChange={(e) => {
+              const f = e.target.files?.[0]; if (f) addAttachment(f); e.currentTarget.value = ""; setPlusOpen(false);
             }} />
-          </label>
+            {plusOpen && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setPlusOpen(false)} />
+                <div className="absolute bottom-full left-0 mb-2 w-56 bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl shadow-xl z-40 p-1 fadeup">
+                  <button type="button" onClick={() => fileRef.current?.click()}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left hover:bg-surface-container-low dark:hover:bg-dark-bg transition">
+                    <span className="material-symbols-outlined text-[18px] text-accent-terracotta">attach_file</span>
+                    <span><span className="block text-[13px]">Attach a file</span><span className="block text-[11px] text-light-muted">image, PDF, CSV, code…</span></span>
+                  </button>
+                  <button type="button" onClick={() => { setPlusOpen(false); setFolderOpen(true); }}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left hover:bg-surface-container-low dark:hover:bg-dark-bg transition">
+                    <span className="material-symbols-outlined text-[18px] text-accent-terracotta">folder_open</span>
+                    <span><span className="block text-[13px]">Work on a folder</span><span className="block text-[11px] text-light-muted">read &amp; edit a local folder</span></span>
+                  </button>
+                  <div className="px-2.5 py-1 text-[10px] text-light-muted">Tip: paste a screenshot right into the box.</div>
+                </div>
+              </>
+            )}
+          </div>
           <BarSelect label="Mode" icon="edit_note" value={planFirst ? "plan" : "build"}
             options={modeOpts} onPick={(v) => setPlanFirst(v === "plan")} />
           <BarSelect label="Model" icon="memory" value={modelOverride}
@@ -387,6 +424,7 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
           )}
         </div>
       </div>
+      {folderOpen && <WorkOnFolderModal onClose={() => setFolderOpen(false)} />}
     </div>
   );
 
