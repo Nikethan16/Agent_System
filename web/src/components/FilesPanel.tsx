@@ -98,6 +98,39 @@ function HtmlPreview({ id, path, fallback }: { id: string | null; path: string; 
     title="preview" className="w-full h-full min-h-[300px] bg-white rounded-lg border border-light-border" />;
 }
 
+// Render CSV/TSV as a real table instead of raw text (rich preview).
+function CsvTable({ text, delim }: { text: string; delim: string }) {
+  const rows: string[][] = [];
+  let row: string[] = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+    else if (c === '"') q = true;
+    else if (c === delim) { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else if (c !== "\r") cell += c;
+  }
+  if (cell.length || row.length) { row.push(cell); rows.push(row); }
+  const cap = 300;
+  const head = rows[0] || [];
+  const body = rows.slice(1, cap + 1);
+  return (
+    <div className="overflow-auto scrollbar">
+      <table className="text-[12px] border-collapse w-full font-code">
+        <thead><tr>{head.map((h, i) => (
+          <th key={i} className="text-left font-semibold px-2.5 py-1.5 border-b border-light-border dark:border-dark-border bg-surface-container-low dark:bg-dark-bg sticky top-0 whitespace-nowrap">{h}</th>
+        ))}</tr></thead>
+        <tbody>{body.map((r, ri) => (
+          <tr key={ri} className="hover:bg-surface-container-low dark:hover:bg-dark-bg">
+            {head.map((_, ci) => <td key={ci} className="px-2.5 py-1 border-b border-light-border/40 dark:border-dark-border/40 whitespace-nowrap">{r[ci] ?? ""}</td>)}
+          </tr>
+        ))}</tbody>
+      </table>
+      {rows.length - 1 > cap && <div className="text-[11px] text-light-muted px-2 py-2">Showing first {cap} of {rows.length - 1} rows.</div>}
+    </div>
+  );
+}
+
 function Body({ sel, view, diff, id }: { sel: any; view: string; diff: string; id: string | null }) {
   const isHtml = sel.ext === ".html";
   const isMd = sel.ext === ".md";
@@ -105,6 +138,7 @@ function Body({ sel, view, diff, id }: { sel: any; view: string; diff: string; i
   const isSvg = sel.ext === ".svg";
   const isImage = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"].includes(sel.ext || "");
   const isPdf = sel.ext === ".pdf";
+  const isCsv = [".csv", ".tsv"].includes(sel.ext || "");
   const lang = (sel.ext || "").replace(".", "") || undefined;
   // Binary artifacts (images, PDFs) render straight from /file/raw.
   if (isImage && id) return <img src={api.rawFileUrl(id, sel.path)} alt={sel.path} className="max-w-full rounded-lg border border-light-border dark:border-dark-border" />;
@@ -115,6 +149,7 @@ function Body({ sel, view, diff, id }: { sel: any; view: string; diff: string; i
   if (view === "preview" && isMd) return <div className="prose-msg text-sm"><ReactMarkdown remarkPlugins={[remarkGfm]}>{sel.content || ""}</ReactMarkdown></div>;
   if (view === "preview" && isMermaid) return <Mermaid code={sel.content || ""} />;
   if (view === "preview" && isSvg) return <Svg markup={sel.content || ""} />;
+  if (view === "preview" && isCsv) return <CsvTable text={sel.content || ""} delim={sel.ext === ".tsv" ? "\t" : ","} />;
   return <CodeBlock lang={lang} code={sel.content || ""} />;
 }
 
@@ -184,9 +219,17 @@ export default function FilesPanel() {
   const isSvg = selected?.ext === ".svg";
   const isImage = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"].includes(selected?.ext || "");
   const isPdf = selected?.ext === ".pdf";
-  const previewable = isHtml || isMd || isMermaid || isSvg || isImage || isPdf;
+  const isCsv = [".csv", ".tsv"].includes(selected?.ext || "");
+  const previewable = isHtml || isMd || isMermaid || isSvg || isImage || isPdf || isCsv;
 
   useEffect(() => { setView(previewable ? "preview" : "source"); }, [selected?.path]);
+  // Esc closes the expanded canvas.
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setExpanded(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
   useEffect(() => {
     if (view === "diff" && selected && currentId) api.fileDiff(currentId, selected.path).then((r) => setDiff(r.diff || ""));
   }, [view, selected?.path, currentId]);
@@ -292,8 +335,8 @@ export default function FilesPanel() {
       )}
 
       {expanded && selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-6" onClick={() => setExpanded(false)}>
-          <div className="w-full max-w-4xl h-[85vh] bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 md:p-8 fadeup" onClick={() => setExpanded(false)}>
+          <div className="w-full max-w-6xl h-[92vh] bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 px-5 py-3 border-b border-light-border dark:border-dark-border">
               <span className="material-symbols-outlined text-accent-terracotta text-[20px]">{iconFor(selected.ext)}</span>
               <span className="font-semibold flex-1 truncate">{selected.path}</span>
