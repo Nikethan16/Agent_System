@@ -35,7 +35,7 @@ export default {
         "claude-sidebar-dark": "#211E19",
       },
       borderRadius: { DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", "2xl": "1rem", full: "9999px" },
-      spacing: { "sidebar-width": "260px", "panel-width": "340px", gutter: "24px" },
+      spacing: { "sidebar-width": "260px", "panel-width": "var(--panel-w, 340px)", gutter: "24px" },
       fontFamily: {
         // UI chrome (sidebar, buttons, headings) = clean sans; chat replies = reading serif.
         "body-ui": ["Inter", "system-ui", "sans-serif"],

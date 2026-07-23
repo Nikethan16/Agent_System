@@ -50,6 +50,31 @@ export default function App() {
   const [leftOpen, setLeftOpen] = useState(false);    // mobile sidebar drawer
   // Workspace panel: docked open by default on desktop (3-column layout), closed on mobile.
   const [rightOpen, setRightOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1024);
+  // Resizable Workspace panel: width persisted, driven via the --panel-w CSS var (which the
+  // tailwind panel-width spacing token reads, so both the panel and the main margin track it).
+  const [panelW, setPanelW] = useState(() => {
+    const v = Number(typeof window !== "undefined" && localStorage.getItem("nikki.panelW"));
+    return v >= 300 && v <= 900 ? v : 340;
+  });
+  useEffect(() => {
+    document.documentElement.style.setProperty("--panel-w", panelW + "px");
+    localStorage.setItem("nikki.panelW", String(panelW));
+  }, [panelW]);
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => {
+      const max = Math.min(760, window.innerWidth - 360);
+      setPanelW(Math.min(Math.max(300, window.innerWidth - ev.clientX), max));
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = ""; document.body.style.cursor = "";
+    };
+    document.body.style.userSelect = "none"; document.body.style.cursor = "col-resize";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
   const [auth, setAuth] = useState<"checking" | "login" | "in">("checking");
   const [email, setEmail] = useState("");
   const hasMessages = messages.length > 0;
@@ -160,6 +185,14 @@ export default function App() {
           <WelcomeScreen />
         )}
       </main>
+      {/* Drag handle at the panel's left edge — resize the Workspace panel (desktop). */}
+      {rightOpen && (
+        <div onMouseDown={startResize} title="Drag to resize the workspace"
+          className="hidden md:block fixed top-0 h-screen w-2 z-40 cursor-col-resize group"
+          style={{ right: "var(--panel-w)" }}>
+          <div className="absolute inset-y-0 right-0 w-px bg-light-border dark:bg-dark-border group-hover:w-[3px] group-hover:bg-accent-terracotta/70 transition-all" />
+        </div>
+      )}
       <RightPanel open={rightOpen} onClose={() => setRightOpen(false)} />
       {settings && <SettingsModal onClose={() => setSettings(false)} onOpenBench={() => { setSettings(false); setBench(true); }} />}
       {projSettings && <ProjectModal pid={projSettings} onClose={() => setProjSettings(null)} />}
