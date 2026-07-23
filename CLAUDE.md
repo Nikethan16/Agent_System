@@ -133,9 +133,11 @@ model's streamed chain-of-thought / `reasoning_content` on reasoning models,
 rendered as a collapsible "thought process" block in the UI), `skill` (Agent
 Skills applied to a step), `fallback` (model failover — primary unavailable/
 rate-limited → switched to the next model in the chain), `retry` (a failed/
-empty agent step is automatically retried), and `program` (sequential task-runner
+empty agent step is automatically retried), `program` (sequential task-runner
 progress: `{tasks:[{text,status}], current, done, total}` — emitted per step when a
-message is an explicit ordered list, see `server/taskrunner.py`). (`done` is an internal
+message is an explicit ordered list, see `server/taskrunner.py`), and `context`
+(`{tokens, budget}` — this turn's assembled input size vs the working context budget,
+for the run-summary context meter, emitted in `server/chat.py`). (`done` is an internal
 agent-finished marker.) Note `route` carries `task_type` — never a bare `type` key — so spreading the
 classifier dict into the event can't clobber the event's own `type`.
 

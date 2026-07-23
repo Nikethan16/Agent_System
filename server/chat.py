@@ -336,6 +336,13 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
     context = "\n\n".join(b for b in blocks if b)
     task = text if not context else f"{context}\n\nNEW REQUEST: {text}"
 
+    # Context meter: how full this turn's assembled input is vs the working budget (memory +
+    # history + files + request). Surfaced in the run summary so you can see context pressure.
+    try:
+        _emit({"type": "context", "tokens": _approx_tokens(task), "budget": _reg.context_budget()})
+    except Exception:
+        pass
+
     workspace = db.session_workspace(session_id)
     # #6 (OFF by default): when AGENT_TASK_SUBWORKSPACE is enabled, a request that
     # clearly starts a NEW standalone build runs in its own subfolder so unrelated

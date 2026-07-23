@@ -249,12 +249,20 @@ function RunSummary({ m, running, steps, critic }: { m: Msg; running?: boolean; 
   const dur = fmtDur(meta?.durationMs);
   const cachedPct = meta?.cachedTokens && meta?.tokens
     ? Math.round((meta.cachedTokens / meta.tokens) * 100) : 0;
+  const ctxPct = meta?.contextTokens && meta?.contextBudget
+    ? Math.min(100, Math.round((meta.contextTokens / meta.contextBudget) * 100)) : 0;
+  // The model that produced this answer: the last agent's model, else the router's pick.
+  const assigns = m.events.filter((e) => e.type === "assign" && (e as any).model);
+  const routeEv = [...m.events].reverse().find((e) => e.type === "route") as any;
+  const modelRaw: string = (assigns.length ? (assigns[assigns.length - 1] as any).model : routeEv?.routed_model) || "";
+  const model = modelRaw ? String(modelRaw).split("/").pop() : "";
 
   type M = { k: string; v: string; accent?: boolean };
   const cols: M[] = [];
   if (dur) cols.push({ k: "time", v: dur });
   if (steps > 0) cols.push({ k: "steps", v: `${steps}` });
   if (meta?.tokens) cols.push({ k: "tokens", v: fmtCompact(meta.tokens) });
+  if (ctxPct > 0) cols.push({ k: "context", v: `${ctxPct}%`, accent: ctxPct >= 80 });
   if (cachedPct > 0) cols.push({ k: "cached", v: `${cachedPct}%`, accent: true });
   if (meta?.cost) cols.push({ k: "cost", v: `$${meta.cost.toFixed(3)}` });
   if (tools > 0) cols.push({ k: "tools", v: `${tools}` });
@@ -281,6 +289,11 @@ function RunSummary({ m, running, steps, critic }: { m: Msg; running?: boolean; 
             </div>
           ))}
         </div>
+      )}
+      {model && (
+        <span className="text-[10px] text-light-muted font-code truncate max-w-[180px] flex items-center gap-1 ml-auto" title={modelRaw}>
+          <span className="material-symbols-outlined text-[13px]">memory</span>{model}
+        </span>
       )}
     </div>
   );
