@@ -12,6 +12,12 @@ html, body, #root { height: 100%; margin: 0; }
 @keyframes nikki-spin { to { transform: rotate(360deg); } }
 .nikki-spin { animation: nikki-spin 2.6s linear infinite; transform-origin: 50% 50%; }
 @media (prefers-reduced-motion: reduce) { .nikki-spin { animation: none; } }
+
+/* Voice recording: animated equalizer bars so it's obvious the mic is live. */
+@keyframes vbar { 0%,100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+.vbar { display:inline-block; width:3px; height:15px; border-radius:2px; background: currentColor;
+  transform-origin: bottom; animation: vbar 0.85s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .vbar { animation: none; transform: scaleY(0.7); } }
 body {
   background-color: #F3F0E7;
   color: #211E18;

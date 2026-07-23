@@ -263,6 +263,24 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
 
   const box = (
     <div className="relative w-full bg-white dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-[26px] shadow-sm p-2.5 focus-within:border-accent-terracotta/40 focus-within:shadow-md transition-all">
+      {/* Voice status: obvious feedback that the mic is live / transcribing. */}
+      {micState !== "off" && (
+        <div className={`flex items-center gap-2 px-3 pt-1 pb-2 text-[12px] font-medium ${micState === "recording" ? "text-red-500" : "text-accent-terracotta"}`}>
+          {micState === "recording" ? (
+            <>
+              <span className="flex items-end gap-[3px] h-4" aria-hidden="true">
+                {[0, 1, 2, 3].map((i) => <span key={i} className="vbar" style={{ animationDelay: `${i * 0.13}s` }} />)}
+              </span>
+              <span>Listening… <span className="text-light-muted font-normal">click the mic to stop</span></span>
+            </>
+          ) : (
+            <>
+              <span className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
+              <span>Transcribing your voice…</span>
+            </>
+          )}
+        </div>
+      )}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-2 pt-1 pb-2">
           {attachments.map((a) => (
