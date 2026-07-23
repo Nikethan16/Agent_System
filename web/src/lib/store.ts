@@ -115,6 +115,8 @@ type State = {
   exportChat: () => void;
   theme: "light" | "dark";
   toggleTheme: () => void;
+  accent: string;
+  setAccent: (id: string) => void;
   pushToast: (text: string, kind?: Toast["kind"]) => void;
   dismissToast: (id: number) => void;
 };
@@ -130,6 +132,27 @@ function applyTheme(theme: "light" | "dark") {
 
 const _initialTheme: "light" | "dark" =
   (typeof localStorage !== "undefined" && localStorage.getItem("agent_theme") === "dark") ? "dark" : "light";
+
+// Accent presets — warm tones that fit the cream canvas. Applied via CSS vars so the whole
+// UI recolors instantly (the tailwind accent tokens read --accent / --accent-deep).
+export const ACCENTS: Record<string, { label: string; base: string; deep: string }> = {
+  terracotta: { label: "Terracotta", base: "#B4593A", deep: "#9E4B2F" },
+  amber:      { label: "Amber",      base: "#B8862F", deep: "#9C6F22" },
+  sage:       { label: "Sage",       base: "#6E8B5B", deep: "#566E46" },
+  rust:       { label: "Rust",       base: "#A6482E", deep: "#8A3A24" },
+  plum:       { label: "Plum",       base: "#8A5A78", deep: "#714862" },
+  teal:       { label: "Teal",       base: "#3E8078", deep: "#2F645E" },
+};
+function applyAccent(id: string) {
+  const a = ACCENTS[id] || ACCENTS.terracotta;
+  const el = document.documentElement;
+  el.style.setProperty("--accent", a.base);
+  el.style.setProperty("--accent-deep", a.deep);
+  try { localStorage.setItem("nikki_accent", id); } catch { /* ignore */ }
+}
+const _initialAccent =
+  (typeof localStorage !== "undefined" && localStorage.getItem("nikki_accent")) || "terracotta";
+if (typeof document !== "undefined") applyAccent(_initialAccent);
 
 let socket: WebSocket | null = null;
 // The session the live socket belongs to, so events that arrive after the user
@@ -610,11 +633,16 @@ export const useStore = create<State>((set, get) => ({
   },
 
   theme: _initialTheme,
+  accent: _initialAccent,
 
   toggleTheme() {
     const next = get().theme === "dark" ? "light" : "dark";
     applyTheme(next);
     set({ theme: next });
+  },
+  setAccent(id) {
+    applyAccent(id);
+    set({ accent: id });
   },
 
   pushToast(text, kind = "info") {

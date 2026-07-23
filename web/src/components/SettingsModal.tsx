@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useStore } from "../lib/store";
+import { useStore, ACCENTS } from "../lib/store";
 import { getAuthToken, setAuthToken } from "../lib/api";
 import ModelRail from "./ModelRail";
 import RoutingEditor from "./RoutingEditor";
@@ -40,7 +40,7 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
 }
 
 export default function SettingsModal({ onClose, onOpenBench }: { onClose: () => void; onOpenBench?: () => void }) {
-  const { mode, setMode, maxUsd, maxIter, setLimit, strategy, theme, toggleTheme, spend, loadSpend, exportChat,
+  const { mode, setMode, maxUsd, maxIter, setLimit, strategy, theme, toggleTheme, accent, setAccent, spend, loadSpend, exportChat,
           loadFacts, loadRules } = useStore();
   const dark = theme === "dark";
   const [tab, setTab] = useState("general");
@@ -95,6 +95,15 @@ export default function SettingsModal({ onClose, onOpenBench }: { onClose: () =>
                   <button onClick={toggleTheme} className="flex items-center gap-1.5 text-sm px-3 py-1 rounded-lg border border-light-border dark:border-dark-border hover:bg-surface-container-low dark:hover:bg-dark-bg">
                     <span className="material-symbols-outlined text-[16px]">{dark ? "dark_mode" : "light_mode"}</span>{dark ? "Dark" : "Light"}
                   </button>
+                </Row>
+                <Row label="Accent color" hint="Recolors the whole app instantly.">
+                  <div className="flex items-center gap-1.5">
+                    {Object.entries(ACCENTS).map(([id, a]) => (
+                      <button key={id} onClick={() => setAccent(id)} title={a.label} aria-label={a.label}
+                        className={`w-6 h-6 rounded-full border-2 transition ${accent === id ? "border-on-surface dark:border-dark-text scale-110" : "border-transparent hover:scale-105"}`}
+                        style={{ backgroundColor: a.base }} />
+                    ))}
+                  </div>
                 </Row>
                 <Row label="Default approvals" hint="The default; override per run in the composer's Run options.">
                   <select value={mode} onChange={(e) => setMode(e.target.value as any)} className={inp + " w-28"}>

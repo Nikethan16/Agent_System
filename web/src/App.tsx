@@ -14,6 +14,7 @@ import ProjectHome from "./components/ProjectHome";
 import ProjectModal from "./components/ProjectModal";
 import Toasts from "./components/Toasts";
 import Sunburst from "./components/Sunburst";
+import ShortcutsOverlay from "./components/ShortcutsOverlay";
 
 function timeGreeting() {
   const h = new Date().getHours();
@@ -27,20 +28,20 @@ function timeGreeting() {
 function WelcomeScreen() {
   return (
     <div className="flex-1 overflow-y-auto scrollbar flex flex-col items-center justify-center px-gutter">
-      <div className="w-full max-w-[720px] -mt-12 pb-8">
+      <div className="w-full max-w-[720px] -mt-12 pb-8 fadeup">
         <div className="flex items-center justify-center gap-3 mb-8">
-          <Sunburst size={30} />
-          <h2 className="font-headline text-[30px] md:text-[35px] leading-none font-semibold tracking-tight text-on-surface dark:text-dark-text">{timeGreeting()}, Nikethan</h2>
+          <Sunburst size={32} />
+          <h2 className="font-headline text-[30px] md:text-[36px] leading-none font-semibold tracking-tight text-on-surface dark:text-dark-text">{timeGreeting()}, Nikethan</h2>
         </div>
         <Composer variant="center" />
-        <p className="text-center text-[12px] text-light-muted mt-3">Ask anything, or drop a file. Agents plan, build, and verify — you watch it happen.</p>
+        <p className="text-center text-[12px] text-light-muted mt-3">Ask anything, drop a file, or work on a folder — Nikki plans, builds, and verifies while you watch. Press <kbd className="font-code text-[10.5px] px-1 py-0.5 rounded border border-light-border dark:border-dark-border">?</kbd> for shortcuts.</p>
       </div>
     </div>
   );
 }
 
 export default function App() {
-  const { init, connected, running, cost, messages, files, currentId } = useStore();
+  const { init, connected, running, cost, messages, files, currentId, newSession } = useStore();
   const [settings, setSettings] = useState(false);
   const [bench, setBench] = useState(false);
   const [palette, setPalette] = useState(false);      // ⌘K command palette
@@ -100,13 +101,20 @@ export default function App() {
 
   const logout = () => { setAuthToken(""); setEmail(""); setAuth("login"); };
 
+  const [shortcuts, setShortcuts] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((p) => !p); }
+      const el = document.activeElement as HTMLElement | null;
+      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((p) => !p); return; }
+      if (mod && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); newSession(); return; }
+      if (mod && e.key === "\\") { e.preventDefault(); setRightOpen((v) => !v); return; }
+      if (!typing && !mod && e.key === "?") { e.preventDefault(); setShortcuts(true); return; }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [newSession]);
 
   // Auto-open the artifacts panel the first time the agent produces a file.
   const prevFiles = useRef(0);
@@ -195,6 +203,7 @@ export default function App() {
       )}
       <RightPanel open={rightOpen} onClose={() => setRightOpen(false)} />
       {settings && <SettingsModal onClose={() => setSettings(false)} onOpenBench={() => { setSettings(false); setBench(true); }} />}
+      {shortcuts && <ShortcutsOverlay onClose={() => setShortcuts(false)} />}
       {projSettings && <ProjectModal pid={projSettings} onClose={() => setProjSettings(null)} />}
       {bench && <BenchmarkModal onClose={() => setBench(false)} />}
       {palette && <CommandPalette

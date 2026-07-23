@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: light; --panel-w: 340px; }
+:root { color-scheme: light; --panel-w: 340px; --accent: #B4593A; --accent-deep: #9E4B2F; }
 html.dark { color-scheme: dark; }
 
 html, body, #root { height: 100%; margin: 0; }
@@ -63,6 +63,21 @@ html.dark .prose-msg code { background: #2A251E; }
 .prose-msg pre { background: #211E19; color: #ECE6D9; border: 1px solid #332E26;
   border-radius: 10px; padding: 14px; overflow-x: auto; margin: 0 0 0.85em; }
 .prose-msg pre code { background: transparent; padding: 0; font-size: 13px; color: inherit; }
-.prose-msg table { border-collapse: collapse; margin: 0 0 0.85em; font-size: 14px; }
-.prose-msg th, .prose-msg td { border: 1px solid #e8e5dd; padding: 6px 10px; }
+.prose-msg table { border-collapse: collapse; margin: 0 0 0.9em; font-size: 14px; border-radius: 8px; overflow: hidden; }
+.prose-msg th, .prose-msg td { border: 1px solid #e8e5dd; padding: 7px 11px; text-align: left; }
+.prose-msg th { background: #F0ECDF; font-weight: 600; }
+.prose-msg tbody tr:nth-child(even) td { background: #FaF8F2; }
 html.dark .prose-msg th, html.dark .prose-msg td { border-color: #3a3833; }
+html.dark .prose-msg th { background: #2A251E; }
+html.dark .prose-msg tbody tr:nth-child(even) td { background: #201C17; }
+/* blockquotes, rules, strong — an editorial serif read */
+.prose-msg blockquote { margin: 0 0 0.9em; padding: 0.2em 0 0.2em 1em; border-left: 3px solid var(--accent);
+  color: #5b544a; font-style: italic; }
+html.dark .prose-msg blockquote { color: #b8b0a2; }
+.prose-msg hr { border: none; border-top: 1px solid #e2ddd0; margin: 1.3em 0; }
+html.dark .prose-msg hr { border-top-color: #332E26; }
+.prose-msg strong { font-weight: 600; }
+/* modal pop-in — a touch more premium than a plain fade */
+@keyframes pop { from { opacity: 0; transform: scale(0.97) translateY(6px); } to { opacity: 1; transform: none; } }
+.pop { animation: pop 0.16s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@media (prefers-reduced-motion: reduce) { .pop { animation: none; } }

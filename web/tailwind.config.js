@@ -28,8 +28,8 @@ export default {
         "dark-surface": "#221F19",
         "dark-border": "#332E26",
         "dark-text": "#ECE6D9",
-        "accent-terracotta": "#B4593A",
-        "accent-deep": "#9E4B2F",
+        "accent-terracotta": "var(--accent, #B4593A)",
+        "accent-deep": "var(--accent-deep, #9E4B2F)",
         // warm "cloud" sidebar tone (a touch lighter/cleaner than the cream canvas)
         "claude-sidebar": "#FAF8F1",
         "claude-sidebar-dark": "#211E19",
