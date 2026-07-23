@@ -235,7 +235,8 @@ function hasRunDetail(events: Ev[], running?: boolean): boolean {
   const worthShowing = events.some((e) => MEANINGFUL.includes(e.type)) ||
     events.filter((e) => e.type === "assign").length > 1 || !!running;
   const hasWork = steps.some((s) => s.tools.length || s.notes.length) || !!lastPlan?.todos?.length;
-  return hasWork && worthShowing;
+  const hasProgram = events.some((e) => e.type === "program");
+  return (hasWork && worthShowing) || hasProgram;
 }
 
 // The always-visible run-summary header: a verdict pill + metric columns
@@ -284,6 +285,40 @@ function RunSummary({ m, running, steps, critic }: { m: Msg; running?: boolean; 
   );
 }
 
+// Sequential task-runner: a live checklist + progress bar built from the latest `program`
+// event. Shows which of a numbered/bulleted list is done / running / pending, and how far along.
+function ProgramProgress({ events }: { events: Ev[] }) {
+  const prog = [...events].reverse().find((e) => e.type === "program") as any;
+  if (!prog?.tasks?.length) return null;
+  const glyph: Record<string, string> = { done: "✓", error: "⚠", skipped: "⏭", in_progress: "●", pending: "○" };
+  const tone: Record<string, string> = {
+    done: "text-emerald-600", error: "text-amber-600", skipped: "text-light-muted",
+    in_progress: "text-accent-terracotta", pending: "text-light-muted",
+  };
+  const pct = prog.total ? Math.round((prog.done / prog.total) * 100) : 0;
+  return (
+    <div className="mb-3">
+      <PhaseLabel icon="list_alt" color="bg-accent-terracotta">Tasks · {prog.done}/{prog.total}</PhaseLabel>
+      <div className="ml-6">
+        <div className="h-1.5 rounded-full bg-surface-container-high dark:bg-dark-border overflow-hidden mb-2">
+          <div className="h-full rounded-full bg-accent-terracotta transition-all duration-500" style={{ width: `${pct}%` }} />
+        </div>
+        <div className="space-y-1">
+          {prog.tasks.map((t: any, i: number) => (
+            <div key={i} className="flex items-start gap-2 text-[12px]">
+              <span className={`${tone[t.status] || "text-light-muted"} ${t.status === "in_progress" ? "animate-pulse" : ""} w-4 shrink-0 text-center`}>{glyph[t.status] || "○"}</span>
+              <span className={t.status === "in_progress" ? "text-on-surface dark:text-dark-text font-medium"
+                : t.status === "pending" ? "text-light-muted" : "text-on-surface-variant dark:text-light-muted"}>
+                {i + 1}. {t.text}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Activity({ m, running }: { m: Msg; running?: boolean }) {
   const events = m.events;
   const lastPlan = [...events].reverse().find((e) => e.type === "plan") as any;
@@ -295,6 +330,7 @@ function Activity({ m, running }: { m: Msg; running?: boolean }) {
       <RunSummary m={m} running={running} steps={steps.length} critic={critic} />
       <AgentStatus events={events} running={running} />
       <div className="px-4 pb-4 pt-1">
+        <ProgramProgress events={events} />
         {lastPlan?.todos?.length > 0 && (<><PhaseLabel icon="checklist" color="bg-accent-terracotta">Plan</PhaseLabel><PlanChecklist todos={lastPlan.todos} /></>)}
         {steps.length > 0 && (
           <><PhaseLabel icon="settings" color="bg-accent-terracotta">Steps</PhaseLabel>
