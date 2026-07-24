@@ -24,3 +24,20 @@ servers:
     requires_human: false
     agents: []                          # granted to NO agent by default (demo only;
                                         # add real agents here when you wire a real server)
+
+  - name: github                        # official GitHub MCP server (github/github-mcp-server).
+    command: docker                     # ships as a Docker image, not npx — the older
+    args: ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",  # community npm package
+           "ghcr.io/github/github-mcp-server"]                        # is deprecated.
+    risk: write
+    requires_human: true                # fail-safe default for a freshly-wired connector;
+                                        # loosen once you've watched it behave a few times
+    # Granted to both the repo engineer AND the general coder: GitHub API ops (list issues,
+    # get user, search code) are routed to `coder` far more often than to `repo-engineer`
+    # (which the dispatcher reserves for clone/edit/PR workflows), so restricting to
+    # repo-engineer alone made the connector unreachable for ordinary GitHub questions.
+    # Still least-privilege + every call is requires_human-gated.
+    agents: [repo-engineer, coder]
+    # Needs GITHUB_PERSONAL_ACCESS_TOKEN set in .env (see .env.example). One-time setup:
+    # `docker pull ghcr.io/github/github-mcp-server` so the first real call doesn't have to
+    # pull the image inside the 20s MCP handshake timeout.
