@@ -51,26 +51,28 @@ in the report (see Aspect 1) and is *not* a crash — it's the agent declaring a
 
 ## Scorecard
 
-| # | Aspect | Score | One-line verdict |
+Scores shown as **v1 → v2** (v1 = original, v2 = after the fixes, re-measured 2026-07-25).
+
+| # | Aspect | Score (v1 → v2) | One-line verdict (post-fix) |
 |---|--------|:-----:|------------------|
-| 1 | **Self-verification & self-correction** | **6/10** | Fixes its own failures on small/medium tasks, but **overclaimed "all green" on the hard build while 1 test was failing.** |
-| 2 | Task competence by difficulty | 8/10 | Simple/medium clean; hard multi-tenant app built with **correct isolation + RBAC** (externally verified), 22/23 own tests green. |
-| 3 | Model routing / selection | 5/10 | Classifies tier fine but **funnels ~everything to one mid model**; frontier + free models unused. Weak-model contrast proves the choice matters. |
-| 4 | Effort levels | 7/10 | Works as designed (high → QA on, ~10× cost) but doesn't change the model and didn't change outcomes here. |
-| 5 | Task understanding (thin input) | 9/10 | Vague, garbled, and interrupt-resume prompts all handled well. |
-| 6 | Memory & continuity | 9/10 | Shares within a project, **does not leak** across projects/chats. Scoping fix holds. |
-| 7 | Permission modes & security | 7/10 | Boundaries solid (traversal/root-escape/injection all rejected); **mode differentiation not truly exercised** (see caveat). |
-| 8 | Scheduling & background jobs | 8/10 | Create → persist → run-now → job `done` all work. |
-| 9 | GitHub connector (MCP) | *pending* | Deferred — needs a server restart. Verified working at the adapter level (44 tools + authenticated call). |
-| 10 | Reliability & robustness | 7/10 | Checkpoint/rewind, budget caps, honesty all good; the false critic verdict is the ding; failover path unverified. |
-| 11 | Cost, latency & observability | 8/10 | Rich, accurate telemetry; high cache reuse; the whole hard build cost **$0.08**. |
-| – | Mid-run steering (probe) | *gap* | Not a real feature yet — documented for the follow-up build. |
+| 1 | **Self-verification & self-correction** | **6 → 9** | False-green **fixed**: now runs the real suite + gates "done" on a green exit. Hard build finished **honestly green (17 tests)**. |
+| 2 | Task competence by difficulty | **8 → 9** | Hard multi-tenant app built on a **tier-3 model**, **7 passing 403 isolation/RBAC checks**, UI renders. |
+| 3 | Model routing / selection | **5 → 8** | Hard builds now **escalate to a tier-3 model** (measured: Qwen3-Coder-480B, not flash). |
+| 4 | Effort levels | **7 → 8** | Works as designed (high → QA on). Still doesn't change the model — minor. |
+| 5 | Task understanding (thin input) | **9 → 9** | Vague, garbled, and interrupt-resume prompts all handled well. |
+| 6 | Memory & continuity | **9 → 9** | Shares within a project, **does not leak** across projects/chats. Rule-scope fix holds. |
+| 7 | Permission modes & security | **7 → 9** | Now **proven**: auto/careful gate an irreversible action, trusted bypasses. Boundaries + injection all rejected. |
+| 8 | Scheduling & background jobs | **8 → 8** | Create → persist → run-now → job `done` all work. |
+| 9 | GitHub connector (MCP) | *pending → 7* | Loads (44 tools) + authenticated call works; grant broadened to `coder`. Through-agent call pending one restart. |
+| 10 | Reliability & robustness | **7 → 8** | Checkpoint/rewind, budget caps, honesty; **false-green fixed** (big gain). Failover still untested. |
+| 11 | Cost, latency & observability | **8 → 8** | Rich, accurate telemetry; high cache reuse; costs tiny. |
+| – | Mid-run steering | *gap → 8* | **Built + tested** — steer a live run without interrupting. |
 | – | Visual UX | *not scored* | Can't judge headlessly; recommend a short manual look. |
 
-**Overall: a genuinely strong local coding/QA/research agent** — excellent memory hygiene,
-solid security boundaries, real self-correction on everyday tasks, at trivial cost. **Two things
-hold it back from "trust it unattended on hard work":** (a) it can declare a complex task done
-while it isn't, and (b) it barely uses its model fleet. Both are fixable and specced below.
+**Overall: ~7.2 → ~8.6.** The two things that held it back — **declaring a hard task done while
+it wasn't**, and **barely using its model fleet** — are both fixed and measured. The remainder of
+this document is the original v1 analysis kept for the reasoning behind each fix, so any `6/10` or
+`5/10` you see below is the **before** number; the table above is the current state.
 
 ---
 
