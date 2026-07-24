@@ -111,6 +111,12 @@ def _recent_history_budgeted(session_id: str, max_tokens: int) -> str:
     return "Recent conversation:\n" + "\n".join(picked)
 
 
+def _scope_for(session_id, project_id: str) -> str:
+    """Continuity scope: a project shares state across ALL its chats; a standalone
+    chat keeps its own. Single source of truth for both /todo and run_turn."""
+    return f"project:{project_id}" if project_id else f"session:{session_id}"
+
+
 def _workspace_files(workspace: str, limit: int = 40) -> list:
     """Top files produced in the workspace (for the resumable roadmap's artifact list)."""
     from core.tools import _SKIP_DIRS
@@ -195,7 +201,7 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
         return msg
     if _cmd == "/todo":
         pid = (db.get_session(session_id) or {}).get("project_id", "")
-        _scope = f"project:{pid}" if pid else f"session:{session_id}"
+        _scope = _scope_for(session_id, pid)
         st = memory.get_state(_scope)
         plan = st.get("plan") or []
         open_items = [p for p in plan if p.get("status") != "done"]
@@ -252,7 +258,7 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
 
     # Continuity scope: a project shares state across ALL its chats; a standalone chat
     # keeps its own. This is what lets a NEW chat resume an ongoing project's roadmap.
-    scope = f"project:{project_id}" if project_id else f"session:{session_id}"
+    scope = _scope_for(session_id, project_id)
 
     # ---- assemble layered context (the memory READ path) --------------------
     # Order = highest-value first; each block is bounded so the prompt can't bloat.
@@ -416,8 +422,10 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
                     pass
         # PROCEDURAL: on substantive turns only, propose ONE reusable rule for human
         # review (gated to keep it rare/high-signal; proposals are never auto-applied).
+        # Scoped to THIS run (project or session), matching facts/state/recall above —
+        # a rule learned in one project must not bleed into every other project's chats.
         if tier >= 3 or route_info.get("task_type") == "coding":
-            memory.propose_rule(text, final, scope="global", budget=budget)
+            memory.propose_rule(text, final, scope=scope, budget=budget)
         # PROJECT STATE: persist a structured, resumable roadmap (Phase 3) so the next
         # turn — even in a new chat in this project — continues where this left off.
         try:
@@ -443,11 +451,16 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
                 # "next" = first not-done item across the MERGED plan; keep prev's if none.
                 nxt = next((p.get("text", "") for p in plan if p.get("status") != "done"),
                            prev.get("next", ""))
+                # Re-walking the workspace is only worth its cost on turns that actually
+                # ran a task (new todos) or haven't captured a file list yet — a plain
+                # follow-up turn reuses the prior artifact list instead of a fresh os.walk.
+                artifacts = _workspace_files(workspace) if (todos or not prev.get("artifacts")) \
+                    else prev.get("artifacts", [])
                 memory.set_state(scope, {
                     "goal": (prev.get("goal") or text)[:300],
                     "plan": plan[:50],
                     "next": nxt,
-                    "artifacts": _workspace_files(workspace),
+                    "artifacts": artifacts,
                     "last_answer": (final or "")[:400],
                 })
         except Exception:

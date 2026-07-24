@@ -91,6 +91,35 @@ def test_clear_command_resets_context_and_memory(monkeypatch):
     assert turns == []                                 # this chat's episodic notes gone
 
 
+def test_rule_proposal_scoped_to_project_not_global(monkeypatch):
+    """Regression: propose_rule must get the run's own scope, not a hardcoded 'global' —
+    otherwise a rule learned in one project bleeds into every other project's chats
+    (the same class of bug the fact-scoping fix addressed, via the rules door instead)."""
+    seen = {}
+    monkeypatch.setattr(memory, "_embed_model", lambda: None)
+    monkeypatch.setattr(memory, "propose_rule",
+                        lambda task, result, scope="global", budget=None: seen.setdefault("scope", scope))
+
+    def fake_handle_task(task, budget=None, emit=None, **kw):
+        emit({"type": "route", "tier": 3, "task_type": "coding"})   # tier>=3 → rule proposal runs
+        return "Built the requested thing."
+
+    monkeypatch.setattr(chat, "handle_task", fake_handle_task)
+    pid = "a" * 32   # a valid-looking project id (session_workspace requires uuid4().hex)
+    sid = create_session(title="proj-chat", project_id=pid).id
+    chat.run_turn(sid, "Add a feature to the project.", budget=Budget(), stream=False)
+    assert seen.get("scope") == f"project:{pid}"       # scoped to the project, never 'global'
+
+
+def test_active_rule_from_one_project_not_seen_by_another(monkeypatch):
+    """End-to-end (storage layer): a rule approved under project A must not be injected
+    into project B's chats via get_active_rules."""
+    rid = memory.add_rule("run tests before declaring done", scope="project:A", proposed=True)
+    memory.approve_rule(rid)
+    assert "run tests before declaring done" in memory.get_active_rules(["global", "project:A"])
+    assert "run tests before declaring done" not in memory.get_active_rules(["global", "project:B"])
+
+
 def test_compact_command_sets_boundary_and_summary(monkeypatch):
     monkeypatch.setattr(memory, "update_summary",
                         lambda sid, msgs, budget=None: memory.set_summary(sid, "compact summary"))

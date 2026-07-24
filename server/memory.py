@@ -201,20 +201,23 @@ def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str
                 hits = vectorstore.search(qv, k * 2, kind="turn",
                                           threshold=_SEMANTIC_THRESHOLD)
                 if hits:
-                    # Re-apply scope boost. We need the scope for each hit;
-                    # look it up in a single batch query by text (good enough at this scale).
+                    # Re-apply scope boost: query only THESE hits' texts for the ones that
+                    # belong to scope_hint (a targeted lookup, not a full turn-notes scan).
                     if scope_hint:
+                        hit_texts = [t for _, t in hits]
                         with DBSession(engine) as s:
-                            scope_map = {
-                                m.text: m.scope
-                                for m in s.exec(
-                                    select(Memory).where(Memory.kind == "turn")
+                            boosted_texts = {
+                                m.text for m in s.exec(
+                                    select(Memory).where(
+                                        Memory.kind == "turn",
+                                        Memory.scope == scope_hint,
+                                        Memory.text.in_(hit_texts),
+                                    )
                                 ).all()
-                                if m.text
                             }
                     else:
-                        scope_map = {}
-                    boosted = [(_boost(scope_map.get(t, ""), sc), t)
+                        boosted_texts = set()
+                    boosted = [(_boost(scope_hint if t in boosted_texts else "", sc), t)
                                for sc, t in hits]
                     boosted.sort(key=lambda x: -x[0])
                     gated = _gate([t for _, t in boosted])

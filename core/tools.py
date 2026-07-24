@@ -14,6 +14,7 @@ import subprocess
 from pathlib import Path
 
 from . import cache
+from . import repomap
 from .boundary import wrap as _wrap_untrusted
 
 # Default sandbox root (env-configurable). Per-session code can override the root
@@ -771,12 +772,9 @@ def fresh_build_slug(text: str):
 # and can't read outside the sandbox. Lets an agent FIND code instead of listing +
 # reading whole files (cheaper + far less context). See THIRD_PARTY.md.
 _SEARCH_CAP = 100
-# Junk/build/vendor dirs an agent should never waste reads on (kept in sync with
-# core/repomap.py:_SKIP_DIRS). Used by list_files, grep, glob, and the fuzzy matcher.
-_SKIP_DIRS = {".git", ".venv", "venv", "env", "__pycache__", "node_modules", ".mypy_cache",
-              ".pytest_cache", ".ruff_cache", "dist", "build", ".next", ".nuxt", ".idea",
-              ".vscode", "site-packages", ".skills", ".cache", "coverage", ".tox", "target",
-              "vendor", ".gradle", "bin", "obj"}
+# Junk/build/vendor dirs an agent should never waste reads on. Single source of truth
+# is core/repomap.py:_SKIP_DIRS; used here by list_files, grep, glob, and the fuzzy matcher.
+_SKIP_DIRS = repomap._SKIP_DIRS
 
 
 def _within_root(path: str, root: str) -> bool:
@@ -925,7 +923,6 @@ def _did_you_mean(path: str) -> str:
 def repo_map(subdir: str = ".") -> str:
     """A compact map of the codebase (tree + key functions/classes per file), so you grok
     the structure WITHOUT reading every file. Workspace-sandboxed; `subdir` scopes it."""
-    from . import repomap
     try:
         base = _safe(subdir)
     except ValueError as e:
