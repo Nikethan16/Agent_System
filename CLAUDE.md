@@ -137,9 +137,15 @@ empty agent step is automatically retried), `program` (sequential task-runner
 progress: `{tasks:[{text,status}], current, done, total}` — emitted per step when a
 message is an explicit ordered list, see `server/taskrunner.py`), and `context`
 (`{tokens, budget}` — this turn's assembled input size vs the working context budget,
-for the run-summary context meter, emitted in `server/chat.py`). (`done` is an internal
-agent-finished marker.) Note `route` carries `task_type` — never a bare `type` key — so spreading the
-classifier dict into the event can't clobber the event's own `type`.
+for the run-summary context meter, emitted in `server/chat.py`), and `steered`
+(`{text, applied}` — an instruction the user injected mid-run via the WS `steer`/`amend`
+message was folded into the live run's plan; see `Budget.inject/drain_injections` in
+`core/llm.py` and the fold points in `core/orchestrator.py` / `core/agent.py`). (`done` is an
+internal agent-finished marker.) Note `route` carries `task_type` — never a bare `type` key — so
+spreading the classifier dict into the event can't clobber the event's own `type`.
+
+**Client→server WS messages** (`server/api/ws.py`): `run`, `approval_response`, `stop`, and
+`steer`/`amend` (`{text}` — add instructions to a running task without interrupting it).
 
 ## Commands
 ```bash

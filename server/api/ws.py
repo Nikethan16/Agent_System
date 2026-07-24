@@ -166,6 +166,17 @@ async def run_socket(websocket: WebSocket, session_id: str):
                     b.max_iterations = b.iterations   # next budget.check() raises -> run halts
                     emit({"type": "stopping"})
 
+            elif mtype in ("steer", "amend"):
+                # Mid-run steering: fold extra instructions into the LIVE run WITHOUT
+                # interrupting it (no competing worker). The agent loop drains these each
+                # round and adds them to its plan/context. Mirrors the `stop` pattern —
+                # a lightweight write to the shared run budget.
+                b = state["budget"]
+                text = (msg.get("text") or "").strip()
+                if b and text:
+                    b.inject(text)
+                    emit({"type": "steered", "text": text[:200]})
+
     except WebSocketDisconnect:
         pass
     finally:

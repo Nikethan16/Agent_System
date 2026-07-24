@@ -75,13 +75,20 @@ def _tier_num(t) -> int:
         return 2
 
 
-def _effective_tier(agent_tier, routed_tier) -> str:
+def _effective_tier(agent_tier, routed_tier, floor_tier=None) -> str:
     """The tier to actually run at. A trivial (tier-1) task routed to a tier-2
     specialist (general/research) should NOT pay a tier-2 model — use the CHEAPER
-    of the two so the cost-tier separation holds (orchestration issue #4)."""
-    if routed_tier is None:
-        return agent_tier
-    return f"tier{min(_tier_num(agent_tier), _tier_num(routed_tier))}"
+    of the two so the cost-tier separation holds (orchestration issue #4).
+
+    `floor_tier` RAISES the result (a lower bound): a hard tier-3 build passes
+    floor_tier='tier3' so the implement step resolves a strong (tier_hint>=3) model
+    instead of collapsing to the cheap coder tier. Without it, min() only ever
+    downgrades — which is why the deep test saw every task land on the flash model."""
+    eff = agent_tier if routed_tier is None else \
+        f"tier{min(_tier_num(agent_tier), _tier_num(routed_tier))}"
+    if floor_tier is not None:
+        eff = f"tier{max(_tier_num(eff), _tier_num(floor_tier))}"
+    return eff
 
 
 # ---- running an agent -------------------------------------------------------
@@ -131,11 +138,11 @@ def _overlays_for(a) -> str:
 
 def run(agent_id, task, budget=None, emit=None, approve=None, context="",
         max_tokens=None, stream=False, task_type=None, skills=None, tier=None,
-        use_skills=True, verify_run=False, max_rounds=None):
+        use_skills=True, verify_run=False, max_rounds=None, floor_tier=None):
     a = agents.get(agent_id) or agents.get(agents.fallback_id())
     # Cost-first selection prefers a cheap model good at this task / the agent's specialty.
     tt = task_type or (a.capabilities[0] if a.capabilities else None)
-    eff_tier = _effective_tier(a.tier, tier)
+    eff_tier = _effective_tier(a.tier, tier, floor_tier)
     # The fallback CHAIN for this agent (primary first); run_agent falls back down it
     # if a model is rate-limited/down. model_chain[0] is the same primary as before.
     models = model_registry.model_chain(eff_tier, task_type=tt)

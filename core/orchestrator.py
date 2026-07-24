@@ -32,7 +32,8 @@ from . import skills as skill_lib
 from . import playbooks as playbook_lib
 from .agent import _run_one_tool, _looks_like_raw_toolcall, _compact_messages
 from .blackboard import Blackboard
-from .tools import current_workspace, using_workspace, project_notes_block, repo_map, write_file
+from .tools import (current_workspace, using_workspace, project_notes_block, repo_map,
+                    write_file, run_bash)
 
 MAX_MASTER_ROUNDS = 16     # hard cap on lead loop iterations
 MAX_DELEGATIONS = 10       # hard cap on subagent spawns per run (depth-limited too)
@@ -140,20 +141,35 @@ def _produces_file(task: str) -> bool:
 # for free and RAISE the tier so the strong-model floor (tier 3) kicks in. Only build scope.
 _BIG_SCOPE = re.compile(
     r"\b(full|complete|entire|end[- ]?to[- ]?end|production|whole app|full app|multi[- ]?page|"
-    r"multiple (?:screens|pages|views|modules|features|components))\b", re.I)
+    r"from scratch|full[- ]?stack|multiple (?:screens|pages|views|modules|features|components))\b",
+    re.I)
 _PRODUCT_NOUN = re.compile(
     r"\b(app|application|system|platform|tracker|dashboard|website|web app)\b", re.I)
+# Hard-ARCHITECTURE signals — a build that needs real backend/data/security design (the deep
+# test's multi-tenant Kanban scored only 3 on the old heuristic and wrongly stayed tier-2 →
+# flash, because its spec used prose + `POST /path` endpoint lines, not bullet points).
+_HARD_SIGNALS = re.compile(
+    r"\b(multi[- ]?tenant|rbac|role[- ]?based|access[- ]control|authentication|auth|login|"
+    r"permission|isolation|database|sqlite|postgres|persist(?:ence|ed)?|migration|"
+    r"\bapi\b|endpoint|backend|server[- ]?side|microservice|concurren|websocket)\b", re.I)
+# REST endpoint lines like "POST /users" / "GET /boards/{id}" — a strong signal of a real API.
+_ENDPOINT_LINE = re.compile(r"(?mi)^\s*(?:GET|POST|PUT|DELETE|PATCH)\s+/\S")
 
 
 def _difficulty_score(task: str) -> int:
-    """A 0-10 deterministic complexity estimate from the request text (no model call)."""
+    """A 0-12 deterministic complexity estimate from the request text (no model call)."""
     t = task or ""
     score = 0
     if _BIG_SCOPE.search(t):
         score += 3
     feats = len(re.findall(r"(?m)^\s*(?:\d+[.)]|[-*])\s+\S", t))   # a numbered/bulleted feature list
     score += 3 if feats >= 3 else (1 if feats == 2 else 0)
-    if len(t) > 600:                                               # a long, detailed spec
+    endpoints = len(_ENDPOINT_LINE.findall(t))                     # a real REST API contract
+    score += 3 if endpoints >= 3 else (1 if endpoints >= 1 else 0)
+    # distinct hard-architecture signals (multi-tenant / auth / db / api / backend …)
+    hard = len({m.group(0).lower() for m in _HARD_SIGNALS.finditer(t)})
+    score += min(hard, 3)
+    if len(t) > 600:                                              # a long, detailed spec
         score += 2
     if _PRODUCT_NOUN.search(t):
         score += 1
@@ -360,8 +376,13 @@ def _phased_build(task, budget, emit, approve, review, task_type, acceptance="",
                    f"step by step, building incrementally):\n{plan}" if plan else "")
     if acceptance:
         impl += "\n\nACCEPTANCE CRITERIA (definition of done):\n" + acceptance
+    # floor_tier="tier3": this IS the hard-build path — implement on a STRONG model, not the
+    # cheap coder default. Fixes the deep-test finding that every task (even a multi-tenant
+    # build) collapsed to the flash model. The cost-first picker still chooses the cheapest
+    # AVAILABLE tier_hint>=3 model, so free frontier models are preferred when present.
     result = _do_subtask(agent_id, impl, budget, emit, approve, "", False, stream=True,
-                         task_type=task_type, use_skills=True, verify_run=True, max_rounds=28)
+                         task_type=task_type, use_skills=True, verify_run=True, max_rounds=28,
+                         floor_tier="tier3")
     # 2b. ESCALATE: a clearly-failed / unverified implement retries ONCE on the strong model.
     if _looks_failed(result) or "UNVERIFIED" in (result or ""):
         strong = registry.model_for_tier("tier3", task_type=task_type)
@@ -370,6 +391,21 @@ def _phased_build(task, budget, emit, approve, review, task_type, acceptance="",
         with registry.use_model_override(strong):
             result = _do_subtask(agent_id, impl, budget, emit, approve, "", False, stream=True,
                                  task_type=task_type, use_skills=True, verify_run=True, max_rounds=28)
+    # 2c. DETERMINISTIC DONE-GATE (model-free, always runs): if the build has a test
+    # suite it must actually be GREEN before we finish. This overrides any self-claim of
+    # success and runs even when the LLM critic is skipped — it's what stops the agent
+    # declaring "all tests pass" while a test is red. Bounded fix attempts so it can't loop.
+    for _attempt in range(2):
+        ran, green, tail = _verify_tests(emit)
+        if not ran or green:
+            break
+        _e({"type": "critic", "passed": False, "issues": [tail],
+            "summary": f"Automated gate: tests are RED ({tail}) — fixing before finishing."})
+        gate_fix = (f"The test suite is NOT passing:\n{tail}\n\nRun `python -m pytest -q`, find "
+                    f"the real cause, fix the CODE (never weaken or delete the tests), and make "
+                    f"ALL tests pass.")
+        result = _do_subtask(agent_id, gate_fix, budget, emit, approve, "", False, stream=True,
+                             task_type=task_type, use_skills=True, verify_run=True, max_rounds=20)
     # 3. REVIEW (strong critic) + 4. FIX (flash). _review returns (passed, feedback_string).
     if review:
         passed, feedback = _review(task, result, budget, emit, approve, acceptance)
@@ -379,6 +415,36 @@ def _phased_build(task, budget, emit, approve, review, task_type, acceptance="",
             result = _do_subtask(agent_id, fix, budget, emit, approve, "", False, stream=True,
                                  task_type=task_type, use_skills=True, verify_run=True, max_rounds=20)
     return result
+
+
+# ---- deterministic done-gate (model-free) ----------------------------------
+def _verify_tests(emit=None):
+    """Run the workspace's test suite in the sandbox and report the REAL result — never
+    the model's claim. Returns (ran, passed, tail).
+
+    ran=False (so callers don't block) when there is no suite (pytest exit 5) or execution
+    isn't available (no Docker sandbox). This is model-free (no budget cost) and is what
+    kills the 'critic said all-green while a test was red' failure mode."""
+    out = run_bash("python -m pytest -q")
+    if not out.startswith("exit="):
+        return (False, True, "")            # no sandbox / blocked -> can't gate here
+    first, _, body = out.partition("\n")
+    try:
+        code = int(first.split("=", 1)[1].strip())
+    except (ValueError, IndexError):
+        return (False, True, "")
+    if code == 5:                            # pytest: no tests collected -> nothing to gate
+        return (False, True, "")
+    tail = ""
+    for line in reversed([ln for ln in body.splitlines() if ln.strip()]):
+        low = line.lower()
+        if "passed" in low or "failed" in low or "error" in low:
+            tail = line.strip()[:200]
+            break
+    passed = (code == 0)
+    if emit:
+        emit({"type": "tool", "name": "verify_tests", "result": f"exit={code} {tail}"[:200]})
+    return (True, passed, tail or f"pytest exit={code}")
 
 
 # ---- a single specialist step (with optional QA retry) ---------------------
@@ -395,7 +461,18 @@ def _review(task, result, budget, emit, approve, acceptance=""):
         data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1])
         passed, issues, summary = bool(data.get("pass")), data.get("issues", []), data.get("summary", "")
     except Exception:
-        passed, issues, summary = True, [], "(unparseable verdict)"
+        # A verdict we can't parse is NOT a pass — defaulting to True is exactly how a
+        # false-green slips through. Treat it as a failure so the fix loop engages.
+        passed, issues, summary = False, ["critic verdict was unparseable"], "(unparseable verdict — treated as FAIL)"
+    # DETERMINISTIC GATE: if there's a real test suite, it must actually be green. This
+    # overrides a model 'pass' claim when tests are red (the false-green killer).
+    ran, tests_green, tail = _verify_tests(emit)
+    if ran and not tests_green:
+        passed = False
+        issues = list(issues) + [f"Test suite is NOT green: {tail}"]
+        summary = f"Tests FAILED ({tail}). " + (summary or "")
+    elif ran and tests_green:
+        summary = (summary or "") + f" [verified: {tail}]"
     _emit({"type": "critic", "passed": passed, "issues": issues, "summary": summary})
     return passed, summary + ("\n- " + "\n- ".join(issues) if issues else "")
 
@@ -413,12 +490,14 @@ def _looks_failed(r) -> bool:
 
 def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=False,
                 task_type=None, acceptance="", tier=None, use_skills=True,
-                verify_run=False, max_rounds=None):
+                verify_run=False, max_rounds=None, floor_tier=None):
     # verify_run / max_rounds are set by the caller (only the tier-3 build path turns the
     # verification gate on + raises the round cap) — a trivial snippet isn't forced to run.
+    # floor_tier raises the model floor (hard builds implement on a strong model).
     r = team.run(agent_id, task, budget=budget, emit=emit, approve=approve,
                  context=context, stream=stream, task_type=task_type, tier=tier,
-                 use_skills=use_skills, verify_run=verify_run, max_rounds=max_rounds)
+                 use_skills=use_skills, verify_run=verify_run, max_rounds=max_rounds,
+                 floor_tier=floor_tier)
     # A2: if the agent errored / gave up / returned nothing, retry once with a nudge
     # (the model fallback chain has already handled provider-down within the run).
     if _looks_failed(r):
@@ -428,14 +507,15 @@ def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=F
                      "try again and give a focused, complete result.)",
                      budget=budget, emit=emit, approve=approve, context=context,
                      stream=stream, task_type=task_type, tier=tier, use_skills=use_skills,
-                     verify_run=verify_run, max_rounds=max_rounds)
+                     verify_run=verify_run, max_rounds=max_rounds, floor_tier=floor_tier)
     if review:
         passed, feedback = _review(task, r, budget, emit, approve, acceptance=acceptance)
         if not passed:
             fix = f"{task}\n\nA QA reviewer found issues — fix them:\n{feedback}"
             r = team.run(agent_id, fix, budget=budget, emit=emit, approve=approve,
                          context=context, stream=stream, task_type=task_type, tier=tier,
-                         use_skills=use_skills, verify_run=verify_run, max_rounds=max_rounds)
+                         use_skills=use_skills, verify_run=verify_run, max_rounds=max_rounds,
+                         floor_tier=floor_tier)
     return r
 
 
@@ -669,6 +749,14 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
             return agent_id, r
 
     while True:
+        # Mid-run steering: absorb any instructions the user injected WHILE we were working
+        # (via the WS "steer" message) — fold them in as new user turns so the lead adjusts
+        # its plan on the next round instead of the user having to stop + restart.
+        for _inj in budget.drain_injections():
+            messages.append({"role": "user",
+                             "content": "(New instruction from the user, sent mid-run — fold "
+                                        "this into your plan and address it): " + _inj})
+            _emit({"type": "steered", "agent": "lead", "text": _inj[:200], "applied": True})
         force_final = rounds >= MAX_MASTER_ROUNDS
         active_tools = None if force_final else schemas
         # Compact older turns when the lead's history grows large (root fix for #2).

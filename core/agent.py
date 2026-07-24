@@ -256,6 +256,14 @@ def run_agent(task, system, model, max_tokens=4096, budget: Budget = None,
     ran_code = False       # did run_bash actually execute? (verification gate)
     verify_nudges = 0      # how many times we've pushed an unverified run to execute
     while True:
+        # Mid-run steering: fold in any instructions the user injected while this agent was
+        # working (via the WS "steer" message), as new user turns — no interrupt needed.
+        if budget is not None:
+            for _inj in budget.drain_injections():
+                messages.append({"role": "user",
+                                 "content": "(New instruction from the user, sent mid-run — "
+                                            "address this too): " + _inj})
+                _emit({"type": "steered", "agent": label, "text": _inj[:200], "applied": True})
         # Loop guard: after too many tool rounds (or a detected stuck loop), drop tools
         # so the model MUST produce a final answer. Prevents weaker models spinning.
         force_final = rounds >= round_cap or loop_break

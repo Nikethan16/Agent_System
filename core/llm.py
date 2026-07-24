@@ -258,6 +258,26 @@ class Budget:
     def __post_init__(self):
         # Thread-safe: parallel subtasks share one run budget.
         self._lock = threading.Lock()
+        # Mid-run steering: instructions the user sends WHILE a run is in flight (via the
+        # WS "steer" message) land here; the agent loop drains them each round and folds
+        # them into its plan/context — no interrupt, no competing run. Guarded by _lock
+        # because the async WS handler and the run worker thread both touch it.
+        self._pending = []
+
+    def inject(self, text: str):
+        """Queue a mid-run instruction (called from the WS handler thread)."""
+        if not text or not str(text).strip():
+            return
+        with self._lock:
+            self._pending.append(str(text).strip())
+
+    def drain_injections(self) -> list:
+        """Pop all queued mid-run instructions (called by the agent loop each round)."""
+        with self._lock:
+            if not self._pending:
+                return []
+            out, self._pending = self._pending, []
+            return out
 
     def check(self):
         with self._lock:
@@ -304,6 +324,16 @@ class _SubBudget(Budget):
         self.tokens = 0
         self.cached_tokens = 0
         self._lock = threading.Lock()
+        self._pending = []
+
+    # Mid-run steering targets the ROOT run budget (that's what the WS handler holds), so a
+    # sub-budget delegates to its parent — an agent running under a child budget still sees
+    # instructions the user injected into the run.
+    def inject(self, text):
+        self.parent.inject(text)
+
+    def drain_injections(self):
+        return self.parent.drain_injections()
 
     def check(self):
         self.parent.check()      # global cap first (sequential — no nested locks)
