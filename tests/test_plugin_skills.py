@@ -40,14 +40,16 @@ def test_web_frontend_carries_design_guidance():
     assert "signature element" in s.body.lower()
 
 
-def test_code_review_restricted_to_reviewer_agents():
-    # The agents: allowlist must gate auto-matching: a plain coder shouldn't pull the
-    # reviewer rubric, but the code-reviewer agent should.
-    coder = SimpleNamespace(id="coder", capabilities=[], tools=[])
-    reviewer = SimpleNamespace(id="code-reviewer", capabilities=[], tools=[])
+def test_code_review_allowlist_gates_selection():
+    # The agents: allowlist gates auto-matching. code-review is granted to the reviewer/critic
+    # AND coder/fast-coder (the dispatcher routes review work to coder as often as to the
+    # reviewer, so the rubric must reach it) — but an agent NOT on the list must not pull it.
     task = "review this diff and report findings"
-    assert "code-review" not in [s.name for s in sk.select(task, agent=coder)]
-    assert "code-review" in [s.name for s in sk.select(task, agent=reviewer)]
+    for aid in ("code-reviewer", "coder"):
+        ag = SimpleNamespace(id=aid, capabilities=[], tools=[])
+        assert "code-review" in [s.name for s in sk.select(task, agent=ag)], aid
+    doc = SimpleNamespace(id="doc", capabilities=[], tools=[])
+    assert "code-review" not in [s.name for s in sk.select(task, agent=doc)]
 
 
 def test_new_skills_not_blocked_by_scanner():
