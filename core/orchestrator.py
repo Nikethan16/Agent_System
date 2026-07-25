@@ -135,6 +135,34 @@ def _produces_file(task: str) -> bool:
     return bool(_DOCGEN_INTENT.search(task or ""))
 
 
+# "Read & understand an EXISTING repo/URL" intent. A live failure (2026-07) saw
+# "understand github.com/x/y and summarize it" get classified as a coding build, escalated to
+# tier-3, and handed to coder/frontend — which never fetched the repo and HALLUCINATED a
+# fictional app description. Such a task must go to a single agent that can actually FETCH the
+# source (repo-engineer clones + has GitHub tools), NOT the build path.
+_RU_VERB = re.compile(
+    r"\b(understand|summar(?:y|ise|ize|ising|izing)|explain|describe|analy[sz]e|review|"
+    r"walk me through|go through|look at|get a sense|what (?:is|does|are)|tell me about)\b", re.I)
+_RU_URL = ("github.com/", "gitlab.com/", "bitbucket.org/")
+# Primarily a build/modify request -> don't hijack (an understand-THEN-build task routes normally).
+_RU_BUILD = re.compile(
+    r"\b(build|create|implement|scaffold|develop|integrate|add (?:a |the )?(?:feature|endpoint|"
+    r"page|screen)|refactor|migrate|port)\b", re.I)
+
+
+def _repo_understanding_agent(task: str) -> str:
+    """If the task is 'read/understand/summarize an existing repo shared by URL' (not build
+    one), return the agent that should FETCH it (repo-engineer: clone + GitHub tools). Empty
+    otherwise. Deterministic guard against the classifier mis-routing a READ task into a build
+    that never reads the source and invents a description."""
+    t = task or ""
+    if not any(u in t.lower() for u in _RU_URL):
+        return ""                                  # only when a real repo URL is shared
+    if not _RU_VERB.search(t) or _RU_BUILD.search(t):
+        return ""                                  # need an understand verb, and not a build
+    return "repo-engineer" if team.agents.get("repo-engineer") else ""
+
+
 # Deterministic complexity signals — a cheap, robust cross-check on the classifier's tier.
 # The classifier is one fast model's snap judgment and DOES under-tier big builds (observed: a
 # full 7-feature app read as tier 2 -> weak flash model -> lame MVP). These signals catch that
@@ -1162,6 +1190,15 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     tier = cls.get("tier", 2)
     task_type = cls.get("task_type")
     req = _user_request(task)
+    # Read/understand an EXISTING shared repo -> force a single agent that can FETCH it
+    # (repo-engineer clones + reads), NOT the build path. Prevents the classifier mis-tiering
+    # it into a coder/frontend build that never reads the source and hallucinates a summary.
+    _ru_agent = _repo_understanding_agent(req)
+    if _ru_agent:
+        tier, task_type = 2, "research"
+        cls = {**cls, "tier": tier, "task_type": task_type,
+               "reason": (str(cls.get("reason", "")) + " · read/understand a shared repo → "
+                          + _ru_agent).strip(" ·")}
     # Blended difficulty: the classifier is one cheap model's snap judgment and under-tiers big
     # builds. Deterministic scope signals RAISE the tier so the strong-model floor (tier 3 -> a
     # frontier model, not flash) kicks in for genuinely complex build work.
@@ -1185,7 +1222,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         esc_reason = "multi-domain → LEAD"
     else:
         esc_reason = ""
-    if esc_reason:
+    if esc_reason and not _ru_agent:
         tier = 3
         if task_type in _TIER3_SINGLE_AGENT_TYPES:
             task_type = "general"      # force the LEAD path (a single build agent can't coordinate/parallelize)
@@ -1206,14 +1243,17 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
 
     # Simple / moderate -> one focused specialist (its own tool loop is Claude-like).
     if tier < 3:
-        agent_id, reason = team.select_agent(task, budget=budget)
+        if _ru_agent:
+            agent_id, reason = _ru_agent, "read/understand a shared repo (deterministic route)"
+        else:
+            agent_id, reason = team.select_agent(task, budget=budget)
         agent = team.agents.get(agent_id)
         # A BUILD task must go to an agent that can actually edit + run code. The dispatcher
         # (especially its keyword fallback when the LLM pick fails) sometimes hands a coding/UI
         # build to research/doc/general — which have no run_bash and just narrate or flail
         # (observed live: a "host my calculator" request went to research, which wrote a Flask
         # app it never ran). Repin such tasks to the right builder.
-        if ((task_type in ("coding", "frontend", "data") or _produces_file(req))
+        if (not _ru_agent and (task_type in ("coding", "frontend", "data") or _produces_file(req))
                 and not {"edit_file", "run_bash"}.issubset(set(getattr(agent, "tools", None) or []))):
             _want = "frontend" if task_type == "frontend" else "coder"
             _repl = team.agents.get(_want)
