@@ -19,6 +19,22 @@ from dataclasses import dataclass, field
 from dotenv import load_dotenv
 load_dotenv()
 
+# LiteLLM logs a WARNING at import when it can't pre-load AWS Bedrock/SageMaker event-stream
+# shapes because `botocore` isn't installed. We don't use those providers, so drop just those
+# two lines (every other LiteLLM warning still shows) rather than add an unused AWS dependency.
+# The filter must be attached BEFORE `import litellm`, which is where the pre-load happens; this
+# is the only litellm import site in the codebase, so the ordering holds.
+import logging as _logging
+
+
+class _DropBedrockPreloadWarning(_logging.Filter):
+    def filter(self, record):
+        m = record.getMessage()
+        return not ("could not pre-load" in m and ("botocore" in m or "event-stream" in m))
+
+
+_logging.getLogger("LiteLLM").addFilter(_DropBedrockPreloadWarning())
+
 import litellm
 
 from . import keypool
