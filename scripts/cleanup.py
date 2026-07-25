@@ -28,6 +28,7 @@ no docker) once in the background at startup, so the box self-maintains without 
 Set AGENT_DISABLE_JANITOR=1 to turn that off.
 """
 import os
+import stat
 import sys
 import time
 import shutil
@@ -82,12 +83,26 @@ def _older_than(path: str, cutoff: float) -> bool:
         return False
 
 
+def _chmod_retry(func, path, _exc):
+    """shutil.rmtree onerror hook: Windows marks git's internal object files READ-ONLY, which
+    blocks deletion — so old checkpoints that contain a cloned repo could never be reclaimed
+    (WinError 5). Clear the read-only bit and retry the delete."""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except OSError:
+        pass
+
+
 def _rm(path: str, dry_run: bool) -> int:
     """Remove a file or tree; return the bytes it occupied (measured before removal)."""
     size = _dir_size(path) if os.path.isdir(path) else (os.path.getsize(path) if os.path.exists(path) else 0)
     if not dry_run:
         try:
-            shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
+            if os.path.isdir(path):
+                shutil.rmtree(path, onerror=_chmod_retry)
+            else:
+                os.remove(path)
         except OSError as e:
             print(f"  ! could not remove {path}: {e}")
             return 0
