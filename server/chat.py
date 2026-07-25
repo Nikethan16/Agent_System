@@ -12,7 +12,7 @@ import os
 from core.llm import Budget, _span_ctx, use_span_ctx
 from core.boundary import wrap as _wrap_untrusted
 from core.tools import using_workspace, fresh_build_slug
-from core.orchestrator import handle_task, _user_request
+from core.orchestrator import handle_task, _user_request, _repo_understanding_agent
 from core.router import classify
 from core import commands as _commands
 
@@ -370,7 +370,12 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
     # anything about Langfuse. Worker threads re-bind via use_span_ctx in orchestrator.
     # Sequential task program: if the message is an explicit ordered list (>=2 numbered/
     # bulleted items), run each item one-by-one with live progress instead of a single turn.
-    seq = [] if (plan_first or subtasks) else taskrunner.parse_tasks(text)
+    # BUT a "understand this repo, give me a summary covering 1)… 2)…" request is ONE read
+    # task whose numbered points are summary aspects, not build steps — never split it into a
+    # program (that bypasses the repo-understanding route and sent each point to a coder that
+    # hallucinated a fake description). Keep it a single turn so handle_task routes it correctly.
+    seq = ([] if (plan_first or subtasks or _repo_understanding_agent(text))
+           else taskrunner.parse_tasks(text))
 
     _span_token = _span_ctx.set(session_id)
     try:
@@ -390,6 +395,22 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
     db.add_message(session_id, "assistant", final or "", cost=round(budget.spent_usd, 6))
     db.touch_session(session_id)
     spend.record(budget.spent_usd, project_id=project_id)   # daily cap + per-project
+
+    # Isolated local project: the agent worked on a COPY. If it changed anything, prompt the
+    # user to REVIEW & MERGE (the human-approval step) instead of silently touching their real
+    # folder. Non-blocking; the merge itself is POST /api/projects/{pid}/merge.
+    if project_id and not plan_first:
+        try:
+            from . import isolation
+            _real = db.real_local_path(project_id)
+            if (_real and isolation.is_enabled()
+                    and isolation.has_changes(project_id, _real, db.WORKSPACES_DIR)):
+                _emit({"type": "review_merge", "project_id": project_id,
+                       "diff": isolation.diff_summary(project_id, _real, db.WORKSPACES_DIR)[:2000],
+                       "detail": "Changes are ready on a copy of your folder — review the diff, "
+                                 "then approve to merge them into your real folder as a new branch."})
+        except Exception:
+            pass
 
     # ---- update memory (the WRITE path) — skip pure plan previews -----------
     if not plan_first:
