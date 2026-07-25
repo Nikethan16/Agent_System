@@ -204,9 +204,29 @@ def _project_local_path(pid: str) -> str:
 
 
 def _local_workspace(pid: str) -> str:
-    """A project's REAL local folder — only when local mode is on AND the stored path is
+    """A project's local working folder — only when local mode is on AND the stored path is
     still valid (re-validated every time, so disabling the flag or moving the root instantly
-    stops serving it). Empty otherwise -> the caller falls back to the sandboxed workspace."""
+    stops serving it). Empty otherwise -> the caller falls back to the sandboxed workspace.
+
+    With isolation ON (default), this returns a sandbox COPY of the real folder — the agent
+    works on the copy, and changes merge back to the real folder only on human approval (see
+    server/isolation.py). Set AGENT_LOCAL_ISOLATED=0 to edit the real folder in place."""
+    lp = _project_local_path(pid)
+    if not lp:
+        return ""
+    from . import localmode
+    ok, resolved = localmode.validate_path(lp)
+    if not ok:
+        return ""
+    from . import isolation
+    if isolation.is_enabled():
+        return isolation.ensure_work_copy(pid, resolved, WORKSPACES_DIR)
+    return resolved
+
+
+def real_local_path(pid: str) -> str:
+    """The project's REAL local folder (the merge target), bypassing the work-copy. Empty if
+    the project isn't a valid local-mode project."""
     lp = _project_local_path(pid)
     if not lp:
         return ""

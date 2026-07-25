@@ -4,6 +4,8 @@ from pydantic import BaseModel
 
 from .. import projects
 from .. import spend
+from .. import db
+from .. import isolation
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -76,6 +78,40 @@ def repo(pid: str):
     if not projects.get(pid):
         raise HTTPException(404, "project not found")
     return projects.repo_info(pid)
+
+
+@router.get("/{pid}/workcopy")
+def workcopy(pid: str):
+    """Isolated work-copy status for a local project: is isolation on, are there pending changes
+    on the copy, and a short diff summary — feeds the review-before-merge card."""
+    if not projects.get(pid):
+        raise HTTPException(404, "project not found")
+    real = db.real_local_path(pid)
+    if not real or not isolation.is_enabled():
+        return {"isolated": False, "has_changes": False, "diff": ""}
+    return {"isolated": True,
+            "has_changes": isolation.has_changes(pid, real, db.WORKSPACES_DIR),
+            "diff": isolation.diff_summary(pid, real, db.WORKSPACES_DIR)}
+
+
+class MergeIn(BaseModel):
+    label: str = ""
+
+
+@router.post("/{pid}/merge")
+def merge(pid: str, body: MergeIn):
+    """Human-approval step: merge the work-copy back into the real folder. A git repo lands on a
+    new branch `nikki/<label>` (the working tree is untouched until the user merges it); a non-git
+    folder gets its changed files copied over. Returns {ok, mode, branch, detail}."""
+    if not projects.get(pid):
+        raise HTTPException(404, "project not found")
+    real = db.real_local_path(pid)
+    if not real:
+        raise HTTPException(400, "not a local-mode project (nothing to merge)")
+    res = isolation.merge_to_real(pid, real, db.WORKSPACES_DIR, label=body.label)
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("detail", "merge failed"))
+    return res
 
 
 @router.get("/{pid}/files")

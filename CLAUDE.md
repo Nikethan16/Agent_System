@@ -140,7 +140,10 @@ message is an explicit ordered list, see `server/taskrunner.py`), and `context`
 for the run-summary context meter, emitted in `server/chat.py`), and `steered`
 (`{text, applied}` — an instruction the user injected mid-run via the WS `steer`/`amend`
 message was folded into the live run's plan; see `Budget.inject/drain_injections` in
-`core/llm.py` and the fold points in `core/orchestrator.py` / `core/agent.py`). (`done` is an
+`core/llm.py` and the fold points in `core/orchestrator.py` / `core/agent.py`), and `review_merge`
+(`{project_id, diff, detail}` — a local project ran with isolation on (`AGENT_LOCAL_ISOLATED`), so
+the agent worked on a COPY; this prompts the user to review the diff and approve merging back into
+the real folder via `POST /api/projects/{pid}/merge`; see `server/isolation.py`). (`done` is an
 internal agent-finished marker.) Note `route` carries `task_type` — never a bare `type` key — so
 spreading the classifier dict into the event can't clobber the event's own `type`.
 
