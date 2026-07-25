@@ -45,6 +45,33 @@ def test_env_read_is_caution_not_risky(tmp_path):
     assert skill_scan.scan_path(str(tmp_path))["risk"] == "caution"
 
 
+def test_frontmatter_keywords_not_flagged(tmp_path):
+    # A security skill's YAML frontmatter legitimately lists 'exec'/'pickle'/'subprocess' as
+    # selection keywords — metadata, never executed. It must not flag the skill.
+    _write(str(tmp_path), "SKILL.md",
+           "---\nname: sec\ndescription: d\nkeywords: [exec, eval, subprocess, pickle]\n---\n"
+           "Plain advisory prose with no code.")
+    assert skill_scan.scan_path(str(tmp_path))["risk"] == "safe"
+
+
+def test_advisory_avoidance_downgrades_high_to_caution(tmp_path):
+    # "Never eval(); avoid subprocess" is guidance AGAINST these, not an instruction to run
+    # them — downgraded high->medium (surfaced as caution), never left as risky.
+    _write(str(tmp_path), "SKILL.md",
+           "---\nname: g\ndescription: d\n---\nNever use `eval()`. Avoid `subprocess` shell-outs.")
+    r = skill_scan.scan_path(str(tmp_path))
+    assert r["risk"] == "caution"
+    assert r["findings"] and all(f["severity"] == "medium" for f in r["findings"])
+
+
+def test_real_dangerous_script_still_risky_despite_cue_words(tmp_path):
+    # The downgrade is per-line: a script that actually RUNS exec/subprocess with no avoidance
+    # cue on those lines stays risky even if the file mentions 'unsafe' elsewhere.
+    _write(str(tmp_path), "scripts/run.py",
+           "# this is unsafe but we do it anyway\nimport subprocess\nexec(payload)\n")
+    assert skill_scan.scan_path(str(tmp_path))["risk"] == "risky"
+
+
 def test_findings_deduped_by_file_and_reason(tmp_path):
     _write(str(tmp_path), "s.py", "import requests\nrequests.get(1)\nrequests.post(2)\n")
     r = skill_scan.scan_path(str(tmp_path))

@@ -44,6 +44,37 @@ _RULES = [
 ]
 _COMPILED = [(re.compile(p, re.IGNORECASE), sev, why) for p, sev, why in _RULES]
 
+# Avoidance cues: a line that NAMES a dangerous pattern in order to warn against it
+# ("never `eval()`", "avoid subprocess", "do not pickle untrusted data") is advisory prose,
+# not an instruction to run it — exactly what a secure-coding / code-review skill contains.
+# When a cue sits on the matched line we DOWNGRADE high->medium (still surfaced as 'caution',
+# never silently dropped) so such skills aren't hard-blocked from being enabled. A genuinely
+# malicious "run `os.system(...)`" won't carry these cues; human review remains the real gate.
+# Only clear *directive* cues ("don't do X"), not mere descriptors like "unsafe"/"dangerous"
+# — a descriptor could be appended to a genuinely malicious code line to dodge the scan, but
+# an imperative "never/avoid/without" reads as prose telling the agent NOT to do the thing.
+_NEGATION = re.compile(
+    r"\b(never|avoid|avoids|avoiding|don't|do not|doesn't|does not|instead of|rather than|"
+    r"without|no need|not to use)\b", re.IGNORECASE)
+
+
+def _frontmatter_end(text: str) -> int:
+    """Line count of a leading YAML frontmatter block (--- ... ---) in a SKILL.md, else 0.
+    Frontmatter is metadata (name/description/keywords/agents) — never executed and never
+    injected as an instruction to act — so its keyword list legitimately naming `exec`/`pickle`
+    must not flag the skill. Those lines are skipped from pattern matching."""
+    if not text.lstrip().startswith("---"):
+        return 0
+    lines = text.splitlines()
+    start = next((i for i, ln in enumerate(lines) if ln.strip() == "---"), None)
+    if start is None:
+        return 0
+    for j in range(start + 1, len(lines)):
+        if lines[j].strip() == "---":
+            return j + 1        # 1-based line number of the closing fence
+    return 0
+
+
 # Only scan text files that could carry code/instructions.
 _SCAN_EXT = {".py", ".md", ".sh", ".js", ".ts", ".rb", ".pl", ".ps1", ".bat", ".txt",
              ".yaml", ".yml", ".json", ".toml", ""}
@@ -73,9 +104,16 @@ def scan_path(root: str) -> dict:
             continue
         scanned += 1
         rel = os.path.relpath(fp, root)
+        # Skip a SKILL.md's YAML frontmatter (metadata, not code/instructions).
+        fm_end = _frontmatter_end(text) if os.path.splitext(fp)[1].lower() == ".md" else 0
         for i, line in enumerate(text.splitlines(), 1):
+            if i <= fm_end:
+                continue
             for rx, sev, why in _COMPILED:
                 if rx.search(line):
+                    # Advisory "avoid X" prose downgrades high->medium (still surfaced).
+                    if sev == "high" and _NEGATION.search(line):
+                        sev = "medium"
                     findings.append({"file": rel, "line": i, "severity": sev,
                                      "why": why, "snippet": line.strip()[:120]})
                     break        # one finding per line is enough
