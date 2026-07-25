@@ -2,7 +2,7 @@
 name: code-review
 description: Review existing code and report only high-signal, confirmed findings — real bugs, security issues, and clear guideline violations — never style nits or speculation. Use when the task is to review, audit, or critique code or a change/PR.
 keywords: [review, code review, audit, critique, assess, inspect, pr, pull request, merge, diff, feedback, findings, vulnerabilities, quality]
-agents: [code-reviewer, critic]
+agents: [code-reviewer, critic, coder, fast-coder]
 ---
 
 # High-signal code review
