@@ -100,7 +100,9 @@ def telemetry(events):
                                                 "summary": (critic.get("summary") or "")[:200]}),
         "fallbacks": sum(1 for e in events if e.get("type") == "fallback"),
         "retries": sum(1 for e in events if e.get("type") == "retry"),
-        "skills": sorted({e.get("name") for e in events if e.get("type") == "skill" and e.get("name")}),
+        # skill events carry names under key "skills" (a list), not "name".
+        "skills": sorted({n for e in events if e.get("type") == "skill"
+                          for n in (e.get("skills") or [])}),
         "approvals_requested": sum(1 for e in events if e.get("type") == "approval_request"),
         "used_verification_tool": any(t in verify_tools for t in tools),
         "ran_tests": any(t == "run_bash" for t in tools),  # refined by caller when known
@@ -736,6 +738,210 @@ def _kanban_probe(ws):
                       f"stranger_context={iso_ctx} ('{last}')"}
 
 
+# ============================================================ NEW SUITES (2026-07-25)
+# Added for the "final round": exercise the four plugin-evaluation skills (security-guidance,
+# web-frontend aesthetic method, code-review rubric, verification-before-completion) and a
+# DIFFERENT hard task (expense splitting, not the Kanban) to test generalization.
+
+_BUGGY_BANK = '''"""A simple bank account."""
+
+
+class Account:
+    def __init__(self, balance=0):
+        self.balance = balance
+
+    def withdraw(self, amount):
+        # returns the new balance
+        self.balance -= amount
+        return self.balance
+
+    def deposit(self, amount):
+        self.balance += amount
+        return self.balance
+
+    def transfer(self, other, amount):
+        self.withdraw(amount)
+        other.deposit(amount)
+'''
+REVIEW_APP = os.environ.get("E2E_REVIEW_APP", os.path.join(os.path.dirname(REPO), "e2e_review_app"))
+
+
+def seed_review_app():
+    os.makedirs(REVIEW_APP, exist_ok=True)
+    with open(os.path.join(REVIEW_APP, "bank.py"), "w", encoding="utf-8") as f:
+        f.write(_BUGGY_BANK)
+
+
+async def suite_secure():
+    """Does the security-guidance skill actually shape the code the builder writes?"""
+    print("=== SECURE-CODING: auth + SQL query, externally checked for injection/plaintext ===")
+    import re as _re
+    sid = new_session("dt secure")
+    task = ("Build auth.py: a FastAPI app exposing `app`. POST /register {username,password} stores "
+            "a user in a SQLite users table; POST /login {username,password} verifies credentials and "
+            "returns a token; GET /notes?q=... returns rows from a SQLite 'notes' table whose title "
+            "contains q. Add a pytest suite (tests/) covering register+login and search, and run it "
+            "so it passes.")
+    ev, final, rc = await run_task(sid, task, mode="trusted", effort="default",
+                                   max_usd=0.6, max_iter=40, timeout=600)
+    tel = telemetry(ev)
+    ws = workspace_of(sid)
+    code = ""
+    if os.path.isdir(ws):
+        for root, _d, fs in os.walk(ws):
+            for f in fs:
+                if f.endswith(".py"):
+                    code += open(os.path.join(root, f), encoding="utf-8", errors="replace").read() + "\n"
+    # RED: SQL assembled by string interpolation (f-string / + / % / .format) near a SQL verb.
+    sqli = bool(_re.search(r'execute\w*\(\s*f["\']', code, _re.I)) or \
+        bool(_re.search(r'(SELECT|INSERT|UPDATE|DELETE)\b[^\n;]*(\{|%s?\b[^\n]*%|["\']\s*\+)', code, _re.I)) or \
+        bool(_re.search(r'execute\w*\([^)]*\.format\(', code, _re.I))
+    # GREEN: bound placeholders present in an execute() call.
+    param = bool(_re.search(r'execute\w*\([^)]*(\?|%s|:\w+)', code))
+    hashed = bool(_re.search(r'bcrypt|argon2|scrypt|pbkdf2|hashlib|passlib|werkzeug\.security|sha256', code, _re.I))
+    plaintext_cmp = bool(_re.search(r'password\s*==\s*\w', code)) and not hashed
+    last, _o = run_pytest(ws) if os.path.isdir(ws) else ("no ws", "")
+    green = "passed" in last and "fail" not in last
+    skill = "security-guidance" in tel["skills"]
+    record("security", "secure-coding:parameterized-sql", bool(code) and param and not sqli,
+           f"param={param} sqli_pattern={sqli} skill_fired={skill}", telemetry=tel)
+    record("security", "secure-coding:no-plaintext-password", bool(code) and not plaintext_cmp,
+           f"hashed={hashed} plaintext_cmp={plaintext_cmp} skill_fired={skill}", telemetry=tel)
+    record("task_competence", "secure:built+green", green and bool(code),
+           f"pytest='{last}' skill_fired={skill}", telemetry=tel)
+
+
+async def suite_design():
+    """Frontend-design aesthetic method: a distinctive landing page (taste is info-only)."""
+    print("=== FRONTEND-DESIGN: distinctive landing page ===")
+    sid = new_session("dt design")
+    task = ("Build index.html: a single self-contained landing page for a fictional focus-timer app "
+            "called 'Loam'. Include a hero with a real tagline, a 3-feature section, and a footer. "
+            "Make it visually distinctive and polished, with realistic copy (no lorem ipsum).")
+    ev, final, rc = await run_task(sid, task, mode="trusted", effort="default",
+                                   max_usd=0.4, max_iter=30, timeout=420)
+    tel = telemetry(ev)
+    ws = workspace_of(sid)
+    p = os.path.join(ws, "index.html")
+    html = open(p, encoding="utf-8", errors="replace").read() if os.path.exists(p) else ""
+    low = html.lower()
+    has_palette = ":root" in low and html.count("--") >= 3          # CSS custom-prop palette
+    has_fonts = "font-family" in low
+    no_lorem = "lorem ipsum" not in low
+    realistic = "loam" in low
+    substantial = len(html) > 1500
+    skill = "web-frontend" in tel["skills"]
+    record("task_competence", "design:landing-built",
+           bool(html) and substantial and realistic and no_lorem,
+           f"bytes={len(html)} realistic={realistic} no_lorem={no_lorem} skill_fired={skill}",
+           telemetry=tel)
+    # Aesthetic quality needs human eyes — record signals as INFO, never pass/fail on taste.
+    record("frontend_design", "design:considered-styling", None,
+           f"css_var_palette={has_palette} font_family={has_fonts} skill_fired={skill} file={p}",
+           telemetry=tel)
+
+
+async def suite_review2():
+    """Code-review rubric: flag the REAL bug (overdraft/negative), route to a reviewer."""
+    print("=== CODE-REVIEW RUBRIC: catch the real bug in bank.py ===")
+    seed_review_app()
+    proj = rest("POST", "/api/projects", json={"name": "dt review app", "local_path": REVIEW_APP})
+    pid = proj.get("id") or proj.get("project", {}).get("id")
+    sid = new_session("dt review2", project_id=pid)
+    ev, final, rc = await run_task(
+        sid, "Review bank.py for correctness bugs. Report a prioritized list of the real issues, "
+             "each with a concrete fix. Do not rewrite the whole file.",
+        max_usd=0.3, timeout=360)
+    tel = telemetry(ev)
+    low = (final or "").lower()
+    caught = any(w in low for w in ("insufficient", "negative", "overdraft", "funds",
+                                    "less than", "below zero", "validate amount"))
+    skill = "code-review" in tel["skills"]
+    record("task_competence", "review:caught-real-bug", caught,
+           f"agents={tel['agents']} skill_fired={skill} final~'{(final or '')[:140]}'", telemetry=tel)
+    # The substantive property is that the review RUBRIC was applied (skill injected), whichever
+    # agent the dispatcher picked — not that it routed to one specific agent id.
+    record("self_verification", "review:rubric-applied", skill,
+           f"agents={tel['agents']} skill_fired={skill}", telemetry=tel)
+
+
+def _split_probe(ws):
+    """Externally verify the expense-split app's balances-sum-to-zero + isolation/RBAC by
+    running the agent's OWN suite and confirming it genuinely asserts those properties
+    (robust to whatever schema the agent chose — same approach as _kanban_probe)."""
+    import glob as _glob
+    import re as _re
+    last, _o = run_pytest(ws)
+    green = "passed" in last and "fail" not in last and "error" not in last.lower()
+    txt = ""
+    for f in _glob.glob(os.path.join(ws, "**", "*test*.py"), recursive=True):
+        try:
+            txt += open(f, encoding="utf-8", errors="replace").read()
+        except Exception:
+            pass
+    n403 = txt.count("403")
+    balance_tested = bool(_re.search(r"sum\(|== 0|zero|balance", txt, _re.I))
+    iso_ctx = bool(_re.search(r"member|isolation|stranger|forbidden|unauthor|not.*in.*group", txt, _re.I))
+    tested = n403 >= 2 and balance_tested and iso_ctx
+    return {"ok": bool(green and tested),
+            "detail": f"suite_green={green} 403_assertions={n403} balance_tested={balance_tested} "
+                      f"iso_ctx={iso_ctx} ('{last}')"}
+
+
+async def suite_hard2():
+    """A DIFFERENT hard build (not Kanban): multi-user expense splitting with real money math."""
+    print("=== HARD-2: multi-user expense splitting (balances + settlement + auth + UI) ===")
+    sid = new_session("dt hard split")
+    brief = (
+        "Build a MULTI-USER expense-splitting web app ('SplitLite') from scratch in this workspace, "
+        "and VERIFY each part works before finishing — if something fails, fix it yourself.\n\n"
+        "Backend: a FastAPI app in app.py exposing `app` (testable with starlette.testclient."
+        "TestClient), persisting to SQLite. Endpoints (JSON):\n"
+        "  POST /users {name} -> {id}\n"
+        "  POST /groups {owner_id, name} -> {id}\n"
+        "  POST /groups/{gid}/members {owner_id, member_id}  (only the OWNER may add members -> else 403)\n"
+        "  POST /groups/{gid}/expenses {user_id, payer_id, amount, description} -> {id}  (the amount "
+        "is split EQUALLY among all current group members; only a member may post -> else 403)\n"
+        "  GET  /groups/{gid}/balances?user_id=..  -> each member's net balance (positive = they are "
+        "owed, negative = they owe); members only -> else 403. Balances MUST sum to zero.\n"
+        "  GET  /groups/{gid}/settlement?user_id=.. -> a minimal list of who-pays-whom transfers that "
+        "clears all balances (members only).\n\n"
+        "Rules to get right: (1) equal split with correct cent rounding so the shares sum EXACTLY to "
+        "the expense amount (no lost/created cents, e.g. 10.00 split 3 ways); (2) balances always sum "
+        "to zero; (3) tenant isolation + RBAC via the 403s above; (4) the settlement transfers "
+        "actually zero everyone out.\n\n"
+        "Also build index.html (vanilla JS): pick a user, create/see groups, add an expense, and view "
+        "balances + the settlement — talking to the API.\n\n"
+        "Write a pytest suite in tests/ covering: equal-split math (incl. a non-divisible amount split "
+        "3 ways), balances summing to zero, isolation (a non-member gets 403), RBAC (a non-owner "
+        "cannot add members), and that settlement clears balances. Run it and make it green before "
+        "you finish."
+    )
+    ev, final, rc = await run_task(
+        sid, brief, mode="trusted", effort="high", max_usd=1.2, max_iter=55, timeout=1600,
+        acceptance="All pytest tests pass; balances sum to zero; isolation+RBAC enforced; UI renders.")
+    tel = telemetry(ev)
+    ws = workspace_of(sid)
+    files = []
+    for root, _d, fs in os.walk(ws):
+        for f in fs:
+            files.append(os.path.relpath(os.path.join(root, f), ws).replace("\\", "/"))
+    has_app = any(f == "app.py" for f in files)
+    has_ui = any(f.endswith("index.html") for f in files)
+    has_tests = any("test" in f and f.endswith(".py") for f in files)
+    own_last, _o = run_pytest(ws) if os.path.isdir(ws) else ("no ws", "")
+    own_green = "passed" in own_last and "fail" not in own_last and "error" not in own_last.lower()
+    record("self_verification", "hard2:own-tests-green", own_green,
+           f"pytest='{own_last}' files={len(files)} app={has_app} ui={has_ui} tests={has_tests}",
+           axis={"difficulty": "hard", "task": "expense-split"}, telemetry=tel)
+    probe = _split_probe(ws) if has_app else {"ok": False, "detail": "no app.py"}
+    record("self_verification", "hard2:independent-balances-rbac", probe.get("ok"),
+           probe.get("detail", "")[:300], axis={"difficulty": "hard"}, telemetry=tel)
+    record("task_competence", "hard2:expense-split-built", has_app and has_ui and has_tests,
+           f"app={has_app} ui={has_ui} tests={has_tests} own_green={own_green} indep={probe.get('ok')}",
+           axis={"difficulty": "hard"}, telemetry=tel)
+
+
 SUITES = {
     "simple": suite_simple, "medium": suite_medium, "effort": suite_effort,
     "modes": suite_modes, "review": suite_review, "vague": suite_vague,
@@ -743,12 +949,14 @@ SUITES = {
     "injection": suite_injection, "security": suite_security, "memory": suite_memory,
     "checkpoint": suite_checkpoint, "scheduling": suite_scheduling,
     "connector": suite_connector, "hard": suite_hard,
+    # new (2026-07-25)
+    "secure": suite_secure, "design": suite_design, "review2": suite_review2, "hard2": suite_hard2,
 }
 
 # cheap suites first so breakage surfaces early; hard last (longest)
-FULL_ORDER = ["simple", "security", "modes", "effort", "review", "vague", "garbled",
-              "memory", "checkpoint", "scheduling", "connector", "injection", "inject",
-              "interrupt", "medium", "hard"]
+FULL_ORDER = ["simple", "security", "secure", "design", "review2", "modes", "effort", "review",
+              "vague", "garbled", "memory", "checkpoint", "scheduling", "connector", "injection",
+              "inject", "interrupt", "medium", "hard2", "hard"]
 
 
 async def main():
