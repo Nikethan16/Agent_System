@@ -408,6 +408,7 @@ def _phased_build(task, budget, emit, approve, review, task_type, acceptance="",
     # cheap coder default. Fixes the deep-test finding that every task (even a multi-tenant
     # build) collapsed to the flash model. The cost-first picker still chooses the cheapest
     # AVAILABLE tier_hint>=3 model, so free frontier models are preferred when present.
+    _before_sig = _workspace_sig(current_workspace())
     result = _do_subtask(agent_id, impl, budget, emit, approve, "", False, stream=True,
                          task_type=task_type, use_skills=True, verify_run=True, max_rounds=28,
                          floor_tier="tier3")
@@ -419,6 +420,12 @@ def _phased_build(task, budget, emit, approve, review, task_type, acceptance="",
         with registry.use_model_override(strong):
             result = _do_subtask(agent_id, impl, budget, emit, approve, "", False, stream=True,
                                  task_type=task_type, use_skills=True, verify_run=True, max_rounds=28)
+    # 2b-2. ACT GATE (model-free): a build that DESCRIBED changes but wrote no files is re-prompted
+    # once to actually apply them (catches the "planned instead of built" failure mode).
+    if _needs_act_retry(_before_sig, result, task_type, task, emit):
+        result = _do_subtask(agent_id, impl + _ACT_NUDGE, budget, emit, approve, "", False,
+                             stream=True, task_type=task_type, use_skills=True, verify_run=True,
+                             max_rounds=22, floor_tier="tier3") or result
     # 2c. DETERMINISTIC DONE-GATE (model-free, always runs): if the build has a test
     # suite it must actually be GREEN before we finish. This overrides any self-claim of
     # success and runs even when the LLM critic is skipped — it's what stops the agent
@@ -473,6 +480,69 @@ def _verify_tests(emit=None):
     if emit:
         emit({"type": "tool", "name": "verify_tests", "result": f"exit={code} {tail}"[:200]})
     return (True, passed, tail or f"pytest exit={code}")
+
+
+# ---- deterministic done-gate: did the agent actually CHANGE any files? -------
+# The write-side analogue of _verify_tests. A live failure (2026-07) saw agents produce a
+# detailed PLAN/analysis for a code-change task but write ZERO files (both a tier-3 LEAD and a
+# single agent that deferred to "here is what should be done"). This gate catches that
+# BEHAVIOURALLY: a build-intent task that ends having created/modified no file is re-prompted
+# ONCE to actually apply the edits. Purely local (no model cost).
+_SIG_SKIP = {".git", "node_modules", ".venv", "venv", "__pycache__", ".mypy_cache", ".ruff_cache",
+             ".pytest_cache", ".idea", ".vscode", "dist", "build", ".next", ".skills", "site-packages"}
+_BUILD_VERB_RE = re.compile(
+    r"\b(write|build|create|implement|add|fix|edit|modif|refactor|integrat|enrich|wire|apply|"
+    r"chang|updat|patch|rename|delet|remov|replac|scaffold|generat|port)\w*", re.I)
+
+
+def _workspace_sig(ws: str) -> dict:
+    """A cheap file signature {relpath: (size, mtime)} of the workspace (skips VCS/caches).
+    Comparing it before/after a run tells us whether ANY file was created or modified."""
+    sig = {}
+    if not ws or not os.path.isdir(ws):
+        return sig
+    for root, dirs, files in os.walk(ws):
+        dirs[:] = [d for d in dirs if d not in _SIG_SKIP]
+        for f in files:
+            fp = os.path.join(root, f)
+            try:
+                st = os.stat(fp)
+                sig[os.path.relpath(fp, ws)] = (st.st_size, int(st.st_mtime))
+            except OSError:
+                pass
+    return sig
+
+
+def _build_intent(task_type, req) -> bool:
+    """True when the task should have produced/changed files, so 'no change' is a failure.
+    Works even for LEAD runs (task_type forced to 'general') via the build-verb signal."""
+    return (((task_type or "") in ("coding", "frontend", "data"))
+            or _produces_file(req or "") or bool(_BUILD_VERB_RE.search(req or "")))
+
+
+def _needs_act_retry(before_sig: dict, result: str, task_type, req, emit=None) -> bool:
+    """After a build run: True when it was build-intent yet changed NO files (the agent only
+    DESCRIBED the work). Model-free. Never fires on a genuinely-failed run (provider error/stop)
+    — that's a different failure the caller already handles — nor when execution can't be seen."""
+    if not _build_intent(task_type, req) or _looks_failed(result):
+        return False
+    ws = current_workspace()
+    if not ws or not os.path.isdir(ws):
+        return False                          # can't tell -> don't block (same as _verify_tests)
+    if _workspace_sig(ws) != before_sig:
+        return False                          # something changed -> the agent did act
+    if emit:
+        emit({"type": "critic", "passed": False,
+              "issues": ["no files were created or modified — the change was described, not applied"],
+              "summary": "build task changed no files — re-prompting to actually apply the edits"})
+    return True
+
+
+_ACT_NUDGE = (
+    "\n\nIMPORTANT — your previous attempt did NOT create or modify any files in the workspace; "
+    "you described the change instead of making it. APPLY the change NOW using write_file / "
+    "edit_file / apply_patch. Editing files needs no network, install, or run step. If NO file "
+    "change is genuinely required for this task, say so explicitly and explain why.")
 
 
 # ---- a single specialist step (with optional QA retry) ---------------------
@@ -1152,8 +1222,13 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         todos = [{"text": s, "status": "pending"} for s in subtasks]
         # Approved multi-step plans are substantive -> QA on unless explicitly disabled.
         rv = review if isinstance(review, bool) else True
-        final = _master_loop(task or "Execute the approved plan.", budget, emit, approve, rv,
+        _plan_task = task or "Execute the approved plan."
+        _before_sig = _workspace_sig(current_workspace())
+        final = _master_loop(_plan_task, budget, emit, approve, rv,
                              todos, acceptance=acceptance, stream=stream)
+        if _needs_act_retry(_before_sig, final, None, _plan_task, emit):
+            final = _master_loop(_plan_task + _ACT_NUDGE, budget, emit, approve, rv,
+                                 todos, acceptance=acceptance, stream=stream) or final
         _emit({"type": "final", "text": final, "cost": round(budget.spent_usd, 4)})
         return final
 
@@ -1287,10 +1362,18 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         # UNVERIFIED — otherwise it relies on the model choosing to be honest (testing showed
         # a complex build routed tier-2 and the gate didn't arm).
         _verify = tier >= 2 and ((task_type or "") in ("coding", "data") or _produces_file(req))
+        _before_sig = _workspace_sig(current_workspace())
         result = _do_subtask(agent_id, agent_task, budget, emit, approve, "", review, stream,
                              task_type=task_type, acceptance=acceptance, tier=downgrade_tier,
                              use_skills=(tier >= 2),
                              verify_run=_verify, max_rounds=(22 if _verify else None))
+        # ACT GATE: a build-intent task that changed NO files gets one imperative re-prompt to
+        # actually apply the edits (the "described instead of built" failure mode).
+        if _needs_act_retry(_before_sig, result, task_type, req, emit):
+            result = _do_subtask(agent_id, agent_task + _ACT_NUDGE, budget, emit, approve, "", review,
+                                 stream, task_type=task_type, acceptance=acceptance, tier=downgrade_tier,
+                                 use_skills=(tier >= 2), verify_run=_verify,
+                                 max_rounds=(22 if _verify else None)) or result
         _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
         return result
 
@@ -1345,14 +1428,25 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         # (llm._iter_stream_bounded) which only trips on a true stall — instead of the flat
         # 45s total wall-clock that was guillotining actively-streaming calls (~3 min/run of
         # spurious timeout fallbacks). Live `agent_token` events are a bonus for the UI.
+        _before_sig = _workspace_sig(current_workspace())
         result = _do_subtask(agent_id, agent_task, budget, emit, approve, "", build_review, True,
                              task_type=task_type, acceptance=acceptance, tier=None, use_skills=True,
                              verify_run=True, max_rounds=22)
+        if _needs_act_retry(_before_sig, result, task_type, req, emit):
+            result = _do_subtask(agent_id, agent_task + _ACT_NUDGE, budget, emit, approve, "",
+                                 build_review, True, task_type=task_type, acceptance=acceptance,
+                                 tier=None, use_skills=True, verify_run=True, max_rounds=22) or result
         _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
         return result
 
     # Complex (non-coding) -> the LEAD master loop, seeded with the task's playbook + delegation.
+    _before_sig = _workspace_sig(current_workspace())
     final = _master_loop(task, budget, emit, approve, review, task_type=task_type,
                          acceptance=acceptance, stream=stream)
+    # ACT GATE: a build-intent LEAD run that changed no files (planned instead of built) gets one
+    # imperative re-prompt to actually apply the edits.
+    if _needs_act_retry(_before_sig, final, task_type, req, emit):
+        final = _master_loop(task + _ACT_NUDGE, budget, emit, approve, review, task_type=task_type,
+                             acceptance=acceptance, stream=stream) or final
     _emit({"type": "final", "text": final, "cost": round(budget.spent_usd, 4)})
     return final
