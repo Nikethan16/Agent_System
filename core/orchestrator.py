@@ -586,6 +586,28 @@ def _looks_failed(r) -> bool:
     return (not s) or s.startswith(_FAIL_MARKERS)
 
 
+# ---- per-feature done-gate (used by the sequential task runner) -------------
+def evaluate_feature(task, result, before_sig, budget, emit=None, approve=None, acceptance=""):
+    """Judge whether ONE feature is actually DONE — the public gate the sequential runner
+    (server/taskrunner.py) calls between features. It composes the existing, battle-tested
+    primitives (no new verification logic):
+      1. ACT check  — a build-intent feature that changed NO files hasn't been applied.
+      2. _review    — the QA critic, which itself folds in the deterministic pytest gate
+                      (_verify_tests): a real red suite forces FAIL, an unparseable verdict is FAIL.
+    `before_sig` is `_workspace_sig(current_workspace())` captured BEFORE the feature ran.
+    Returns (passed: bool, feedback: str) — feedback is the concrete reason on failure, ready
+    to append to a re-drive prompt. A genuinely-failed run (provider error/stop) is reported as
+    not-passed with its own marker so the caller can re-try or flag it."""
+    if _looks_failed(result):
+        return False, ("The previous attempt did not complete (it errored or was cut off). "
+                       "Retry the task and finish it.")
+    # 1. Did a build feature actually touch files? (_needs_act_retry emits its own critic event.)
+    if _needs_act_retry(before_sig, result, None, task, emit):
+        return False, _ACT_NUDGE.strip()
+    # 2. QA critic + deterministic test gate (tests, when present, must be green).
+    return _review(task, result, budget, emit, approve, acceptance=acceptance)
+
+
 def _do_subtask(agent_id, task, budget, emit, approve, context, review, stream=False,
                 task_type=None, acceptance="", tier=None, use_skills=True,
                 verify_run=False, max_rounds=None, floor_tier=None):
