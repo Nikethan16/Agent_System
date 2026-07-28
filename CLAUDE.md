@@ -134,8 +134,12 @@ rendered as a collapsible "thought process" block in the UI), `skill` (Agent
 Skills applied to a step), `fallback` (model failover — primary unavailable/
 rate-limited → switched to the next model in the chain), `retry` (a failed/
 empty agent step is automatically retried), `program` (sequential task-runner
-progress: `{tasks:[{text,status}], current, done, total}` — emitted per step when a
-message is an explicit ordered list, see `server/taskrunner.py`), and `context`
+progress: `{tasks:[{text,status,attempts}], current, done, total}` — emitted per step when a
+message is an explicit ordered list; each feature is VERIFIED before the next via a per-feature
+done-gate (`core/orchestrator.py:evaluate_feature` = act-gate + pytest gate + QA critic) with up
+to 2 re-tries, so `status` is `verified`/`needs_attention` (not a bare "done") and `done` counts
+only verified features; still-failing features are flagged and the run continues, see
+`server/taskrunner.py`), and `context`
 (`{tokens, budget}` — this turn's assembled input size vs the working context budget,
 for the run-summary context meter, emitted in `server/chat.py`), and `steered`
 (`{text, applied}` — an instruction the user injected mid-run via the WS `steer`/`amend`

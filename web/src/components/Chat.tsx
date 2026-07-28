@@ -304,29 +304,48 @@ function RunSummary({ m, running, steps, critic }: { m: Msg; running?: boolean; 
 function ProgramProgress({ events }: { events: Ev[] }) {
   const prog = [...events].reverse().find((e) => e.type === "program") as any;
   if (!prog?.tasks?.length) return null;
-  const glyph: Record<string, string> = { done: "✓", error: "⚠", skipped: "⏭", in_progress: "●", pending: "○" };
+  // `verified`/`needs_attention` are the per-feature done-gate outcomes; `done` is kept for
+  // backward-compat with older stored runs.
+  const glyph: Record<string, string> = {
+    verified: "✓", done: "✓", needs_attention: "⚠", error: "⚠", skipped: "⏭",
+    in_progress: "●", pending: "○",
+  };
   const tone: Record<string, string> = {
-    done: "text-emerald-600", error: "text-amber-600", skipped: "text-light-muted",
+    verified: "text-emerald-600", done: "text-emerald-600", needs_attention: "text-amber-600",
+    error: "text-amber-600", skipped: "text-light-muted",
     in_progress: "text-accent-terracotta", pending: "text-light-muted",
   };
   const pct = prog.total ? Math.round((prog.done / prog.total) * 100) : 0;
+  // While a feature is being re-worked (attempt > 1) show "checking… / try N"; after it settles,
+  // show how many attempts it took so the verify-and-retry loop is visible, not a black box.
+  const badge = (t: any): string => {
+    const a = t.attempts || 0;
+    if (t.status === "in_progress") return a > 1 ? `try ${a}` : "";
+    if ((t.status === "verified" || t.status === "needs_attention") && a > 1)
+      return `${a} tries`;
+    return "";
+  };
   return (
     <div className="mb-3">
-      <PhaseLabel icon="list_alt" color="bg-accent-terracotta">Tasks · {prog.done}/{prog.total}</PhaseLabel>
+      <PhaseLabel icon="list_alt" color="bg-accent-terracotta">Verified · {prog.done}/{prog.total}</PhaseLabel>
       <div className="ml-6">
         <div className="h-1.5 rounded-full bg-surface-container-high dark:bg-dark-border overflow-hidden mb-2">
           <div className="h-full rounded-full bg-accent-terracotta transition-all duration-500" style={{ width: `${pct}%` }} />
         </div>
         <div className="space-y-1">
-          {prog.tasks.map((t: any, i: number) => (
-            <div key={i} className="flex items-start gap-2 text-[12px]">
-              <span className={`${tone[t.status] || "text-light-muted"} ${t.status === "in_progress" ? "animate-pulse" : ""} w-4 shrink-0 text-center`}>{glyph[t.status] || "○"}</span>
-              <span className={t.status === "in_progress" ? "text-on-surface dark:text-dark-text font-medium"
-                : t.status === "pending" ? "text-light-muted" : "text-on-surface-variant dark:text-light-muted"}>
-                {i + 1}. {t.text}
-              </span>
-            </div>
-          ))}
+          {prog.tasks.map((t: any, i: number) => {
+            const b = badge(t);
+            return (
+              <div key={i} className="flex items-start gap-2 text-[12px]">
+                <span className={`${tone[t.status] || "text-light-muted"} ${t.status === "in_progress" ? "animate-pulse" : ""} w-4 shrink-0 text-center`}>{glyph[t.status] || "○"}</span>
+                <span className={t.status === "in_progress" ? "text-on-surface dark:text-dark-text font-medium"
+                  : t.status === "pending" ? "text-light-muted" : "text-on-surface-variant dark:text-light-muted"}>
+                  {i + 1}. {t.text}
+                </span>
+                {b && <span className="shrink-0 text-[10px] text-light-muted rounded-full border border-light-border dark:border-dark-border px-1.5 leading-4">{b}</span>}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
