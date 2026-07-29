@@ -4,7 +4,52 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## ⚡ LATEST (2026-07-23) — RENAMED TO "NIKKI" + big reliability + product/UI day (LOCAL focus)
+## ⚡ LATEST (2026-07-29) — "LOOP ENGINEERING" + reliability fixes + first real feature built on a live project
+
+**7 commits to `main` (local only — NOT pushed). 447 pytest + web build clean.** Focus: make a
+BATCH of features trustworthy (verify each before the next), fix two reliability rough edges the
+work surfaced, then prove the whole thing by building + verifying a real feature on the OPPs Finder
+project through Nikki.
+
+### The headline — per-feature verify-and-retry ("loop engineering")
+The sequential task-runner used to mark each item of a numbered list "done" the instant the agent
+went quiet — no check. Now each feature is **built → gated → re-worked (up to 2 retries) → only
+then verified**; a still-failing one is flagged `needs_attention` and the run CONTINUES
+(flag-and-continue). "Done" now means *actually tested + reviewed*.
+| Commit | What |
+|---|---|
+| `bc740c4` | **"Act, don't just plan" done-gate** — a build-intent run that changed ZERO files is re-prompted once to actually apply the edits (`_needs_act_retry`/`_workspace_sig`/`_ACT_NUDGE`, wired at all 5 build paths). |
+| `9b1c57f` | **`evaluate_feature()`** — one public gate composing the existing act-check + deterministic pytest gate (`_verify_tests`) + QA critic (`_review`). No new verification logic. |
+| `54ab7dc` | **`run_program` per-feature loop** (`server/taskrunner.py`) — build→evaluate→retry×2→`verified`/`needs_attention`; honest end-of-run scoreboard (only verified features count). |
+| `c3a2661` | Web checklist shows the new states + a "try N / N tries" badge. |
+| `18e69fe` | **Leaked tool-call markup never surfaces as the final answer** — the detector only matched a SINGLE full-width pipe, so DeepSeek's DOUBLE-pipe `<｜｜DSML｜｜tool_calls>` leaked out of a live LEAD run. Broadened the detector, made the stripper cut the whole trailing block (keeping prose), added a master-loop scrub net. |
+| `826d1b1` + `1bacd00` | **Configurable verify-gate command** — `_verify_cmd()` resolves most-specific-first: per-project `.nikki/verify.txt` → global `AGENT_VERIFY_CMD` → default `python -m pytest -q`. Lets a project whose plain pytest can't run in the netless sandbox declare its own (e.g. the pure subset with `--noconftest`). |
+
+### First real feature built on a live project (OPPs Finder), copy-safety proven
+- **Copy-safety works** (`AGENT_LOCAL_ISOLATED=1`, `server/isolation.py`): Nikki built on a git
+  CLONE of `C:\Project\OPPs Finder`, verified there, then the change was reviewed + applied to the
+  real repo. The real folder was never touched mid-run.
+- Built **two pure confidence helpers** via the loop (`points_to_next_tier`, `summarize_weights` +
+  pure tests) — both **verified in-sandbox** (the gate really ran the tests: 39→41 passing) and
+  applied to the real OPPs Finder repo (their commits `d034627` code, `34432f4` `.nikki/verify.txt`).
+  Also corrected a **stale claim in OPPs Finder's `HANDOFF.md`** (it said Confidence Engine V2 wasn't
+  wired — the code shows it IS: `confidence_calibration_job` → Redis weights → `twin_service`).
+
+### Key constraint learned (don't re-discover)
+Nikki's build sandbox is **network-isolated (`--network none`)**. So on an external project it can
+only **auto-verify PURE/logic tests** — anything needing Postgres/Redis/a live service can be built
+but only gets a *critic* review, not a real test gate. Point such a project's `.nikki/verify.txt` at
+its pure subset (OPPs Finder's is set up this way). Running a DB-backed suite in-sandbox would need
+a heavier setup (DB in the sandbox + relaxing network isolation) — deliberately NOT done.
+
+### State right now
+- **Server running** on `:8800` with `AGENT_LOCAL_ISOLATED=1` and **no** global `AGENT_VERIFY_CMD`
+  (per-project file is the mechanism now). Restart with `.\run.ps1` picks up latest code.
+- News/feeds WIP still uncommitted (unchanged). Nothing pushed (VM parked).
+- **Next:** owner wants a planned set of **next OPPs Finder features** to build via the loop
+  (prefer pure/logic ones so the gate can auto-verify them). See the grounded backlog planning.
+
+## EARLIER (2026-07-23) — RENAMED TO "NIKKI" + big reliability + product/UI day (LOCAL focus)
 
 **16 commits to `main` (local only — NOT pushed). 389 pytest + web build clean.** Big day: renamed
 the platform, fixed the real memory bug, added voice/task-runner/folder-mode, and a premium UI pass.
