@@ -30,7 +30,8 @@ from . import agents as team
 from . import toolbelt
 from . import skills as skill_lib
 from . import playbooks as playbook_lib
-from .agent import _run_one_tool, _looks_like_raw_toolcall, _compact_messages
+from .agent import (_run_one_tool, _looks_like_raw_toolcall, _strip_toolcall_markup,
+                    _compact_messages)
 from .blackboard import Blackboard
 from .tools import (current_workspace, using_workspace, project_notes_block, repo_map,
                     write_file, run_bash)
@@ -950,13 +951,16 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
             # answer from the blackboard (mitigation; root fix = compaction, phase 2).
             if force_final and (_looks_like_raw_toolcall(msg_content) or _looks_failed(msg_content)):
                 return (_finalize_from_board(board, task, budget, emit, stream)
-                        or msg_content
+                        or _strip_toolcall_markup(msg_content)
                         or "(Stopped at the step limit without a clean answer — please retry.)")
             # The lead finished — mark every step complete so the checklist shows done.
             if todos:
                 plan_state["done"] = len(todos)
                 _emit_plan()
-            return msg_content or _finalize_from_board(board, task, budget, emit, stream)
+            # Last-resort net: scrub any leaked tool-call markup the detector above didn't
+            # route away, so raw <｜…｜> / <function=> garbage can never be the final answer.
+            return _strip_toolcall_markup(msg_content) or _finalize_from_board(
+                board, task, budget, emit, stream)
 
         did_work = False          # any real action this round (delegate / file tool)?
         called_writetodos = False

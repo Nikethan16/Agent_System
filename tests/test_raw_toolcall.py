@@ -51,3 +51,25 @@ def test_strip_removes_markup():
     assert "<tool_call>" not in _strip_toolcall_markup("<tool_call>hello</tool_call>")
     assert "<function=" not in _strip_toolcall_markup("<function=run>x</function> done")
     assert _strip_toolcall_markup("plain answer") == "plain answer"
+
+
+# ---- regression: the DOUBLE full-width pipe DSML form that leaked from a live LEAD run ----
+
+def test_detects_double_pipe_dsml_toolcall():
+    # A live tier-3 LEAD run ended with prose + this block; the single-pipe-only regex missed it.
+    leaked = ('Now I have the full picture. Let me write the synthesis.\n\n'
+              '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="write_todos">')
+    assert _looks_like_raw_toolcall(leaked)
+
+
+def test_detects_double_pipe_dsml_at_start():
+    assert _looks_like_raw_toolcall("<｜｜DSML｜｜tool_calls>run_bash{}")
+
+
+def test_strip_cuts_trailing_dsml_block_keeps_prose():
+    leaked = ('Now I have the full picture. Let me write the synthesis.\n\n'
+              '<｜｜DSML｜｜tool_calls>\n<｜｜DSML｜｜invoke name="write_todos">\n'
+              '[{"content": "x", "status": "done"}]')
+    cleaned = _strip_toolcall_markup(leaked)
+    assert cleaned == "Now I have the full picture. Let me write the synthesis."
+    assert "DSML" not in cleaned and "write_todos" not in cleaned

@@ -122,12 +122,17 @@ def _compact_messages(messages, budget=None, emit=None, label="agent"):
 # "<tool_call><function=run_bash>". That raw markup must never be surfaced as the
 # user-facing final answer. Mirrors OpenCode routing malformed calls to `invalid`.
 #
-# Vendor "special tokens" use full-width pipes + 'tool_calls' and never occur in
+# Vendor "special tokens" use full-width pipes + 'tool_calls'/'DSML' and never occur in
 # legitimate prose -> conclusive. A generic <tool_call>/<function=> tag counts
 # ONLY when the message STARTS with it (the model is emitting a call), so a normal
 # answer that merely quotes such syntax (in a sentence or a code block) passes
 # through untouched.
-_RAW_TOOLCALL_SPECIAL = re.compile(r"<｜[^｜>]*tool[_ ]?calls?[^｜>]*｜?>|<｜DSML｜>")
+#
+# NOTE: the pipe count varies by model/serialisation — DeepSeek has been seen emitting BOTH
+# `<｜DSML｜tool_calls>` (single) and `<｜｜DSML｜｜tool_calls>` (double). Match one-or-more
+# full-width pipes so the double form can't slip through (a live LEAD run leaked exactly that).
+_RAW_TOOLCALL_SPECIAL = re.compile(
+    r"<｜+[^>]*(?:tool[_ ]?calls?|DSML|invoke\b|parameter\b)[^>]*>")
 
 
 def _looks_like_raw_toolcall(text: str) -> bool:
@@ -160,14 +165,26 @@ def _looks_degenerate(text: str) -> bool:
 # Patterns to strip from a final answer as a LAST RESORT, so leaked tool-call markup
 # never reaches the user even if a model keeps emitting it after the repair re-prompt.
 _STRIP_PATTERNS = re.compile(
-    r"<｜[^｜>]*｜>|</?tool_call>|<function\s*=[^>]*>|</function>|<arg[^>]*>|</arg>",
+    r"<｜[^>]*｜*>|</?tool_call>|<function\s*=[^>]*>|</function>|<arg[^>]*>|</arg>",
     re.IGNORECASE)
+
+# The OPENER of a leaked tool-call block. Models write any prose FIRST and then the call,
+# so the markup is always trailing — we truncate at the earliest opener, dropping the whole
+# block (tags + JSON args) rather than un-wrapping tag-by-tag (which would leave arg garbage).
+_TOOLCALL_OPENER = re.compile(
+    r"<｜+[^>]*(?:tool[_ ]?calls?|DSML|invoke\b|parameter\b)[^>]*>|<tool_call\b|<function\s*=")
 
 
 def _strip_toolcall_markup(text: str) -> str:
-    """Remove tool-call markup tokens from `text`. Used only on a final answer that
-    still looked like a raw tool call after the one-shot repair."""
-    return _STRIP_PATTERNS.sub("", text or "").strip()
+    """Remove tool-call markup from `text`. Used only on a final answer that still looked
+    like a raw tool call after the one-shot repair. Cuts the trailing markup block whole,
+    then scrubs any stray inline tags, keeping whatever real prose preceded it."""
+    if not text:
+        return ""
+    m = _TOOLCALL_OPENER.search(text)
+    if m:
+        text = text[:m.start()]
+    return _STRIP_PATTERNS.sub("", text).strip()
 
 # After this many tool-using rounds, force a final (no-tools) answer so a weaker
 # model can't spin on tool calls forever. Raised from 8 so real coding work
