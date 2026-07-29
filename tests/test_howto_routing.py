@@ -28,3 +28,35 @@ def test_plain_statements_are_not_instructional():
     assert not o._instructional_question("The capital of France is Paris.")
     assert not o._instructional_question("summarize what this repo does")  # RU verb, not how-to
     assert not o._instructional_question("")
+
+
+# ---- failure safety net: a failed run must give next-steps, never a bare marker ----
+
+class _B:
+    spent_usd = 0.01
+
+
+def test_failure_guidance_adds_next_steps_on_cap():
+    out = o._failure_guidance("(stopped: iteration cap hit: 45)")
+    assert "(stopped: iteration cap hit: 45)" in out          # keeps the honest reason
+    assert "continue" in out.lower() and "what do i do now" in out.lower()  # + concrete next steps
+
+
+def test_failure_guidance_provider_error():
+    assert "try again" in o._failure_guidance("(provider error: APIError)").lower()
+
+
+def test_failure_guidance_empty_response():
+    assert "try again" in o._failure_guidance("(the model returned an empty response)").lower()
+
+
+def test_failure_guidance_noop_on_normal_answer():
+    ans = "Here are the deploy steps:\n1. Provision Postgres\n2. Set env vars"
+    assert o._failure_guidance(ans) == ans                    # a real answer is untouched
+
+
+def test_final_payload_wraps_failure_but_not_success():
+    fail = o._final_payload("(stopped: iteration cap hit: 30)", _B())
+    assert fail["type"] == "final" and "continue" in fail["text"].lower()
+    ok = o._final_payload("The answer is 42.", _B())
+    assert ok["text"] == "The answer is 42."

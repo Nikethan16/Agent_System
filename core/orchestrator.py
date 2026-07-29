@@ -641,6 +641,33 @@ def _looks_failed(r) -> bool:
     return (not s) or s.startswith(_FAIL_MARKERS)
 
 
+def _failure_guidance(text: str) -> str:
+    """Never dead-end the user: when a run ends on a bare failure marker (step/budget limit,
+    provider error, empty response), append an honest note + concrete next steps. A no-op on a
+    normal answer. (Owner ask: even when it fails, it should tell me what to do now.)"""
+    if not _looks_failed(text):
+        return text
+    low = (text or "").strip().lower()
+    if "provider" in low:
+        tip = ("The model provider errored (often a transient rate limit). Try again in a moment; "
+               "if it keeps happening, tell me and I'll switch models or simplify the run.")
+    elif "empty" in low:
+        tip = ("The model returned nothing (usually a transient rate limit). Please try again; if "
+               "it persists, let me know and I'll route it differently.")
+    else:  # "(stopped: …)" — hit the step / budget limit before finishing
+        tip = ("This stopped at its step/budget limit before finishing. You can ask me to "
+               "**continue** it, **narrow** it to one part, or just ask **“what do I do "
+               "now”** and I'll walk you through the next steps.")
+    base = (text or "").strip()
+    return f"{base}\n\n{tip}" if base else tip
+
+
+def _final_payload(text, budget):
+    """The `final` event, always routing the answer through _failure_guidance so a failed run
+    surfaces next-steps rather than a bare marker."""
+    return {"type": "final", "text": _failure_guidance(text), "cost": round(budget.spent_usd, 4)}
+
+
 # ---- per-feature done-gate (used by the sequential task runner) -------------
 def evaluate_feature(task, result, before_sig, budget, emit=None, approve=None, acceptance=""):
     """Judge whether ONE feature is actually DONE — the public gate the sequential runner
@@ -1274,7 +1301,7 @@ def _pipeline(task, budget, emit, approve, review, task_type=None, acceptance=""
         i += 1
         _plan(i)
 
-    _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
+    _emit(_final_payload(result, budget))
     return result
 
 
@@ -1309,7 +1336,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         if _needs_act_retry(_before_sig, final, None, _plan_task, emit):
             final = _master_loop(_plan_task + _ACT_NUDGE, budget, emit, approve, rv,
                                  todos, acceptance=acceptance, stream=stream) or final
-        _emit({"type": "final", "text": final, "cost": round(budget.spent_usd, 4)})
+        _emit(_final_payload(final, budget))
         return final
 
     # Fast-path: obvious chit-chat skips the LLM classifier entirely and is
@@ -1334,7 +1361,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
             result = resp.choices[0].message.content or "Hello! How can I help you?"
         except Exception:
             result = "Hello! How can I help you?"
-        _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
+        _emit(_final_payload(result, budget))
         return result
 
     # Route on the RAW user request, not the assembled history/memory/project context
@@ -1401,7 +1428,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
                "todos": [{"text": s, "status": "pending"} for s in plan]})
         text = ("**Proposed plan**\n" + "\n".join(f"{i}. {s}" for i, s in enumerate(plan, 1)) +
                 "\n\n_Approve to run it._")
-        _emit({"type": "final", "text": text, "cost": round(budget.spent_usd, 4)})
+        _emit(_final_payload(text, budget))
         return text
 
     # Simple / moderate -> one focused specialist (its own tool loop is Claude-like).
@@ -1462,7 +1489,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
                                  stream, task_type=task_type, acceptance=acceptance, tier=downgrade_tier,
                                  use_skills=(tier >= 2), verify_run=_verify,
                                  max_rounds=(22 if _verify else None)) or result
-        _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
+        _emit(_final_payload(result, budget))
         return result
 
     # Complex CODING/build -> a SINGLE strong agent in one tight loop (Claude-Code/OpenCode
@@ -1477,7 +1504,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         if os.environ.get("AGENT_PHASED_BUILD", "1").strip().lower() in ("1", "true", "yes"):
             final = _phased_build(task, budget, emit, approve, review, task_type,
                                   acceptance=acceptance, stream=stream)
-            _emit({"type": "final", "text": final, "cost": round(budget.spent_usd, 4)})
+            _emit(_final_payload(final, budget))
             return final
         agent_id, reason = team.select_agent(task, budget=budget)
         agent = team.agents.get(agent_id)
@@ -1524,7 +1551,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
             result = _do_subtask(agent_id, agent_task + _ACT_NUDGE, budget, emit, approve, "",
                                  build_review, True, task_type=task_type, acceptance=acceptance,
                                  tier=None, use_skills=True, verify_run=True, max_rounds=22) or result
-        _emit({"type": "final", "text": result, "cost": round(budget.spent_usd, 4)})
+        _emit(_final_payload(result, budget))
         return result
 
     # Complex (non-coding) -> the LEAD master loop, seeded with the task's playbook + delegation.
@@ -1536,5 +1563,5 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
     if _needs_act_retry(_before_sig, final, task_type, req, emit):
         final = _master_loop(task + _ACT_NUDGE, budget, emit, approve, review, task_type=task_type,
                              acceptance=acceptance, stream=stream) or final
-    _emit({"type": "final", "text": final, "cost": round(budget.spent_usd, 4)})
+    _emit(_final_payload(final, budget))
     return final
