@@ -454,6 +454,30 @@ def _phased_build(task, budget, emit, approve, review, task_type, acceptance="",
 
 
 # ---- deterministic done-gate (model-free) ----------------------------------
+def _verify_cmd() -> str:
+    """The command the test-gate runs, most-specific first:
+      1. a PER-PROJECT `.nikki/verify.txt` at the workspace root (first non-comment line),
+      2. the global `AGENT_VERIFY_CMD` env var,
+      3. the default `python -m pytest -q`.
+    The per-project file means a repo whose plain pytest can't run in the sandbox (e.g. a
+    conftest that imports a DB stack) can declare its own command — e.g.
+    `cd backend && pytest tests/test_x*.py -q --noconftest` — checked in with the project,
+    instead of the operator having to set a global env var per session."""
+    ws = current_workspace()
+    if ws:
+        p = os.path.join(ws, ".nikki", "verify.txt")
+        try:
+            if os.path.isfile(p):
+                with open(p, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#"):
+                            return line
+        except OSError:
+            pass
+    return os.environ.get("AGENT_VERIFY_CMD", "").strip() or "python -m pytest -q"
+
+
 def _verify_tests(emit=None):
     """Run the workspace's test suite in the sandbox and report the REAL result — never
     the model's claim. Returns (ran, passed, tail).
@@ -462,12 +486,10 @@ def _verify_tests(emit=None):
     isn't available (no Docker sandbox). This is model-free (no budget cost) and is what
     kills the 'critic said all-green while a test was red' failure mode.
 
-    AGENT_VERIFY_CMD overrides the default `python -m pytest -q` — needed when a project's
-    tests can't run with the plain command in the sandbox (e.g. a repo whose conftest imports
-    a DB stack: point it at the pure/unit subset, `cd backend && pytest tests/test_x*.py -q
-    --noconftest`). Still runs through the same hardened run_bash sandbox; still gates on the
-    real exit code."""
-    out = run_bash(os.environ.get("AGENT_VERIFY_CMD", "").strip() or "python -m pytest -q")
+    The command is resolved by `_verify_cmd()` (per-project `.nikki/verify.txt` > global
+    AGENT_VERIFY_CMD > default). Always runs through the hardened run_bash sandbox and gates
+    on the real exit code, whatever the command."""
+    out = run_bash(_verify_cmd())
     if not out.startswith("exit="):
         return (False, True, "")            # no sandbox / blocked -> can't gate here
     first, _, body = out.partition("\n")

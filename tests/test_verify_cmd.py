@@ -46,3 +46,35 @@ def test_blank_override_falls_back_to_default(monkeypatch):
     monkeypatch.setattr(orch, "run_bash", _fake_run_bash(seen))
     orch._verify_tests()
     assert seen == ["python -m pytest -q"]
+
+
+# ---- per-project .nikki/verify.txt takes precedence over the global env var ----
+import os
+
+from core.tools import using_workspace
+
+
+def test_project_verify_file_wins_over_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("AGENT_VERIFY_CMD", "python -m pytest -q")  # global default-ish
+    ws = tmp_path / "proj"
+    (ws / ".nikki").mkdir(parents=True)
+    proj_cmd = "cd backend && pytest tests/test_confidence_next_tier.py -q --noconftest"
+    # A leading comment + blank line must be skipped; the first real line is the command.
+    (ws / ".nikki" / "verify.txt").write_text(f"# how Nikki verifies this project\n\n{proj_cmd}\n",
+                                              encoding="utf-8")
+    seen = []
+    monkeypatch.setattr(orch, "run_bash", _fake_run_bash(seen))
+    with using_workspace(str(ws)):
+        orch._verify_tests()
+    assert seen == [proj_cmd]            # the project file won, not the env
+
+
+def test_falls_back_to_env_when_no_project_file(monkeypatch, tmp_path):
+    monkeypatch.setenv("AGENT_VERIFY_CMD", "custom-env-cmd")
+    ws = tmp_path / "proj2"
+    ws.mkdir()
+    seen = []
+    monkeypatch.setattr(orch, "run_bash", _fake_run_bash(seen))
+    with using_workspace(str(ws)):
+        orch._verify_tests()
+    assert seen == ["custom-env-cmd"]
