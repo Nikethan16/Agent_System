@@ -164,6 +164,32 @@ def _repo_understanding_agent(task: str) -> str:
     return "repo-engineer" if team.agents.get("repo-engineer") else ""
 
 
+# A "how do I …" / "what are the steps" QUESTION asks for INSTRUCTIONS or an EXPLANATION — it must
+# be ANSWERED (read the docs + explain / look it up), never routed into a coder/build loop that
+# tries to DO it and spins to the iteration cap. Live 2026-07: "how do I deploy this app" was
+# tagged coding → tier 3 → architect+coder, ran 45 rounds, and returned a bare "(stopped:
+# iteration cap hit)". Match on the USER'S request only — injected project context is full of tech
+# words (FastAPI/Python/api) that trip the coding heuristic on an innocent how-to question.
+_HOWTO = re.compile(
+    r"\b(how (?:do|can|would|should) (?:i|we|you) (?:deploy|set ?up|configure|install|host|run|use|"
+    r"start|get started)|how to\b|steps? (?:to|for)\b|step[- ]by[- ]step|walk me through|"
+    r"guide (?:me|to)|instructions? (?:for|on|to)|explain how|what (?:are|is) the (?:steps|process|"
+    r"procedure)|what (?:do|should) (?:i|we) do(?: now| next)?|help me (?:deploy|set ?up|configure|"
+    r"install|host|run))\b", re.I)
+_HOWTO_BUILD = re.compile(
+    r"^\s*(?:write|build|create|implement|add|make|code|scaffold|generate|refactor|fix)\b", re.I)
+
+
+def _instructional_question(req: str) -> bool:
+    """True when the user is ASKING FOR INSTRUCTIONS/EXPLANATION (how to deploy, steps to set up,
+    what do I do now) rather than asking to BUILD. Such a request is ANSWERED (docs + explanation),
+    never sent into a build loop. A leading build verb ('build a deploy script') is NOT a how-to."""
+    r = (req or "").strip()
+    if _HOWTO_BUILD.search(r):
+        return False
+    return bool(_HOWTO.search(r))
+
+
 # Deterministic complexity signals — a cheap, robust cross-check on the classifier's tier.
 # The classifier is one fast model's snap judgment and DOES under-tier big builds (observed: a
 # full 7-feature app read as tier 2 -> weak flash model -> lame MVP). These signals catch that
@@ -1328,6 +1354,14 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         cls = {**cls, "tier": tier, "task_type": task_type,
                "reason": (str(cls.get("reason", "")) + " · read/understand a shared repo → "
                           + _ru_agent).strip(" ·")}
+    # A how-to / "what do I do now" QUESTION must be ANSWERED (research agent: reads the project
+    # docs + can look things up), never routed into the build path where a coder spins to the cap
+    # and returns nothing useful. Forces tier-2 research and blocks the build/LEAD escalations below.
+    _howto = (not _ru_agent) and _instructional_question(req)
+    if _howto:
+        tier, task_type = 2, "research"
+        cls = {**cls, "tier": tier, "task_type": task_type,
+               "reason": (str(cls.get("reason", "")) + " · how-to question → answer mode").strip(" ·")}
     # Blended difficulty: the classifier is one cheap model's snap judgment and under-tiers big
     # builds. Deterministic scope signals RAISE the tier so the strong-model floor (tier 3 -> a
     # frontier model, not flash) kicks in for genuinely complex build work.
@@ -1351,7 +1385,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         esc_reason = "multi-domain → LEAD"
     else:
         esc_reason = ""
-    if esc_reason and not _ru_agent:
+    if esc_reason and not _ru_agent and not _howto:
         tier = 3
         if task_type in _TIER3_SINGLE_AGENT_TYPES:
             task_type = "general"      # force the LEAD path (a single build agent can't coordinate/parallelize)
