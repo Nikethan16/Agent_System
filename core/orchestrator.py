@@ -459,8 +459,14 @@ def _verify_tests(emit=None):
 
     ran=False (so callers don't block) when there is no suite (pytest exit 5) or execution
     isn't available (no Docker sandbox). This is model-free (no budget cost) and is what
-    kills the 'critic said all-green while a test was red' failure mode."""
-    out = run_bash("python -m pytest -q")
+    kills the 'critic said all-green while a test was red' failure mode.
+
+    AGENT_VERIFY_CMD overrides the default `python -m pytest -q` — needed when a project's
+    tests can't run with the plain command in the sandbox (e.g. a repo whose conftest imports
+    a DB stack: point it at the pure/unit subset, `cd backend && pytest tests/test_x*.py -q
+    --noconftest`). Still runs through the same hardened run_bash sandbox; still gates on the
+    real exit code."""
+    out = run_bash(os.environ.get("AGENT_VERIFY_CMD", "").strip() or "python -m pytest -q")
     if not out.startswith("exit="):
         return (False, True, "")            # no sandbox / blocked -> can't gate here
     first, _, body = out.partition("\n")
