@@ -116,13 +116,27 @@ _RESEARCH_HINTS = ("search", "latest", "news", "look up", "research", "find onli
                    "who is", "current", "browse")
 _WRITING_HINTS = ("write a", "draft", "essay", "blog", "email", "letter", "summary of",
                   "report on", "article")
+# A plain QUESTION (starts interrogative / "explain") that carries NO construction verb must be
+# ANSWERED, not built — even in the heuristic fallback. Live 2026-07: "how do I deploy this app"
+# fell to the heuristic and (because it matched hints in the injected project context) routed to
+# 'coding' → tier 3 → 45 wasted rounds. Note "deploy/set up/configure/install/run/host" are NOT
+# build verbs here — they're the object of how-to questions.
+_QUESTION_START = re.compile(
+    r"^(what|why|how|when|where|who|which|is|are|do|does|did|can|could|should|would|will|"
+    r"explain|tell me|help me understand)\b", re.I)
+_BUILD_VERB = re.compile(
+    r"\b(build|create|implement|write|add|make|code|scaffold|generate|develop|refactor|fix)\b", re.I)
 
 
 def _heuristic_route(task: str, last_err: Exception) -> dict:
-    t = (task or "").lower()
-    raw = _cache_key(task)            # the user's request, minus any context preamble
-    if len(raw.strip()) <= 12:        # trivial / empty -> stay at tier 1 (don't escalate)
+    # Match on the USER'S request only — NOT the assembled task (its injected project context is
+    # full of tech words like fastapi/python/api that wrongly trip the coding hints on a question).
+    t = _cache_key(task).lower()
+    if len(t.strip()) <= 12:          # trivial / empty -> stay at tier 1 (don't escalate)
         tier, tt = 1, "chat"
+    elif _QUESTION_START.search(t) and not _BUILD_VERB.search(t):
+        # a plain question -> ANSWER it: research if it needs lookups, else general. Never build.
+        tier, tt = 2, ("research" if any(h in t for h in _RESEARCH_HINTS) else "general")
     elif any(h in t for h in _CODING_HINTS):
         tier, tt = 2, "coding"
     elif any(h in t for h in _RESEARCH_HINTS):
