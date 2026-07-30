@@ -36,6 +36,25 @@ def _is_git(path: str) -> bool:
     return os.path.isdir(os.path.join(path, ".git"))
 
 
+# Nikki's own per-run workspace artifacts — must NEVER be merged into the user's project repo.
+_NIKKI_INTERNAL = [".skills/"]
+
+
+def _exclude_internal(copy: str) -> None:
+    """Make the work-copy's git ignore Nikki-internal artifacts (e.g. the .skills/ dir the skills
+    system materialises in the workspace), so `git add -A` / `git status` can't sweep them into the
+    merge branch or the review diff and pollute the user's repo. Idempotent; git-repos only."""
+    exclude = os.path.join(copy, ".git", "info", "exclude")
+    try:
+        cur = open(exclude, encoding="utf-8").read() if os.path.isfile(exclude) else ""
+        add = [p for p in _NIKKI_INTERNAL if p not in cur]
+        if add:
+            with open(exclude, "a", encoding="utf-8") as f:
+                f.write("\n# Nikki internal (auto)\n" + "\n".join(add) + "\n")
+    except OSError:
+        pass
+
+
 def _force_rmtree(path: str):
     def _onerr(func, p, _exc):
         try:
@@ -75,6 +94,7 @@ def has_changes(pid: str, real_path: str, workspaces_dir: str) -> bool:
     if not os.path.isdir(copy):
         return False
     if _is_git(copy):
+        _exclude_internal(copy)
         return bool(_run(["git", "status", "--porcelain"], cwd=copy).stdout.strip())
     return True
 
@@ -85,6 +105,7 @@ def diff_summary(pid: str, real_path: str, workspaces_dir: str) -> str:
     if not os.path.isdir(copy):
         return "(no work copy yet)"
     if _is_git(copy):
+        _exclude_internal(copy)
         out = _run(["git", "status", "--porcelain"], cwd=copy).stdout.strip()
         return out or "(no changes)"
     return "(non-git folder — changes will be copied over on merge)"
@@ -107,6 +128,7 @@ def merge_to_real(pid: str, real_path: str, workspaces_dir: str, label: str = ""
         # Commit ALL changes (incl. new files) onto a fresh branch in the COPY.
         if _run(["git", "checkout", "-B", branch], cwd=copy).returncode != 0:
             return {"ok": False, "detail": "could not create work branch"}
+        _exclude_internal(copy)                    # keep Nikki's .skills/ etc. out of the merge
         _run(["git", "add", "-A"], cwd=copy)
         commit = _run(["git", "-c", "user.email=nikki@local", "-c", "user.name=Nikki",
                        "commit", "-m", f"nikki: {label or 'changes'}"], cwd=copy)
