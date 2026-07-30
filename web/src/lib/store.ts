@@ -94,6 +94,7 @@ type State = {
   setEffort: (v: "low" | "default" | "high") => void;
   setModelOverride: (v: string) => void;
   stop: () => void;
+  amend: (text: string) => void;
   respond: (allowed: boolean) => void;
   loadFiles: () => Promise<void>;
   openFile: (path: string) => Promise<void>;
@@ -494,6 +495,13 @@ export const useStore = create<State>((set, get) => ({
     socket?.send(JSON.stringify({ type: "stop" }));
   },
 
+  amend(text) {
+    // Mid-run steering: fold an extra instruction into the LIVE run without stopping it. The
+    // backend (server/api/ws.py) injects it into the run's Budget and emits a `steered` event.
+    const t = (text || "").trim();
+    if (t && socket && get().running) socket.send(JSON.stringify({ type: "amend", text: t }));
+  },
+
   respond(allowed) {
     const a = get().pendingApproval;
     if (a) {
@@ -879,6 +887,10 @@ function handleEvent(set: any, get: any, ev: Ev) {
     case "limit":
       appendToAssistant(set, get, ev);
       get().pushToast("Run hit its budget / loop limit.", "info");
+      break;
+    case "steered":
+      appendToAssistant(set, get, ev);
+      get().pushToast("Instruction added to the running task.", "success");
       break;
     default:
       appendToAssistant(set, get, ev);

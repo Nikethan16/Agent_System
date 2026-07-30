@@ -136,7 +136,7 @@ function BarSelect({ label, value, options, onPick, icon }: {
 const shortModel = (id: string) => id.split("/").pop() || id;
 
 export default function Composer({ variant = "bottom" }: { variant?: "center" | "bottom" }) {
-  const { submit, stop, running, enqueueJob, attachments, addAttachment, removeAttachment,
+  const { submit, stop, amend, running, enqueueJob, attachments, addAttachment, removeAttachment,
           files, loadFiles, commands, draft, setDraft,
           planFirst, setPlanFirst, effort, setEffort, modelOverride, setModelOverride, catalog } = useStore();
   const [text, setText] = useState("");
@@ -255,10 +255,17 @@ export default function Composer({ variant = "bottom" }: { variant?: "center" | 
     return () => window.removeEventListener("mousedown", onDown);
   }, [opts]);
 
-  const go = () => { const t = text.trim(); if (!t || running) return; submit(t); setText(""); };
+  const go = () => {
+    const t = text.trim();
+    if (!t) return;
+    if (running) { amend(t); setText(""); return; }   // fold the instruction into the live run
+    submit(t); setText("");
+  };
   const queue = () => { const t = text.trim(); if (!t) return; enqueueJob(t); setText(""); };
 
-  const placeholder = variant === "center"
+  const placeholder = running
+    ? "Add an instruction to the running task…"     // mid-run steering (folded in, no restart)
+    : variant === "center"
     ? "How can I help you today?"
     : "Reply to the team…";
 
