@@ -37,6 +37,16 @@ from .tools import (current_workspace, using_workspace, project_notes_block, rep
                     write_file, run_bash)
 
 MAX_MASTER_ROUNDS = 16     # hard cap on lead loop iterations
+MAX_STALL_ROUNDS = int(os.environ.get("AGENT_MAX_STALL_ROUNDS", "3"))  # stop early after this many no-progress rounds (#4)
+
+
+def _stall_next(stall_rounds, cur_sig, last_sig, max_stall=None):
+    """Lead-loop progress tracker: increment the stall counter when the shared work record
+    (blackboard digest) is UNCHANGED, reset it when it grows. Returns (stall_rounds, should_stop).
+    Lets the lead terminate early on a spinning loop instead of grinding to MAX_MASTER_ROUNDS."""
+    cap = MAX_STALL_ROUNDS if max_stall is None else max_stall
+    stall_rounds = stall_rounds + 1 if cur_sig == last_sig else 0
+    return stall_rounds, stall_rounds >= cap
 MAX_DELEGATIONS = 10       # hard cap on subagent spawns per run (depth-limited too)
 MAX_PARALLEL_FANOUT = int(os.environ.get("AGENT_MAX_PARALLEL", "4"))  # concurrent subagents
 
@@ -951,6 +961,8 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     replan_repeats = 0          # consecutive write_todos calls with an identical plan
     plan_only_rounds = 0        # consecutive rounds whose ONLY action was (re)planning
     near_cap_nudged = False     # one-shot near-step-limit synthesis nudge (#2)
+    stall_rounds = 0            # consecutive rounds that produced NO new progress (#4)
+    last_progress_sig = None    # (blackboard digest length, workspace signature) last round
 
     # delegate_parallel runs each step in a ThreadPoolExecutor worker, and worker threads
     # do NOT inherit this thread's contextvars. Capture the run's workspace, span context,
@@ -1174,6 +1186,18 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
             plan_only_rounds += 1
         else:
             plan_only_rounds = 0
+        # #4: HARD stop on a stalled loop. If the shared work record (blackboard) hasn't grown for
+        # MAX_STALL_ROUNDS rounds, the lead is spinning (re-planning / repeating no-op delegations)
+        # — finalize what's done NOW instead of grinding to the round cap and burning tokens every
+        # round. The nudges below only re-prompt; this actually terminates.
+        cur_sig = board.digest()
+        stall_rounds, _stall_stop = _stall_next(stall_rounds, cur_sig, last_progress_sig)
+        last_progress_sig = cur_sig
+        if _stall_stop and not force_final:
+            _emit({"type": "stopping", "agent": "lead",
+                   "reason": f"no new progress for {MAX_STALL_ROUNDS} rounds — finalizing what's done"})
+            return (_finalize_from_board(board, task, budget, emit, stream)
+                    or msg_content or "(stopped: the run stalled with no new progress)")
         # #2: the near-cap synthesis nudge is evaluated FIRST and independently — a lead
         # that's stuck re-planning near the cap is exactly when this matters most, so it
         # must not be starved by the plan-repeat branch below (mitigation; the root fix is
