@@ -686,8 +686,9 @@ def _salvage_single_agent(task, result, budget, emit=None):
     """When a single-agent run ends on a bare failure marker (step cap / provider error), don't
     surface only the marker: reconstruct the best real answer from the WORKSPACE — the single-agent
     paths have no Blackboard, so the files it produced ARE the record of what got done. One bounded
-    tier-2 call, grounded ONLY in the file list. Returns the raw result unchanged when there's
-    nothing to salvage or the call fails (so _final_payload still appends the honest next-step tip)."""
+    tier-2 call, grounded ONLY in the file list — with a DETERMINISTIC file-list fallback if that
+    call can't run (a capped run often spent its budget). Returns the raw result unchanged ONLY
+    when nothing was produced (no files), so _final_payload then appends the honest next-step tip."""
     if not _looks_failed(result):
         return result
     ws = current_workspace()
@@ -715,10 +716,18 @@ def _salvage_single_agent(task, result, budget, emit=None):
         text = _strip_toolcall_markup(resp.choices[0].message.content or "")
     except Exception:
         text = ""
-    if emit and text:
+    if not text:
+        # The summariser couldn't run — and a run that hit its cap has often ALSO spent its budget,
+        # which is exactly when partial work most needs recovering. Don't fall back to the bare
+        # marker: give a DETERMINISTIC, grounded recap from the file list (needs no model/budget).
+        shown = "\n".join(f"- {p}" for p in sorted(files)[:30])
+        text = ("The run stopped before finishing, but partial work was saved. Files created so "
+                f"far:\n{shown}\n\nThis is incomplete — ask me to **continue** and I'll pick it up "
+                "from here.")
+    if emit:
         emit({"type": "thought", "agent": "salvage",
-              "text": "(run stopped early — recovered a partial answer from the workspace)"})
-    return text or result                      # substantive partial answer, or fall through to the tip
+              "text": "(run stopped early — recovered partial work from the workspace)"})
+    return text                                # always a grounded recap when files exist
 
 
 # ---- per-feature done-gate (used by the sequential task runner) -------------

@@ -52,10 +52,17 @@ def test_salvage_returns_marker_when_no_files(tmp_path, monkeypatch):
     assert out == "(stopped: cap)"                    # raw marker -> _final_payload adds the tip
 
 
-def test_salvage_returns_marker_when_call_fails(tmp_path, monkeypatch):
+def test_salvage_deterministic_when_call_fails_but_files_exist(tmp_path, monkeypatch):
+    # A capped run has often ALSO spent its budget, so the summariser call can't run — but partial
+    # work exists. Must give a grounded, deterministic file-list recap, NOT the bare marker.
     ws = tmp_path / "ws2"
     ws.mkdir()
-    (ws / "f.py").write_text("x")
-    monkeypatch.setattr(orch, "complete", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("provider down")))
+    (ws / "models.py").write_text("x")
+    (ws / "storage.py").write_text("y")
+    monkeypatch.setattr(orch, "complete",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no budget / provider down")))
     with using_workspace(str(ws)):
-        assert orch._salvage_single_agent("t", "(stopped: cap)", _B()) == "(stopped: cap)"
+        out = orch._salvage_single_agent("t", "(stopped: iteration cap hit: 6)", _B())
+    assert not out.strip().startswith("(stopped")        # NOT the bare marker
+    assert "models.py" in out and "storage.py" in out     # grounded in the real partial work
+    assert "continue" in out.lower()
