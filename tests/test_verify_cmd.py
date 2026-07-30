@@ -6,7 +6,7 @@ import core.orchestrator as orch
 
 
 def _fake_run_bash(recorded):
-    def _rb(cmd):
+    def _rb(cmd, network=None):          # run_bash now takes an optional network override (#5)
         recorded.append(cmd)
         return "exit=0\n32 passed in 1.02s"
     return _rb
@@ -34,7 +34,7 @@ def test_override_command_is_used(monkeypatch):
 
 def test_override_still_gates_on_real_exit_code(monkeypatch):
     monkeypatch.setenv("AGENT_VERIFY_CMD", "cd backend && python -m pytest -q --noconftest")
-    monkeypatch.setattr(orch, "run_bash", lambda cmd: "exit=1\n1 failed, 31 passed in 1.1s")
+    monkeypatch.setattr(orch, "run_bash", lambda cmd, network=None: "exit=1\n1 failed, 31 passed in 1.1s")
     ran, passed, tail = orch._verify_tests()
     assert ran is True and passed is False   # a red suite is still red under the override
     assert "failed" in tail

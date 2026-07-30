@@ -10,25 +10,25 @@ from core import orchestrator
 def test_verify_tests_parses_real_exit_code(monkeypatch):
     # red suite -> (ran=True, passed=False)
     monkeypatch.setattr(orchestrator, "run_bash",
-                        lambda cmd: "exit=1\nSTDOUT:\n1 failed, 22 passed in 1.1s\nSTDERR:\n")
+                        lambda cmd, network=None: "exit=1\nSTDOUT:\n1 failed, 22 passed in 1.1s\nSTDERR:\n")
     ran, passed, tail = orchestrator._verify_tests()
     assert ran is True and passed is False and "1 failed" in tail
 
     # green suite -> (ran=True, passed=True)
     monkeypatch.setattr(orchestrator, "run_bash",
-                        lambda cmd: "exit=0\nSTDOUT:\n23 passed in 1.0s\nSTDERR:\n")
+                        lambda cmd, network=None: "exit=0\nSTDOUT:\n23 passed in 1.0s\nSTDERR:\n")
     ran, passed, tail = orchestrator._verify_tests()
     assert ran is True and passed is True and "23 passed" in tail
 
     # no tests collected (pytest exit 5) -> ran=False so callers don't block
     monkeypatch.setattr(orchestrator, "run_bash",
-                        lambda cmd: "exit=5\nSTDOUT:\nno tests ran in 0.0s\nSTDERR:\n")
+                        lambda cmd, network=None: "exit=5\nSTDOUT:\nno tests ran in 0.0s\nSTDERR:\n")
     ran, passed, tail = orchestrator._verify_tests()
     assert ran is False
 
     # no sandbox available -> ran=False (can't gate what can't run)
     monkeypatch.setattr(orchestrator, "run_bash",
-                        lambda cmd: "ERROR: AGENT_BASH_DOCKER_IMAGE is not set.")
+                        lambda cmd, network=None: "ERROR: AGENT_BASH_DOCKER_IMAGE is not set.")
     ran, passed, tail = orchestrator._verify_tests()
     assert ran is False
 

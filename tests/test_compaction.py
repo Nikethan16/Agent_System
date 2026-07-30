@@ -70,4 +70,10 @@ def test_compaction_failure_is_safe(monkeypatch):
     monkeypatch.setattr(ag, "complete_chain", _boom)
     msgs = _big_history(40)
     out = ag._compact_messages(msgs, budget=Budget())
-    assert out == msgs   # unchanged on failure — never breaks the run
+    # On summariser failure it now TRIMS deterministically (bounds the context) instead of
+    # returning the full history — never raises, and the window can't grow unbounded under the
+    # provider pressure that a long run creates.
+    assert len(out) < len(msgs)
+    assert out[0]["role"] == "system"
+    assert "trimmed" in out[1]["content"].lower()
+    assert out[-1] == msgs[-1]
