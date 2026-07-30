@@ -524,8 +524,12 @@ def _verify_tests(emit=None):
 
     The command is resolved by `_verify_cmd()` (per-project `.nikki/verify.txt` > global
     AGENT_VERIFY_CMD > default). Always runs through the hardened run_bash sandbox and gates
-    on the real exit code, whatever the command."""
-    out = run_bash(_verify_cmd())
+    on the real exit code, whatever the command.
+
+    AGENT_VERIFY_NETWORK (opt-in) lets ONLY the verify run reach a Docker network — e.g. one
+    with a Postgres/pgvector container — so a full-stack project's DB-backed tests can run in the
+    sandbox, without opening the agent's general shell to the network. Default: isolated as ever."""
+    out = run_bash(_verify_cmd(), network=os.environ.get("AGENT_VERIFY_NETWORK", "").strip() or None)
     if not out.startswith("exit="):
         return (False, True, "")            # no sandbox / blocked -> can't gate here
     first, _, body = out.partition("\n")

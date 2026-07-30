@@ -962,7 +962,10 @@ def _clip(s: str) -> str:
 _NET_GIT = re.compile(r"\bgit\s+(?:[\w./=:-]+\s+)*?(clone|push|pull|fetch)\b")
 
 
-def run_bash(command: str) -> str:
+def run_bash(command: str, network: str = None) -> str:
+    # `network` overrides AGENT_BASH_DOCKER_NETWORK for THIS call only (default: env, else 'none').
+    # Used by the verify gate (AGENT_VERIFY_NETWORK) so a project's DB-backed tests can reach a DB
+    # container, WITHOUT opening the agent's general shell to the network. Not exposed as a tool arg.
     if os.environ.get("AGENT_DISABLE_BASH", "").strip() in ("1", "true", "yes"):
         return ("ERROR: shell execution is disabled (AGENT_DISABLE_BASH is set). "
                 "Run this app's bash tool only inside a container/VM sandbox.")
@@ -986,7 +989,7 @@ def run_bash(command: str) -> str:
     timeout = int(os.environ.get("AGENT_BASH_DOCKER_TIMEOUT", "120"))
     memory  = os.environ.get("AGENT_BASH_DOCKER_MEMORY", "512m")
     cpus    = os.environ.get("AGENT_BASH_DOCKER_CPUS", "1.0")
-    network = os.environ.get("AGENT_BASH_DOCKER_NETWORK", "none")
+    network = network or os.environ.get("AGENT_BASH_DOCKER_NETWORK", "none")
     pids    = os.environ.get("AGENT_BASH_DOCKER_PIDS", "64")
 
     import uuid as _uuid_mod
