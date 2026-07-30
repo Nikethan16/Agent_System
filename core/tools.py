@@ -961,6 +961,16 @@ def _clip(s: str) -> str:
 
 _NET_GIT = re.compile(r"\bgit\s+(?:[\w./=:-]+\s+)*?(clone|push|pull|fetch)\b")
 
+# Tool-choice drift: weaker models reach for run_bash to read/list/search files instead of the
+# dedicated, workspace-aware tools (read_file/list_files/grep/glob) — wasting tokens and losing
+# line numbers. Redirect ONLY a bare single command; anything with a pipe/redirect/chain/
+# substitution is a real shell workflow and passes straight through.
+_SHELL_OPS = re.compile(r"[|&;><`]|\$\(")
+_DRIFT_READ = re.compile(r"^\s*(?:cat|head|tail)\s+(?:-n\s*\d+\s+)?\S+\s*$", re.I)
+_DRIFT_LIST = re.compile(r"^\s*ls\b(?:\s+-\S+)*\s*\S*\s*$", re.I)
+_DRIFT_GREP = re.compile(r"^\s*(?:e?grep|rg)\s+\S", re.I)
+_DRIFT_FIND = re.compile(r"^\s*find\s+\S", re.I)
+
 
 def run_bash(command: str, network: str = None) -> str:
     # `network` overrides AGENT_BASH_DOCKER_NETWORK for THIS call only (default: env, else 'none').
@@ -979,6 +989,20 @@ def run_bash(command: str, network: str = None) -> str:
                 "git_clone(url) to clone into your workspace, git_push(branch) to push — these "
                 "run on the host with proper auth. Local git commands (status/log/diff/commit) "
                 "are fine via the git_* tools too.")
+    # Steer off run_bash drift toward the dedicated tools (opt-out: AGENT_BASH_REDIRECT_TOOLS=0).
+    cmd = command or ""
+    if (os.environ.get("AGENT_BASH_REDIRECT_TOOLS", "1").strip().lower() in ("1", "true", "yes")
+            and not _SHELL_OPS.search(cmd)):
+        if _DRIFT_READ.match(cmd):
+            return ("BLOCKED: use the read_file tool to read a file — it returns numbered lines "
+                    "with paging and won't waste tokens. run_bash is for RUNNING commands, not "
+                    "reading files. (Pipe a file into a real command if you truly need the shell.)")
+        if _DRIFT_LIST.match(cmd):
+            return "BLOCKED: use the list_files tool to list workspace files instead of `ls`."
+        if _DRIFT_GREP.match(cmd):
+            return "BLOCKED: use the grep tool (workspace-aware, faster) instead of a shell grep."
+        if _DRIFT_FIND.match(cmd):
+            return "BLOCKED: use the glob tool (e.g. glob('**/*.py')) instead of `find`."
     ws = current_workspace()
     image = os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip()
     if not image:
