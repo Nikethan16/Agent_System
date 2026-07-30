@@ -107,9 +107,19 @@ def _compact_messages(messages, budget=None, emit=None, label="agent"):
             max_tokens=700, budget=budget, temperature=0.2)
         summary = (resp.choices[0].message.content or "").strip()
     except Exception:
-        return messages          # budget/provider issue — leave history as-is
+        summary = ""             # fall through to the deterministic trim below
     if not summary:
-        return messages
+        # The summariser couldn't run — and that happens under exactly the provider pressure a
+        # long run creates, which is when the window bloats most. Returning the full history here
+        # (the old behaviour) let context grow unbounded and burn tokens every round. Instead DROP
+        # the middle deterministically: a crude marker beats an unbounded window. Same head+tail
+        # structure as the summary path, so tool-call pairing in the tail stays valid.
+        note = (f"[{len(middle)} earlier messages were trimmed to stay within the context window; "
+                "the system prompt and the most recent turns are kept.]")
+        if emit:
+            emit({"type": "thought", "agent": label,
+                  "text": "(trimmed earlier context to stay within the window)"})
+        return head + [{"role": "user", "content": note}] + tail
     if emit:
         emit({"type": "thought", "agent": label,
               "text": "(compacted earlier context to stay within the window)"})
