@@ -38,6 +38,15 @@ def test_find_redirects_to_glob(monkeypatch):
     assert "glob" in _redirect("find . -name '*.py'", monkeypatch)
 
 
+def test_find_with_action_predicate_is_not_redirected(monkeypatch):
+    # glob only enumerates — a find that DELETES or EXECs must reach the sandbox, not be redirected.
+    monkeypatch.delenv("AGENT_DISABLE_BASH", raising=False)
+    monkeypatch.setenv("AGENT_BASH_DOCKER_IMAGE", "test-img")
+    monkeypatch.setattr(tools.subprocess, "run", lambda argv, **k: _Out())
+    assert not tools.run_bash("find . -name '*.pyc' -delete").startswith("BLOCKED")
+    assert not tools.run_bash("find . -name '*.py' -exec black {} +").startswith("BLOCKED")
+
+
 def test_pipeline_is_not_redirected(monkeypatch):
     # A real pipeline is a genuine shell workflow -> must reach the sandbox, not a redirect.
     monkeypatch.delenv("AGENT_DISABLE_BASH", raising=False)

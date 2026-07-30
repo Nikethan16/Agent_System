@@ -970,6 +970,9 @@ _DRIFT_READ = re.compile(r"^\s*(?:cat|head|tail)\s+(?:-n\s*\d+\s+)?\S+\s*$", re.
 _DRIFT_LIST = re.compile(r"^\s*ls\b(?:\s+-\S+)*\s*\S*\s*$", re.I)
 _DRIFT_GREP = re.compile(r"^\s*(?:e?grep|rg)\s+\S", re.I)
 _DRIFT_FIND = re.compile(r"^\s*find\s+\S", re.I)
+# ...but NOT when find carries an action predicate (delete/exec/etc.) — glob only enumerates, it
+# can't delete or run a command, so redirecting those would break a real operation.
+_FIND_ACTION = re.compile(r"\s-(?:delete|exec|execdir|ok|okdir|fls|fprint\w*)\b", re.I)
 
 
 def run_bash(command: str, network: str = None) -> str:
@@ -1001,7 +1004,7 @@ def run_bash(command: str, network: str = None) -> str:
             return "BLOCKED: use the list_files tool to list workspace files instead of `ls`."
         if _DRIFT_GREP.match(cmd):
             return "BLOCKED: use the grep tool (workspace-aware, faster) instead of a shell grep."
-        if _DRIFT_FIND.match(cmd):
+        if _DRIFT_FIND.match(cmd) and not _FIND_ACTION.search(cmd):
             return "BLOCKED: use the glob tool (e.g. glob('**/*.py')) instead of `find`."
     ws = current_workspace()
     image = os.environ.get("AGENT_BASH_DOCKER_IMAGE", "").strip()

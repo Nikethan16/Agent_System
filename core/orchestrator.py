@@ -965,8 +965,9 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
     replan_repeats = 0          # consecutive write_todos calls with an identical plan
     plan_only_rounds = 0        # consecutive rounds whose ONLY action was (re)planning
     near_cap_nudged = False     # one-shot near-step-limit synthesis nudge (#2)
-    stall_rounds = 0            # consecutive rounds that produced NO new progress (#4)
-    last_progress_sig = None    # (blackboard digest length, workspace signature) last round
+    stall_rounds = 0            # consecutive rounds with NO real work (delegate/tool) (#4)
+    progress_ticks = 0          # monotonic: +1 whenever a round does real work (did_work)
+    last_progress_sig = 0       # progress_ticks as of the previous round
 
     # delegate_parallel runs each step in a ThreadPoolExecutor worker, and worker threads
     # do NOT inherit this thread's contextvars. Capture the run's workspace, span context,
@@ -1190,18 +1191,20 @@ def _master_loop(task, budget, emit, approve, review, initial_todos=None, task_t
             plan_only_rounds += 1
         else:
             plan_only_rounds = 0
-        # #4: HARD stop on a stalled loop. If the shared work record (blackboard) hasn't grown for
-        # MAX_STALL_ROUNDS rounds, the lead is spinning (re-planning / repeating no-op delegations)
-        # — finalize what's done NOW instead of grinding to the round cap and burning tokens every
-        # round. The nudges below only re-prompt; this actually terminates.
-        cur_sig = board.digest()
-        stall_rounds, _stall_stop = _stall_next(stall_rounds, cur_sig, last_progress_sig)
-        last_progress_sig = cur_sig
+        # #4: HARD stop on a stalled loop. progress_ticks advances only when a round does REAL
+        # work (delegate / file tool — did_work); a round that just (re)plans or chats doesn't move
+        # it. After MAX_STALL_ROUNDS rounds with no advance, the lead is spinning — finalize what's
+        # done NOW instead of grinding to the round cap and burning tokens every round. (A monotonic
+        # counter, NOT board.digest(), which truncates at 6000 chars and would freeze on big runs.)
+        if did_work:
+            progress_ticks += 1
+        stall_rounds, _stall_stop = _stall_next(stall_rounds, progress_ticks, last_progress_sig)
+        last_progress_sig = progress_ticks
         if _stall_stop and not force_final:
             _emit({"type": "stopping", "agent": "lead",
-                   "reason": f"no new progress for {MAX_STALL_ROUNDS} rounds — finalizing what's done"})
+                   "reason": f"no execution for {MAX_STALL_ROUNDS} rounds — finalizing what's done"})
             return (_finalize_from_board(board, task, budget, emit, stream)
-                    or msg_content or "(stopped: the run stalled with no new progress)")
+                    or msg_content or "(stopped: the run stalled without executing)")
         # #2: the near-cap synthesis nudge is evaluated FIRST and independently — a lead
         # that's stuck re-planning near the cap is exactly when this matters most, so it
         # must not be starved by the plan-repeat branch below (mitigation; the root fix is

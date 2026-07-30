@@ -25,3 +25,40 @@ def test_max_stall_override():
 
 def test_default_cap_is_configured():
     assert o.MAX_STALL_ROUNDS >= 2      # sane default (env-tunable)
+
+
+# ---- the SIGNAL must be monotonic: a productive run must never falsely stall ----
+# Regression for the original bug where board.digest() (truncated at 6000 chars) froze on big
+# runs, so a still-progressing lead looked stalled. The real loop feeds _stall_next a monotonic
+# progress_ticks counter (+1 on every did_work round); simulate both patterns here.
+
+def test_productive_run_never_stalls(monkeypatch):
+    monkeypatch.setattr(o, "MAX_STALL_ROUNDS", 3)
+    stall, last, ticks, stopped = 0, 0, 0, False
+    for _ in range(30):                 # far more than any round cap
+        ticks += 1                       # did_work EVERY round -> counter advances
+        stall, stop = o._stall_next(stall, ticks, last)
+        last = ticks
+        stopped = stopped or stop
+    assert not stopped                   # monotonic progress -> never a false stop
+
+
+def test_idle_run_stalls_after_cap(monkeypatch):
+    monkeypatch.setattr(o, "MAX_STALL_ROUNDS", 3)
+    stall, last, ticks = 0, 0, 0
+    stops = []
+    for _ in range(5):                   # did_work False -> ticks frozen (planning/chatting only)
+        stall, stop = o._stall_next(stall, ticks, last, max_stall=o.MAX_STALL_ROUNDS)
+        last = ticks
+        stops.append(stop)
+    assert any(stops)                    # a genuinely idle loop does stop
+
+
+def test_work_after_idle_resets(monkeypatch):
+    # idle, idle, THEN work -> the counter resets and it keeps going.
+    stall, last, ticks = 0, 0, 0
+    stall, s1 = o._stall_next(stall, ticks, last); last = ticks         # idle (stall 1)
+    stall, s2 = o._stall_next(stall, ticks, last); last = ticks         # idle (stall 2)
+    ticks += 1                                                          # did_work
+    stall, s3 = o._stall_next(stall, ticks, last, max_stall=3); last = ticks
+    assert stall == 0 and not s3
