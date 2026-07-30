@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useStore, type Msg, type Ev } from "../lib/store";
+import { api } from "../lib/api";
 import { CodeBlock } from "./CodeBlock";
 import { Mermaid } from "./Mermaid";
 import Sunburst from "./Sunburst";
@@ -352,6 +353,55 @@ function ProgramProgress({ events }: { events: Ev[] }) {
   );
 }
 
+// Copy-safety: when a run happened on an ISOLATED copy of a local folder, the backend emits a
+// `review_merge` event. Show the diff + an Approve/Later card so the merge-back is one click
+// (POST /api/projects/{pid}/merge), instead of a manual curl. Mirrors the ProgramProgress pattern.
+function ReviewMergeCard({ events }: { events: Ev[] }) {
+  const rm = [...events].reverse().find((e) => e.type === "review_merge") as any;
+  const { pushToast } = useStore();
+  const [phase, setPhase] = useState<"idle" | "merging" | "done">("idle");
+  const [result, setResult] = useState("");
+  const [dismissed, setDismissed] = useState(false);
+  if (!rm || dismissed) return null;
+  const approve = async () => {
+    setPhase("merging");
+    try {
+      const res = await api.mergeProject(rm.project_id, "");
+      setResult(res?.detail || (res?.branch ? `Landed on branch ${res.branch}.` : "Merged."));
+      setPhase("done");
+      pushToast("Changes merged into your folder.", "success");
+    } catch (e: any) {
+      setPhase("idle");
+      pushToast(e?.message || "Merge failed.", "error");
+    }
+  };
+  return (
+    <>
+      <PhaseLabel icon="call_merge" color="bg-accent-terracotta">Review &amp; merge</PhaseLabel>
+      <div className="ml-6 text-[12px]">
+        <div className="text-on-surface-variant dark:text-light-muted mb-2">{rm.detail}</div>
+        {rm.diff && (
+          <pre className="bg-surface-container-low dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg p-3 font-code overflow-x-auto max-h-56 mb-3 whitespace-pre-wrap">{rm.diff}</pre>
+        )}
+        {phase === "done" ? (
+          <div className="text-emerald-600">✓ {result}</div>
+        ) : (
+          <div className="flex gap-2">
+            <button disabled={phase === "merging"} onClick={approve}
+              className="px-3 py-1.5 bg-accent-terracotta hover:bg-accent-deep text-white rounded-lg active:scale-95 transition disabled:opacity-60">
+              {phase === "merging" ? "Merging…" : "Approve & merge"}
+            </button>
+            <button onClick={() => setDismissed(true)}
+              className="px-3 py-1.5 border border-light-border dark:border-dark-border rounded-lg hover:bg-surface-container-low dark:hover:bg-dark-bg transition">
+              Later
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 function Activity({ m, running }: { m: Msg; running?: boolean }) {
   const events = m.events;
   const lastPlan = [...events].reverse().find((e) => e.type === "plan") as any;
@@ -364,6 +414,7 @@ function Activity({ m, running }: { m: Msg; running?: boolean }) {
       <AgentStatus events={events} running={running} />
       <div className="px-4 pb-4 pt-1">
         <ProgramProgress events={events} />
+        <ReviewMergeCard events={events} />
         {lastPlan?.todos?.length > 0 && (<><PhaseLabel icon="checklist" color="bg-accent-terracotta">Plan</PhaseLabel><PlanChecklist todos={lastPlan.todos} /></>)}
         {steps.length > 0 && (
           <><PhaseLabel icon="settings" color="bg-accent-terracotta">Steps</PhaseLabel>

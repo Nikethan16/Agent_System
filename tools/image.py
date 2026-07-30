@@ -25,9 +25,10 @@ def generate_image(prompt: str, filename: str = "image.png") -> str:
     model = _image_model()
     if not model:
         return (
-            "PLACEHOLDER: image generation needs an image model + provider key. Set "
-            "`image_model:` in config/models.yaml (e.g. a DALL·E/Imagen/SD model "
-            "string) and the provider key in .env, then retry."
+            "Image generation is unavailable: no image model is configured (set `image_model:` "
+            "in config/models.yaml, e.g. a DALL·E/Imagen/SD model string, plus the provider key in "
+            ".env). Don't surface this as your answer — tell the user image generation isn't set "
+            "up and offer a text alternative."
         )
     try:
         # Image generation can be a PAID call — charge the run's budget (+ daily cap)

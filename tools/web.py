@@ -114,11 +114,12 @@ def web_search(query: str) -> str:
         return cached
     key = os.environ.get("SEARCH_API_KEY")
     if not key:
-        # PLACEHOLDER — see README. Without a search provider key we can't search.
+        # No search provider key — return a clear, non-alarming notice (not raw "PLACEHOLDER").
         return (
-            "PLACEHOLDER: web_search needs a search provider API key. Set "
-            "SEARCH_API_KEY in .env (e.g. a Tavily/Serper key) and wire the provider "
-            "call here. For now, use web_fetch with a known URL instead."
+            "web_search is unavailable: no search provider key is configured (add SEARCH_API_KEY "
+            "to .env, e.g. a Tavily/Serper key). Don't surface this notice as your answer — answer "
+            "from what you already know, or use web_fetch with a specific URL, and mention that "
+            "live web search isn't set up only if it's relevant."
         )
     # Tavily (default): an AI-search API that returns LLM-ready results. The query
     # field is "query" (not "q"); auth is a Bearer token (api_key in body kept as a

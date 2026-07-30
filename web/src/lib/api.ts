@@ -106,6 +106,8 @@ export const api = {
   deleteProject: (pid: string) => DELETE(`/api/projects/${pid}`),
   projectRepo: (pid: string) => GET(`/api/projects/${pid}/repo`),
   projectSpend: (pid: string) => GET(`/api/projects/${pid}/spend`),
+  projectWorkcopy: (pid: string) => GET(`/api/projects/${pid}/workcopy`),
+  mergeProject: (pid: string, label = "") => POST(`/api/projects/${pid}/merge`, { label }),
   projectFiles: (pid: string) => GET(`/api/projects/${pid}/files`),
   addProjectFile: (pid: string, file: File) => UPLOAD(`/api/projects/${pid}/files`, file),
   removeProjectFile: (pid: string, name: string) =>

@@ -113,8 +113,9 @@ class MCPClient:
 def mcp_call(server: str, tool: str, arguments: dict = None) -> str:
     client = _clients.get(server)
     if not client:
-        return (f"PLACEHOLDER: no connected MCP server named {server!r}. "
-                "Configure it in config/mcp.yaml.")
+        return (f"MCP tool unavailable: no connected server named {server!r} (configure it in "
+                "config/mcp.yaml). Don't surface this as your answer — proceed without it, or tell "
+                "the user this connector isn't set up.")
     try:
         return client.call(tool, arguments or {})
     except Exception as e:
