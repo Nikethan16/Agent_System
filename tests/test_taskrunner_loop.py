@@ -33,12 +33,12 @@ def _collect_emit():
 
 
 def _active(prompt: str) -> str:
-    """The feature currently being worked = the text right after the 'yet:\\n' marker.
-    (The 'Already completed' list also names prior features, so a bare substring test would
-    match the wrong one — always key off the active-task marker.)"""
-    if "yet:\n" not in prompt:
+    """The feature currently being worked = the text right after the 'NEW REQUEST:' marker (the
+    feature is placed LAST so the router judges it, not the prepended context). The 'Already
+    completed' list also names prior features, so always key off the marker, not a bare substring."""
+    if "NEW REQUEST:" not in prompt:
         return ""
-    return prompt.split("yet:\n", 1)[1].split("\n", 1)[0].strip()
+    return prompt.split("NEW REQUEST:", 1)[1].strip()
 
 
 def test_passing_feature_is_verified_first_try(monkeypatch):
@@ -98,7 +98,7 @@ def test_red_feature_retries_then_flagged(monkeypatch):
     # The concrete failure feedback is fed back into attempts 2 and 3.
     hard_prompts = [p for p in prompts if _active(p) == "hard feature"]
     assert len(hard_prompts) == 3
-    assert sum("PREVIOUS ATTEMPT FAILED" in p for p in hard_prompts) == 2
+    assert sum("FAILED a check" in p for p in hard_prompts) == 2
     assert "2 tests still failing" in hard_prompts[-1]
     assert "need" in out.lower() and "attention" in out.lower()
 
@@ -182,3 +182,23 @@ def test_public_carries_attempts_and_status():
     prog = [{"text": "x", "status": "needs_attention", "result": "", "attempts": 3}]
     pub = taskrunner._public(prog)
     assert pub == [{"text": "x", "status": "needs_attention", "attempts": 3}]
+
+
+def test_per_feature_prompt_isolates_feature_for_routing(monkeypatch):
+    """Regression: each feature must be judged for ROUTING on the feature text, not the prepended
+    project context (which over-tiered every step to the LEAD path). The prompt puts the feature
+    after a NEW REQUEST: marker so _user_request extracts exactly it."""
+    from core.orchestrator import _user_request
+    prompts = []
+
+    def ht(prompt, **kw):
+        prompts.append(prompt)
+        return "did it"
+
+    _install(monkeypatch, ht, lambda *a, **k: (True, ""))
+    _, emit = _collect_emit()
+    context = "Project: a FastAPI + Postgres + Redis app with a React frontend, research connectors, reports."
+    taskrunner.run_program(["add function foo", "add function bar"], context, FakeBudget(), emit)
+    assert _user_request(prompts[0]) == "add function foo"      # router sees the FEATURE...
+    assert _user_request(prompts[1]) == "add function bar"
+    assert "FastAPI" not in _user_request(prompts[0])            # ...not the context blob

@@ -82,23 +82,29 @@ def run_program(tasks: list, context: str, budget, emit, approve=None, review="a
         item["status"] = "in_progress"
         _progress(i)
         done_list = "\n".join(f"- {p['text']} (done)" for p in program[:i]) or "(none yet)"
-        base = (f"{context}\n\n" if context else "") + (
-            f"You are working through a numbered sequence of {total} tasks, ONE AT A TIME.\n"
-            f"Already completed:\n{done_list}\n\n"
-            f"NOW COMPLETE ONLY TASK {i + 1} OF {total} — do not start the others yet:\n{item['text']}\n\n"
-            "Actually PERFORM this task using your tools (write/edit files, run commands) — do "
-            "not merely describe what you would do. The task is complete only once the real "
-            "change exists (e.g. the file is written, the command has run)."
-        )
+
+        def _prompt(feedback: str = "") -> str:
+            # The feature goes LAST, after a `NEW REQUEST:` marker, so the router judges the FEATURE
+            # (via _user_request / _cache_key) — NOT the prepended project context, which otherwise
+            # trips the difficulty/delegation escalation and over-routes every step to the tier-3
+            # LEAD path (found via dogfooding: a simple "add a function + test" routed multi-domain
+            # → LEAD). Retry feedback goes in the framing, before the marker, so it can't skew routing.
+            fb = (f"A previous attempt FAILED a check — fix these first, then finish:\n{feedback}\n\n"
+                  if feedback else "")
+            return (f"{context}\n\n" if context else "") + (
+                f"You are working through a sequence of {total} tasks, ONE AT A TIME (this is task "
+                f"{i + 1} of {total}). Already completed:\n{done_list}\n\n{fb}"
+                "Do ONLY the next task now, fully — actually PERFORM it with your tools (write/edit "
+                "files, run commands), don't just describe it; it's done only once the real change "
+                "exists (the file is written, the command has run).\n\n"
+                f"NEW REQUEST: {item['text']}")
 
         passed, feedback = False, ""
         try:
             for attempt in range(1, _MAX_ATTEMPTS + 1):
                 item["attempts"] = attempt
                 _progress(i)  # surfaces "try N" on the checklist during re-work
-                prompt = base if attempt == 1 else (
-                    base + "\n\n--- A CHECK ON YOUR PREVIOUS ATTEMPT FAILED — fix these, then "
-                    f"finish the task ---\n{feedback}")
+                prompt = _prompt(feedback if attempt > 1 else "")
                 # Snapshot the workspace BEFORE the run so the act-gate can tell if files changed.
                 before_sig = _workspace_sig(current_workspace())
                 # review=False here: evaluate_feature below is the ONE authoritative QA gate for

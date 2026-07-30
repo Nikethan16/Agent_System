@@ -32,7 +32,7 @@ def test_runs_each_task_in_order_with_progress(monkeypatch):
     out = taskrunner.run_program(["build A", "build B"], context="", budget=Budget(),
                                  emit=lambda e: events.append(e))
     assert len(calls) == 2
-    assert "build A" in calls[0] and "TASK 1 OF 2" in calls[0]
+    assert "build A" in calls[0] and "task 1 of 2" in calls[0] and "NEW REQUEST:" in calls[0]
     assert "build B" in calls[1] and "build A (done)" in calls[1]   # prior progress carried forward
     progs = [e for e in events if e["type"] == "program"]
     assert progs[-1]["done"] == 2 and progs[-1]["total"] == 2
@@ -53,7 +53,7 @@ def test_stops_and_skips_when_budget_exhausted(monkeypatch):
 
 def test_task_error_is_isolated(monkeypatch):
     def flaky(prompt, **kw):
-        if "B" in prompt.split("TASK", 1)[-1][:40]:
+        if prompt.split("NEW REQUEST:", 1)[-1].strip() == "B":   # the active feature
             raise RuntimeError("boom")
         return "ok"
     monkeypatch.setattr(orch, "handle_task", flaky)
