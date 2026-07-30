@@ -668,6 +668,45 @@ def _final_payload(text, budget):
     return {"type": "final", "text": _failure_guidance(text), "cost": round(budget.spent_usd, 4)}
 
 
+def _salvage_single_agent(task, result, budget, emit=None):
+    """When a single-agent run ends on a bare failure marker (step cap / provider error), don't
+    surface only the marker: reconstruct the best real answer from the WORKSPACE — the single-agent
+    paths have no Blackboard, so the files it produced ARE the record of what got done. One bounded
+    tier-2 call, grounded ONLY in the file list. Returns the raw result unchanged when there's
+    nothing to salvage or the call fails (so _final_payload still appends the honest next-step tip)."""
+    if not _looks_failed(result):
+        return result
+    ws = current_workspace()
+    files = []
+    if ws and os.path.isdir(ws):
+        for root, dirs, fs in os.walk(ws):
+            dirs[:] = [d for d in dirs if d not in _SIG_SKIP]
+            for f in fs:
+                files.append(os.path.relpath(os.path.join(root, f), ws))
+                if len(files) >= 60:
+                    break
+            if len(files) >= 60:
+                break
+    if not files:
+        return result                          # nothing produced -> let _final_payload add the tip
+    listing = "\n".join(f"- {p}" for p in sorted(files))
+    prompt = (f"A task stopped before finishing (reason: {result}).\n\nTASK:\n{_user_request(task)}\n\n"
+              f"FILES NOW IN THE WORKSPACE (the partial work that got done):\n{listing}\n\n"
+              "Write a concise, useful reply for the user, grounded ONLY in the files above: "
+              "(1) what was actually accomplished, (2) what is still incomplete, (3) the concrete "
+              "next steps to finish it. Do not invent results. No tool-call syntax.")
+    try:
+        resp, _ = complete(registry.model_for_tier("tier2", task_type="general"),
+                           [{"role": "user", "content": prompt}], max_tokens=500, budget=budget)
+        text = _strip_toolcall_markup(resp.choices[0].message.content or "")
+    except Exception:
+        text = ""
+    if emit and text:
+        emit({"type": "thought", "agent": "salvage",
+              "text": "(run stopped early — recovered a partial answer from the workspace)"})
+    return text or result                      # substantive partial answer, or fall through to the tip
+
+
 # ---- per-feature done-gate (used by the sequential task runner) -------------
 def evaluate_feature(task, result, before_sig, budget, emit=None, approve=None, acceptance=""):
     """Judge whether ONE feature is actually DONE — the public gate the sequential runner
@@ -1489,6 +1528,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
                                  stream, task_type=task_type, acceptance=acceptance, tier=downgrade_tier,
                                  use_skills=(tier >= 2), verify_run=_verify,
                                  max_rounds=(22 if _verify else None)) or result
+        result = _salvage_single_agent(task, result, budget, emit)
         _emit(_final_payload(result, budget))
         return result
 
@@ -1504,6 +1544,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
         if os.environ.get("AGENT_PHASED_BUILD", "1").strip().lower() in ("1", "true", "yes"):
             final = _phased_build(task, budget, emit, approve, review, task_type,
                                   acceptance=acceptance, stream=stream)
+            final = _salvage_single_agent(task, final, budget, emit)
             _emit(_final_payload(final, budget))
             return final
         agent_id, reason = team.select_agent(task, budget=budget)
@@ -1551,6 +1592,7 @@ def handle_task(task: str, budget: Budget = None, emit=None, approve=None,
             result = _do_subtask(agent_id, agent_task + _ACT_NUDGE, budget, emit, approve, "",
                                  build_review, True, task_type=task_type, acceptance=acceptance,
                                  tier=None, use_skills=True, verify_run=True, max_rounds=22) or result
+        result = _salvage_single_agent(task, result, budget, emit)
         _emit(_final_payload(result, budget))
         return result
 
