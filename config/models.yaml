@@ -10,6 +10,8 @@
 #    openai .........  gpt-5.5  /  gpt-4o-mini
 #    google .........  gemini/gemini-2.5-flash
 #    nvidia nim .....  nvidia_nim/<vendor>/<model>   (free dev tier, 40 RPM/key)
+#    groq ...........  groq/llama-3.3-70b-versatile  (free, fast, no-train)
+#    cerebras .......  cerebras/llama-3.3-70b        (free, fastest; 8K ctx cap)
 #    openrouter .....  openrouter/<vendor>/<model>   (one key, any model)
 #    local (ollama) .  ollama/qwen2.5-coder:32b
 #
@@ -80,6 +82,7 @@ worker_tier: tier2
 #   skips key-less models, then truncates), and no benchmarked free fallback is lost.
 routing:
   chat:      ["deepseek/deepseek-v4-flash",
+              "groq/llama-3.1-8b-instant",
               "gemini/gemini-2.5-flash-lite",
               "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b"]
   # The LEAD/planner: V4 Pro plans (reasoning fit, cheap long outputs); DeepInfra
@@ -87,11 +90,13 @@ routing:
   # NIM nemotron-super, then NIM deepseek-v4-pro, then minimax (both demoted, 45s+).
   reasoning: ["deepseek/deepseek-v4-pro",
               "deepinfra/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
+              "groq/openai/gpt-oss-120b",
               "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
               "nvidia_nim/deepseek-ai/deepseek-v4-pro",
               "nvidia_nim/minimaxai/minimax-m3"]
   planning:  ["deepseek/deepseek-v4-pro",
               "deepinfra/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B",
+              "groq/openai/gpt-oss-120b",
               "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
               "nvidia_nim/deepseek-ai/deepseek-v4-pro",
               "nvidia_nim/minimaxai/minimax-m3"]
@@ -108,6 +113,7 @@ routing:
   coding:    ["deepseek/deepseek-v4-flash",
               "deepinfra/Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
               "deepinfra/zai-org/GLM-5.1",
+              "groq/llama-3.3-70b-versatile",
               "nvidia_nim/qwen/qwen3.5-122b-a10b",
               "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"]
   # frontend is coding-class but a distinct task_type (the frontend agent's capability
@@ -116,6 +122,7 @@ routing:
   frontend:  ["deepseek/deepseek-v4-flash",
               "deepinfra/Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo",
               "deepinfra/zai-org/GLM-5.1",
+              "groq/llama-3.3-70b-versatile",
               "nvidia_nim/qwen/qwen3.5-122b-a10b",
               "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"]
   # REVIEW/QA: short outputs, high judgment, must reliably run_bash the tests -> GLM's
@@ -139,6 +146,7 @@ routing:
               "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
               "nvidia_nim/qwen/qwen3.5-122b-a10b"]
   general:   ["deepseek/deepseek-v4-flash",
+              "groq/llama-3.3-70b-versatile",
               "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
               "nvidia_nim/meta/llama-4-maverick-17b-128e-instruct"]
   writing:   ["deepseek/deepseek-v4-flash",
@@ -148,6 +156,7 @@ routing:
   # so the per-task routing (and the security-manager review, which reuses this chain) never
   # stalls on Gemini's free-tier limit. Gemini stays only as a fallback (2026-07-12).
   classify:  ["deepseek/deepseek-v4-flash",
+              "groq/llama-3.1-8b-instant",
               "nvidia_nim/nvidia/nemotron-3-nano-30b-a3b",
               "gemini/gemini-2.5-flash-lite"]
   # data leads with the code-specialist; free floor keeps main's order (qwen, glm, nemotron).
@@ -292,10 +301,14 @@ catalog:
     tier_hint: 2
     good_for: [vision]
 
-  # PRIVACY NOTE (research 2026-07): DeepSeek (opt-out) and z.ai (explicit
-  # no-training policy) are the safe picks for proprietary code. Do NOT add
-  # MiniMax or Xiaomi/MiMo direct APIs for private work — neither guarantees
-  # zero retention.
+  # PRIVACY NOTE (validated 2026-08-01 — CORRECTS a prior wrong assumption):
+  # the DIRECT DeepSeek API (deepseek/…) TRAINS on inputs and stores data on PRC
+  # servers; its opt-out is weak/consumer-focused — do NOT treat deepseek/ as
+  # privacy-safe for proprietary code. The genuinely no-train picks are z.ai/GLM
+  # (explicit no-training policy) and anything hosted on DeepInfra (zero-retention,
+  # SOC2/ISO) — so for private work route DeepSeek/Qwen/GLM via deepinfra/… (or run
+  # local via ollama/…). Groq is also no-train by default. Still avoid MiniMax /
+  # Xiaomi-MiMo DIRECT APIs for private work — neither guarantees zero retention.
 
   # =========================================================================
   #  NVIDIA NIM FLEET — the FREE fleet (40 RPM per key; needs
@@ -433,6 +446,57 @@ catalog:
     cost: 3
     tier_hint: 3
     good_for: [reasoning, coding, hard, math]
+
+  # =========================================================================
+  #  GROQ FLEET — FREE, FAST, RELIABLE (needs GROQ_API_KEY; no card, no-train
+  #  by default). Validated 2026-08-01 vs official docs: a real tool-use API,
+  #  30 RPM/model, per-model 1K–14.4K req/day. Preferred over the NIM free floor
+  #  (cost 0) because Groq has NO 40-RPM shared-key throttle and a validated
+  #  function-calling path — the best free workhorse for agent loops. Verify ids
+  #  on first use (provider catalogs drift). INERT until GROQ_API_KEY is set.
+  # =========================================================================
+  - id: "groq/llama-3.1-8b-instant"
+    provider: "groq"
+    requires_env: "GROQ_API_KEY"
+    free: true
+    open_source: true
+    cost: 0
+    tier_hint: 1
+    good_for: [routing, classify, chat, simple, summarize]
+  - id: "groq/llama-3.3-70b-versatile"
+    provider: "groq"
+    requires_env: "GROQ_API_KEY"
+    free: true
+    open_source: true
+    cost: 0
+    tier_hint: 2
+    good_for: [coding, chat, general, reasoning, agentic, writing]
+  - id: "groq/openai/gpt-oss-120b"
+    provider: "groq"
+    requires_env: "GROQ_API_KEY"
+    free: true
+    open_source: true
+    cost: 1
+    tier_hint: 3
+    good_for: [reasoning, coding, hard]
+
+  # =========================================================================
+  #  CEREBRAS — FASTEST tokens/sec, but DEMOTED (needs CEREBRAS_API_KEY).
+  #  ⚠ Two hard limits validated 2026-08-01: the FREE tier caps context at
+  #  8,192 tokens (breaks long agent loops — context_window pinned below so the
+  #  packer respects it) AND requires a payment method from 2026-08-17. Kept as a
+  #  fast, SHORT, single-shot fallback only; re-evaluate after the Aug-17 change.
+  #  INERT until CEREBRAS_API_KEY is set.
+  # =========================================================================
+  - id: "cerebras/llama-3.3-70b"
+    provider: "cerebras"
+    requires_env: "CEREBRAS_API_KEY"
+    free: true
+    open_source: true
+    cost: 4                     # demoted: don't auto-lead — the 8K free ctx is disqualifying for loops
+    tier_hint: 2
+    context_window: 8192        # FREE-tier hard cap (128K only on request) — keep the packer honest
+    good_for: [chat, simple, general]
 
   # =========================================================================
   #  GOOGLE GEMINI — kept as the cross-provider fallback (needs GEMINI_API_KEY).
