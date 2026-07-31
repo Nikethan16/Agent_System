@@ -43,6 +43,10 @@ _DEFAULT_PATH = os.path.join(_DIR, "..", "config", "models.yaml")
 CONFIG_PATH = os.environ.get("MODELS_CONFIG", _DEFAULT_PATH)
 DISCOVERED_PATH = os.environ.get(
     "MODELS_DISCOVERED", os.path.join(_DIR, "..", "config", "models.discovered.yaml"))
+# Deterministic facts from models.dev (written by server/catalog_sync.py). Loaded as a
+# GAP-FILL layer UNDER the base catalog — a hand-set models.yaml value always wins.
+SYNCED_PATH = os.environ.get(
+    "MODELS_SYNCED", os.path.join(_DIR, "..", "config", "models.synced.yaml"))
 # UI-editable routing overrides (gitignored); merged over models.yaml `routing:`.
 ROUTING_PATH = os.environ.get(
     "ROUTING_OVERRIDE",
@@ -59,6 +63,7 @@ class ModelRegistry:
         with open(self.path) as f:
             self.cfg = yaml.safe_load(f)
         self._discovered = self._load_discovered()
+        self._synced = self._load_synced()
         self._routing_override = self._load_routing_override()
 
     def _load_routing_override(self) -> dict:
@@ -81,6 +86,19 @@ class ModelRegistry:
         except Exception as e:
             log.warning("could not load discovered models from %s: %s", DISCOVERED_PATH, e)
             return []
+
+    def _load_synced(self):
+        """models.dev facts as {id -> {context_window, tool_call, vision, reasoning,
+        synced_price, cost}}. Missing/broken file just means no gap-fill (offline-safe)."""
+        try:
+            with open(SYNCED_PATH) as f:
+                data = yaml.safe_load(f) or {}
+            return data.get("models", {}) or {}
+        except FileNotFoundError:
+            return {}
+        except Exception as e:
+            log.warning("could not load synced models from %s: %s", SYNCED_PATH, e)
+            return {}
 
     # ---- run-scoped model override (composer "Model" picker) -------------
     def set_model_override(self, model):
@@ -172,12 +190,22 @@ class ModelRegistry:
     def model_strategy(self) -> str:
         return self.cfg.get("defaults", {}).get("model_strategy", "fixed")
 
-    # ---- catalog (base + discovered) ------------------------------------
+    # ---- catalog (base + discovered + synced facts) ---------------------
     def catalog(self) -> list:
         base = self.cfg.get("catalog", []) or []
-        by_id = {m["id"]: m for m in base}
+        by_id = {m["id"]: dict(m) for m in base}   # copy: never mutate the loaded cfg
         for m in self._discovered:                 # discovered overrides/extends base
-            by_id[m["id"]] = m
+            by_id[m["id"]] = dict(m)
+        # models.dev SYNCED facts fill GAPS ONLY: a hand-set base/discovered value ALWAYS
+        # wins, so a sync never clobbers curation. Only refreshes models we already carry
+        # (unknowns are ignored — the catalog stays curated, not flooded with 1000s of ids).
+        for mid, syn in (self._synced or {}).items():
+            entry = by_id.get(mid)
+            if not entry or not isinstance(syn, dict):
+                continue
+            for k, v in syn.items():
+                if entry.get(k) in (None, "", [], {}):
+                    entry[k] = v
         return list(by_id.values())
 
     def sampling_for(self, model: str) -> dict:

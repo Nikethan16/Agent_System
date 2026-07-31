@@ -29,6 +29,7 @@ evals/reports/
 audit.log
 audit.log.1
 config/models.discovered.yaml
+config/models.synced.yaml
 
 # ---- editor / OS / tooling -------------------------------------------------
 .DS_Store
