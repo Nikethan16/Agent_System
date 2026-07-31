@@ -65,6 +65,7 @@ _KEY_ATTEMPTS = int(os.environ.get("AGENT_KEY_ATTEMPTS", "4"))
 # every step. The last model in the chain is NEVER skipped (always a live attempt).
 _BREAKER: dict[str, float] = {}        # model_id -> open_until epoch
 _BREAKER_FAILS: dict[str, int] = {}    # model_id -> CONSECUTIVE fallbackable failures
+_BREAKER_CYCLES: dict[str, int] = {}   # model_id -> consecutive OPEN cycles (adaptive backoff)
 _BREAKER_LOCK = threading.Lock()
 _BREAKER_COOLDOWN = float(os.environ.get("AGENT_BREAKER_COOLDOWN", "60"))
 # Trip the breaker only after this many CONSECUTIVE failures, not the first one. The
@@ -79,6 +80,17 @@ _BREAKER_THRESHOLD = max(1, int(os.environ.get("AGENT_BREAKER_THRESHOLD", "2")))
 # trip on the first hit (no 2-strike wait). This stops every classify/embed/manager call
 # from re-probing a dead provider each minute — the biggest latency sink under free-tier 429s.
 _BREAKER_RATELIMIT_COOLDOWN = float(os.environ.get("AGENT_RATELIMIT_COOLDOWN", "600"))
+# Adaptive backoff: a model that keeps failing right after its cooldown expires gets a
+# progressively LONGER cooldown (base × 2^cycles, capped) so a persistently-dead model is
+# re-probed rarely instead of every cooldown. The streak resets on the first success, and
+# the cap keeps a transient blip from benching a model for hours.
+_BREAKER_BACKOFF_MAX = max(1, int(os.environ.get("AGENT_BREAKER_BACKOFF_MAX", "8")))
+
+
+def _escalated(model: str, base: float) -> float:
+    """Cooldown for `model`, escalated by how many times it has opened without recovering.
+    Caller MUST already hold _BREAKER_LOCK (reads _BREAKER_CYCLES without re-locking)."""
+    return base * min(2 ** _BREAKER_CYCLES.get(model, 0), _BREAKER_BACKOFF_MAX)
 
 
 def _breaker_open(model: str) -> bool:
@@ -93,7 +105,8 @@ def _record_breaker_failure(model: str) -> bool:
         n = _BREAKER_FAILS.get(model, 0) + 1
         _BREAKER_FAILS[model] = n
         if n >= _BREAKER_THRESHOLD:
-            _BREAKER[model] = time.time() + _BREAKER_COOLDOWN
+            _BREAKER[model] = time.time() + _escalated(model, _BREAKER_COOLDOWN)
+            _BREAKER_CYCLES[model] = _BREAKER_CYCLES.get(model, 0) + 1
             return True
         return False
 
@@ -102,14 +115,17 @@ def _trip_breaker(model: str, cooldown: float = None) -> None:
     """Force the breaker open immediately (bypasses the threshold). Optional longer
     cooldown for definitive failures like a rate-limit / quota exhaustion."""
     with _BREAKER_LOCK:
-        _BREAKER[model] = time.time() + (cooldown if cooldown is not None else _BREAKER_COOLDOWN)
+        base = cooldown if cooldown is not None else _BREAKER_COOLDOWN
+        _BREAKER[model] = time.time() + _escalated(model, base)
         _BREAKER_FAILS[model] = _BREAKER_THRESHOLD
+        _BREAKER_CYCLES[model] = _BREAKER_CYCLES.get(model, 0) + 1
 
 
 def _reset_breaker(model: str) -> None:
     with _BREAKER_LOCK:
         _BREAKER.pop(model, None)
         _BREAKER_FAILS.pop(model, None)
+        _BREAKER_CYCLES.pop(model, None)
 
 
 def breaker_status() -> list:
@@ -119,7 +135,7 @@ def breaker_status() -> list:
     now = time.time()
     out = []
     with _BREAKER_LOCK:
-        models = set(_BREAKER) | set(_BREAKER_FAILS)
+        models = set(_BREAKER) | set(_BREAKER_FAILS) | set(_BREAKER_CYCLES)
         for m in models:
             open_until = _BREAKER.get(m, 0)
             remaining = max(0, round(open_until - now))
@@ -128,6 +144,7 @@ def breaker_status() -> list:
                 continue
             out.append({"model": m, "open": remaining > 0,
                         "cooldown_s": remaining, "fails": fails,
+                        "cycles": _BREAKER_CYCLES.get(m, 0),
                         "threshold": _BREAKER_THRESHOLD})
     out.sort(key=lambda r: (not r["open"], -r["cooldown_s"]))
     return out
