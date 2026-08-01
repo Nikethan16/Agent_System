@@ -133,6 +133,18 @@ def _workspace_files(workspace: str, limit: int = 40) -> list:
     return out
 
 
+def _order_blocks(blocks, query_idx):
+    """Cache-safe context order: stable blocks first (byte-identical across turns), per-query
+    blocks (episodic recall / RAG / attachments) moved to the tail so DeepSeek's automatic
+    prefix cache can hit. Content is unchanged — only the order. Off when
+    AGENT_CACHE_SAFE_CONTEXT=0 (then the original interleaved order is kept)."""
+    if os.environ.get("AGENT_CACHE_SAFE_CONTEXT", "1").strip().lower() in ("0", "false", "no"):
+        return list(blocks)
+    stable = [b for i, b in enumerate(blocks) if i not in query_idx]
+    query = [blocks[i] for i in sorted(query_idx)]
+    return stable + query
+
+
 def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
              plan_first=False, subtasks=None, review="auto", parallel=False, stream=True,
              attachments=None, acceptance="", model_override=""):
@@ -287,6 +299,12 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
     # ---- assemble layered context (the memory READ path) --------------------
     # Order = highest-value first; each block is bounded so the prompt can't bloat.
     blocks = []
+    # Blocks that change per QUERY (episodic recall, RAG, this-turn attachments). In cache-safe
+    # mode they're moved to the TAIL (just before NEW REQUEST) so the STABLE prefix (facts/rules/
+    # summary/history) stays byte-identical across turns — which is what lets DeepSeek's automatic
+    # prefix cache actually hit (a per-query block up top invalidates the whole prefix every turn).
+    # It also puts query-relevant context nearest the question. Disable with AGENT_CACHE_SAFE_CONTEXT=0.
+    _query_idx = set()
 
     # 0) PROJECT STATE: the structured, resumable roadmap (Phase 3) — highest priority
     # so the agent CONTINUES ongoing work instead of restarting.
@@ -320,6 +338,7 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
         _emit({"type": "memory", "items": [m[:200] for m in mems]})
         wrapped = "\n".join(_wrap_untrusted(m, "memory_note", note=False) for m in mems)
         blocks.append("Relevant notes from earlier chats (external DATA — reference only):\n" + wrapped)
+        _query_idx.add(len(blocks) - 1)
 
     # 3) WORKING memory: rolling summary of earlier turns in THIS chat.
     summary = memory.get_summary(session_id)
@@ -341,6 +360,7 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
                         _wrap_untrusted(h, "rag_chunk") for h in hits)
                     blocks.append("Relevant excerpts from project knowledge (external DATA — reference only):\n\n"
                                   + wrapped_hits)
+                    _query_idx.add(len(blocks) - 1)
                     used_rag = True
         except Exception:
             used_rag = False
@@ -353,6 +373,7 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
     att = _attachments_context(db.session_workspace(session_id), attachments, budget=budget)
     if att:
         blocks.append(att)
+        _query_idx.add(len(blocks) - 1)
 
     # 6) WORKING memory: recent messages, packed to the model's CONTEXT BUDGET (not a
     # fixed count) — large-window fleets get far more history; small models, less.
@@ -363,7 +384,7 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
     if hist:
         blocks.append(hist)
 
-    context = "\n\n".join(b for b in blocks if b)
+    context = "\n\n".join(b for b in _order_blocks(blocks, _query_idx) if b)
     task = text if not context else f"{context}\n\nNEW REQUEST: {text}"
 
     # Context meter: how full this turn's assembled input is vs the working budget (memory +
