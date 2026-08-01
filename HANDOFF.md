@@ -6,7 +6,7 @@ For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OV
 
 ## ⚡ LATEST (2026-08-01) — OmniRoute-inspired reliability + capability round (9 commits)
 
-**9 commits to `main` (local only — NOT pushed). 546 pytest green (was 493).** After a deep code
+**11 commits to `main` (local only — NOT pushed). 562 pytest green (was 493).** After a deep code
 teardown of **OmniRoute** (a peer self-hosted AI gateway), pulled the genuinely useful, non-risky
 pieces into Nikki. Notably **verify-first each one**: three "borrows" already existed (circuit
 breaker, catalog layering, tool-output cap), so only the missing parts were built. A model-picker
@@ -23,6 +23,8 @@ validation pass the same session also caught a real safety bug.
 | `25beb42` | **chat(context): cache-safe order.** Per-query blocks (recall/RAG/attachments) moved to the TAIL so the stable prefix stays byte-identical → DeepSeek automatic prefix cache actually hits (`_order_blocks`, `AGENT_CACHE_SAFE_CONTEXT`). |
 | `63efad5` | **memory: RRF fusion.** recall() now fuses embedding + lexical rankings (Reciprocal Rank Fusion, k0=60) when an embed model is set, so a note strong in EITHER surfaces (`AGENT_MEMORY_RRF`). |
 | `10d29b6` | **mcp(server): expose Nikki** (`server/mcp_server.py`). stdio JSON-RPC MCP server so Claude Code/Cursor can call Nikki as tools (memory_search/list_agents/status/fuse + opt-in run_task). `python -m server.mcp_server`; read-only + fuse always on, run_task gated (`AGENT_MCP_ALLOW_RUN`) + deny-risky. |
+| `15ca8d6` | **mcp(http): HTTP transport** (`server/api/mcp_http.py`). `POST /api/mcp` (JSON-RPC) behind the standard `AGENT_AUTH_TOKEN` gate — so the MCP tools are reachable REMOTELY over Tailscale, not just stdio-local. Threadpool dispatch; batches + notifications. (Completes "expose over Tailscale".) |
+| `47ac636` | **envcheck: startup env hygiene** (`server/envcheck.py`). Flags placeholder / quoted / CR-tainted credential env vars (the silent config incidents from earlier sessions) at boot + `GET /api/system/env-hygiene`. Never leaks a secret value. |
 
 ### Verify-first — already covered, NO code (the payoff)
 Circuit breaker + catalog layering + tool-output cap already existed. Subscription→cheap→free = the
