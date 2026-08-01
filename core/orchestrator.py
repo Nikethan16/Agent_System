@@ -30,6 +30,7 @@ from . import agents as team
 from . import toolbelt
 from . import skills as skill_lib
 from . import playbooks as playbook_lib
+from . import fusion
 from .agent import (_run_one_tool, _looks_like_raw_toolcall, _strip_toolcall_markup,
                     _compact_messages)
 from .blackboard import Blackboard
@@ -1382,6 +1383,42 @@ def _pipeline(task, budget, emit, approve, review, task_type=None, acceptance=""
 
     _emit(_final_payload(result, budget))
     return result
+
+
+# ---- Fusion: panel-of-models + judge synthesis ------------------------------
+# A different lever from decompose+critic: ask a DIVERSE panel the SAME question, then let a
+# judge synthesize one answer. Best for hard questions where independent takes help. Opt-in
+# (the /fuse command) and never auto-triggered — it spends N+1 model calls per question.
+FUSION_PANEL = max(2, int(os.environ.get("AGENT_FUSION_PANEL", "4")))
+
+
+def fuse_task(task: str, budget: Budget = None, emit=None, approve=None, panel_size: int = None) -> str:
+    """Answer `task` by Fusion. Assembles a diverse panel of AVAILABLE models + a reliable
+    judge chain from the registry, then synthesizes via core.fusion.fuse. Falls back to a
+    single answer when fewer than two distinct models are available (e.g. one provider key)."""
+    budget = budget or Budget()
+    size = panel_size or FUSION_PANEL
+    # Draw candidates from several strong chains for provider/family diversity; dedup keeps
+    # best-first order. model_chain already filters to models whose key is set.
+    cands = []
+    for tier, tt in (("tier3", "reasoning"), ("tier3", "coding"),
+                     ("tier2", "general"), ("tier3", "research")):
+        cands += registry.model_chain(tier, task_type=tt, max_len=4)
+    panel = list(dict.fromkeys(cands))[:max(2, size)]
+    judge_chain = registry.model_chain("tier3", task_type="reasoning") or panel
+
+    if len(panel) < 2:
+        if emit:
+            emit({"type": "thought", "agent": "fusion",
+                  "text": "Only one model available — answering directly (no panel to fuse)."})
+        resp, _ = complete_chain(judge_chain, [{"role": "user", "content": task}],
+                                 max_tokens=4096, budget=budget)
+        return (resp.choices[0].message.content or "").strip()
+
+    if emit:
+        emit({"type": "route", "task_type": "fusion", "tier": "tier3", "models": panel})
+    return fusion.fuse(task, panel_models=panel, judge_chain=judge_chain,
+                       budget=budget, emit=emit)
 
 
 # ---- entry point ------------------------------------------------------------

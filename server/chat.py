@@ -12,7 +12,7 @@ import os
 from core.llm import Budget, _span_ctx, use_span_ctx
 from core.boundary import wrap as _wrap_untrusted
 from core.tools import using_workspace, fresh_build_slug
-from core.orchestrator import handle_task, _user_request, _repo_understanding_agent
+from core.orchestrator import handle_task, fuse_task, _user_request, _repo_understanding_agent
 from core.router import classify
 from core import commands as _commands
 
@@ -223,6 +223,30 @@ def run_turn(session_id, text, budget: Budget = None, emit=None, approve=None,
         db.add_message(session_id, "assistant", msg)
         _emit({"type": "final", "text": msg, "cost": 0})
         return msg
+
+    # /fuse <question> — Fusion: ask a diverse panel the SAME question in parallel, then a
+    # judge synthesizes one best answer. Opt-in (spends N+1 calls); operates on the question
+    # text directly (no chat-history context) so it's a clean "get the best answer" lever.
+    if _cmd == "/fuse" or _cmd.startswith("/fuse "):
+        question = text.strip()[len("/fuse"):].strip()
+        if not question:
+            msg = ("🔀 **Fusion.** Usage: `/fuse <question>` — I ask several models the same "
+                   "question in parallel and a judge synthesizes one best answer. Best for hard "
+                   "questions where independent takes help.")
+            db.add_message(session_id, "assistant", msg)
+            _emit({"type": "final", "text": msg, "cost": 0})
+            return msg
+        try:
+            answer = fuse_task(question, budget=budget, emit=_emit, approve=approve)
+        except Exception as e:
+            if type(e).__name__ == "BudgetExceeded":
+                raise
+            answer = f"⚠️ Fusion couldn't complete ({type(e).__name__}: {e})."
+        _pid = (db.get_session(session_id) or {}).get("project_id", "")
+        db.add_message(session_id, "assistant", answer, cost=round(budget.spent_usd, 6))
+        spend.record(budget.spent_usd, project_id=_pid)
+        _emit({"type": "final", "text": answer, "cost": round(budget.spent_usd, 6)})
+        return answer
 
     # User-authored /commands: the raw "/name ..." is stored above as the user message
     # (so the chat log shows what was typed); here it's expanded into the actual
