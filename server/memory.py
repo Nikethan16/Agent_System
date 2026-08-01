@@ -161,6 +161,21 @@ def remember(text: str, session_id: str = "", kind: str = "turn", scope: str = "
         pass
 
 
+_RRF_ON = os.environ.get("AGENT_MEMORY_RRF", "1").strip().lower() not in ("0", "false", "no")
+_RRF_K0 = int(os.environ.get("AGENT_MEMORY_RRF_K0", "60"))
+
+
+def _rrf(ranked_lists):
+    """Reciprocal Rank Fusion: merge several best-first ranked lists into one score map.
+    An item strong in EITHER list surfaces (better recall than one signal alone).
+    score(item) = sum over lists of 1/(k0 + rank). Standard k0=60."""
+    scores = {}
+    for lst in ranked_lists:
+        for rank, item in enumerate(lst):
+            scores[item] = scores.get(item, 0.0) + 1.0 / (_RRF_K0 + rank + 1)
+    return scores
+
+
 def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str = None,
            scope_hint: str = None, scopes: list = None) -> list:
     """Top-k relevant past notes (episodic). Uses embeddings if configured, else lexical.
@@ -236,7 +251,8 @@ def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str
                     if m.kind == "turn" and _in_scope(m)
                     and not (exclude_session and m.session_id == exclude_session)]
             if rows:
-                scored = []
+                # Embedding ranking (cosine, best-first) over the in-scope rows.
+                emb = []
                 for m in rows:
                     if not m.embedding:
                         continue
@@ -245,10 +261,23 @@ def recall(query: str, k: int = 3, min_score: float = 0.12, exclude_session: str
                     except Exception:
                         continue
                     if sc >= _SEMANTIC_THRESHOLD:
-                        scored.append((_boost(m.scope, sc), m.text))
-                if scored:
-                    scored.sort(key=lambda x: -x[0])
-                    gated = _gate([t for _, t in scored])
+                        emb.append((_boost(m.scope, sc), m.text))
+                emb.sort(key=lambda x: -x[0])
+                if _RRF_ON:
+                    # Fuse the embedding ranking with a LEXICAL ranking over the same rows via
+                    # Reciprocal Rank Fusion: a note strong in EITHER signal surfaces, which beats
+                    # cosine-only recall (an embedding can miss an exact keyword match, and vice
+                    # versa). Disable with AGENT_MEMORY_RRF=0 to restore cosine-only.
+                    lex = sorted(((_lex(q_tokens, set(_tokens(m.text))), m.text) for m in rows),
+                                 key=lambda x: -x[0])
+                    lex_ranked = [t for s, t in lex if s >= min_score]
+                    fused = _rrf([[t for _, t in emb], lex_ranked])
+                    if fused:
+                        gated = _gate(sorted(fused, key=lambda t: -fused[t]))
+                        if gated:
+                            return gated[:k]
+                elif emb:
+                    gated = _gate([t for _, t in emb])
                     if gated:
                         return gated[:k]
                 # fall through to lexical
