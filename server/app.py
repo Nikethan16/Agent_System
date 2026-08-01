@@ -89,6 +89,8 @@ def _resume_jobs():
     scheduler.start_scheduler()  # start firing due scheduled tasks
     from . import auth
     auth.warn_if_weak_login()    # nudge: the app is internet-facing — flag a weak login pw
+    from . import envcheck
+    envcheck.warn_env_hygiene()  # flag placeholder / quoted / CR-tainted credential env vars
     _start_janitor()             # reclaim orphaned/aged traces+checkpoints (self-maintaining)
     # Wire the LLM observer so Langfuse gets generation spans (model/cost/tokens/latency).
     # core stays offline — it only holds a callback ref; no Langfuse import in core.
@@ -134,6 +136,14 @@ async def _invalid_id_handler(_request: Request, exc: db.InvalidId):
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/api/system/env-hygiene", dependencies=_auth)
+def env_hygiene_status():
+    """Credential/config env-var hygiene issues (placeholder / quoted / CR / whitespace). Never
+    returns secret values — only the variable name + the kind of problem."""
+    from . import envcheck
+    return {"issues": envcheck.env_hygiene()}
 
 
 @app.get("/api/config", dependencies=_auth)
