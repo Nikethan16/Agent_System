@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import cache
 from . import repomap
+from . import compress
 from .boundary import wrap as _wrap_untrusted
 
 # Default sandbox root (env-configurable). Per-session code can override the root
@@ -951,12 +952,10 @@ _BASH_OUT_CAP = int(os.environ.get("AGENT_BASH_OUTPUT_CAP", "4000"))
 
 
 def _clip(s: str) -> str:
-    s = s or ""
-    if len(s) <= _BASH_OUT_CAP:
-        return s
-    head = _BASH_OUT_CAP // 2
-    tail = _BASH_OUT_CAP - head
-    return (f"{s[:head]}\n... [{len(s) - _BASH_OUT_CAP} chars truncated] ...\n{s[-tail:]}")
+    # Smart truncation: keep the head, the tail, AND any error/warning lines from the dropped
+    # middle (so a stack trace buried in verbose logs survives). Falls back to a plain head+tail
+    # clip for few-line output. See core/compress.filter_tool_output.
+    return compress.filter_tool_output(s or "", _BASH_OUT_CAP)
 
 
 _NET_GIT = re.compile(r"\bgit\s+(?:[\w./=:-]+\s+)*?(clone|push|pull|fetch)\b")

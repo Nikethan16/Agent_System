@@ -19,6 +19,7 @@ from .llm import complete, complete_chain, stream_complete_tools, Budget, Budget
 from .registry import registry
 from . import toolbelt
 from . import policy
+from . import compress
 
 # --- within-run context compaction (phase 2 — root fix for orchestration #2) -
 # A long task's message history grows until it hits the iteration/context cap and
@@ -93,7 +94,10 @@ def _compact_messages(messages, budget=None, emit=None, label="agent"):
             names = ", ".join(tc.get("function", {}).get("name", "")
                               for tc in m["tool_calls"] if isinstance(tc, dict))
             content = f"{content} [called: {names}]"
-        lines.append(f"{m.get('role', '?')}: {str(content)[:1000]}")
+        # Corruption-safe prose compression before the per-message truncation, so more real
+        # content survives into the summariser (code/JSON/paths are left byte-exact; see
+        # core/compress). No-op on code-like content or when AGENT_COMPRESS_PROSE=0.
+        lines.append(f"{m.get('role', '?')}: {compress.compress_prose(str(content))[:1000]}")
     convo = "\n".join(lines)[:12000]
     try:
         # Use the fallback CHAIN, not a single model: compaction is needed most when a
