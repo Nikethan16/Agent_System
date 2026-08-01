@@ -55,6 +55,9 @@ skills/              Agent Skills (Claude-format SKILL.md); drop in from anthrop
 core/router.py       cheap classifier: task -> {tier, task_type, ...}
 core/playbooks.py    loads config/playbooks.yaml; seeds the master loop with a task type's path
 core/orchestrator.py the SUPERVISOR: Claude-Code-style master loop (todos + delegate), playbook-seeded
+core/fusion.py       Fusion: ask a PANEL the same question in parallel + a judge synthesizes one answer (/fuse)
+core/compress.py     corruption-safe context compression: tool-output filter + mask->verify prose harness
+core/guardrails.py   content-plane safety: prompt-injection detector + secret/PII masking (wired at boundary.wrap)
 tools/               OPTIONAL network capabilities (web/image/MCP), registered into
                      the toolbelt on import; kept OUTSIDE core so core stays offline
 server/app.py        FastAPI: mounts API routers (auth-gated) + serves the built React app
@@ -64,6 +67,8 @@ server/chat.py       ConversationManager: assembles 4-type memory context + runs
 server/approvals.py  security Layers 3-4: security-manager agent + human approval bridge
 server/memory.py     memory: working summary + episodic recall + semantic facts + procedural rules
 server/spend.py      global daily spend cap (cumulative, above the per-run Budget)
+server/catalog_sync.py deterministic models.dev sync -> config/models.synced.yaml (facts fill gaps; base wins)
+server/mcp_server.py stdio MCP SERVER exposing Nikki's tools to external clients (python -m server.mcp_server)
 server/benchmark.py  Model Lab: score/compare a model on a task battery (raw + pipeline) via subprocess
 server/api/*.py      REST: sessions/messages/workspace/models/agents/memory/benchmark + ws.py (live run)
 web/                 React + TS + Vite frontend (chat, activity, artifacts, memory panel, Model Lab)

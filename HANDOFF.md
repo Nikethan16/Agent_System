@@ -4,7 +4,51 @@ _The single entry point for a new chat. **Current state + next tasks live here**
 rules are in `CLAUDE.md`; full backlog in `docs/BACKLOG.md`; change history in `git log`.
 For "what it can do" see `docs/CAPABILITIES.md`; "how it works" `docs/PROJECT_OVERVIEW.md`._
 
-## ⚡ LATEST (2026-07-29) — "LOOP ENGINEERING" + reliability fixes + first real feature built on a live project
+## ⚡ LATEST (2026-08-01) — OmniRoute-inspired reliability + capability round (9 commits)
+
+**9 commits to `main` (local only — NOT pushed). 546 pytest green (was 493).** After a deep code
+teardown of **OmniRoute** (a peer self-hosted AI gateway), pulled the genuinely useful, non-risky
+pieces into Nikki. Notably **verify-first each one**: three "borrows" already existed (circuit
+breaker, catalog layering, tool-output cap), so only the missing parts were built. A model-picker
+validation pass the same session also caught a real safety bug.
+
+| Commit | What |
+|---|---|
+| `5570a94` | **models: privacy fix + Groq/Cerebras.** models.yaml wrongly called the DIRECT DeepSeek API "privacy-safe" — it TRAINS on inputs (PRC servers). Corrected: route private code via DeepInfra (no-train) / z.ai-GLM / local Ollama. Added validated **Groq** (free, no-card, no-train, reliable tool-calling — now the top free option in 7 chains) + **Cerebras** (demoted: 8K free-ctx cap + Aug-17 card requirement). Inert until `GROQ_API_KEY`/`CEREBRAS_API_KEY`. |
+| `75afdd4` | **breaker: adaptive backoff** (`core/llm.py`). A persistently-dead model was re-probed every 60s; now backs off 60→120→240s (cap 480s), resets on first success (`AGENT_BREAKER_BACKOFF_MAX`). The breaker already existed — this completes it. |
+| `3039f6a` | **catalog: deterministic models.dev sync** (`server/catalog_sync.py` + `scripts/sync_catalog.py`). Pulls context/capabilities/prices from models.dev into `config/models.synced.yaml` (git-ignored); registry merges as GAP-FILL (your models.yaml always wins). Retires the LLM scout's guesswork. Live: 24/29 matched. |
+| `434272b` | **fusion: `/fuse`** (`core/fusion.py` + `orchestrator.fuse_task`). Ask a diverse panel the SAME question in parallel; a judge synthesizes one answer (anonymized sources, quorum-grace). Distinct from decompose+critic. Opt-in via `/fuse <q>`. |
+| `066f2af` | **compress: corruption-safe context compression** (`core/compress.py`). Smart tool-output filter (keeps error lines from the truncated middle — now backs run_bash's `_clip`) + a mask→rewrite→VERIFY prose harness (code/URLs/paths can never be corrupted; wired into `_compact_messages`, `AGENT_COMPRESS_PROSE`). |
+| `3446035` | **guardrails: content-plane** (`core/guardrails.py`). Prompt-injection detector + secret masker + opt-in PII masker, wired into `core/boundary.wrap` so untrusted web/file/MCP content is scanned before an agent acts. Fail-open; `AGENT_GUARDRAILS=0`, `AGENT_REDACT_PII=1`. |
+| `25beb42` | **chat(context): cache-safe order.** Per-query blocks (recall/RAG/attachments) moved to the TAIL so the stable prefix stays byte-identical → DeepSeek automatic prefix cache actually hits (`_order_blocks`, `AGENT_CACHE_SAFE_CONTEXT`). |
+| `63efad5` | **memory: RRF fusion.** recall() now fuses embedding + lexical rankings (Reciprocal Rank Fusion, k0=60) when an embed model is set, so a note strong in EITHER surfaces (`AGENT_MEMORY_RRF`). |
+| `10d29b6` | **mcp(server): expose Nikki** (`server/mcp_server.py`). stdio JSON-RPC MCP server so Claude Code/Cursor can call Nikki as tools (memory_search/list_agents/status/fuse + opt-in run_task). `python -m server.mcp_server`; read-only + fuse always on, run_task gated (`AGENT_MCP_ALLOW_RUN`) + deny-risky. |
+
+### Verify-first — already covered, NO code (the payoff)
+Circuit breaker + catalog layering + tool-output cap already existed. Subscription→cheap→free = the
+cost-first selector already sorts free-first. Free-quota tracker = the breaker covers it reactively.
+Quorum-grace = built inside Fusion (doesn't fit decomposed subtasks). Reading before building saved
+four duplicate implementations.
+
+### Deliberately deferred / skipped (honest scope)
+- **Don't-touch (safety):** OAuth "subscription login", MITM/traffic interception, TLS-fingerprint
+  stealth, multi-tenant fair-share, IP-proxy, A2A — ToS-risky or wrong-fit for a personal tool.
+- **Deps deferred:** LLMLingua-2 (heavy ML engine), local zero-key embeddings (model download),
+  HTTP/Tailscale MCP transport behind `AGENT_AUTH_TOKEN` (stdio works locally now).
+
+### Reference artifacts built this session
+Free/cost-optimal LLM providers briefing · OmniRoute teardown (what to pull) · **validated interactive
+model picker** (by use case, reliability-first, with a "what got cut" list): the picker is
+https://claude.ai/code/artifact/b8a10f20-a265-4e0e-bb54-280383c5399e .
+
+### State + next
+- Nothing pushed (66 ahead of origin, VM parked). News/feeds WIP still uncommitted (untouched).
+- **Owner action to activate:** add `GROQ_API_KEY` (free) + `DEEPINFRA_API_KEY` (privacy-safe paid fleet).
+- **Try it:** `/fuse <hard question>` · `python -m scripts.sync_catalog` · point Claude Code MCP at `python -m server.mcp_server`.
+- **Next:** use it day-to-day (highest signal) → then optional deps (LLMLingua-2, zero-key embeddings,
+  HTTP MCP transport) and the still-open earlier items (editable markdown-KB memory, TTS, deep-research).
+
+## EARLIER (2026-07-29) — "LOOP ENGINEERING" + reliability fixes + first real feature built on a live project
 
 **7 commits to `main` (local only — NOT pushed). 447 pytest + web build clean.** Focus: make a
 BATCH of features trustworthy (verify each before the next), fix two reliability rough edges the

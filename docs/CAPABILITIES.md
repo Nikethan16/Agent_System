@@ -1,6 +1,6 @@
 # AGENT // CORE — What This Application Can Do
 
-_Last updated: 2026-06-15. A plain-language catalogue of everything the app is capable of
+_Last updated: 2026-08-01. A plain-language catalogue of everything the app is capable of
 today, what's working right now vs. what needs a key, and its current limits. If you're
 picking this project up fresh (or it's a new chat with no memory), read this for "what it
 does", then `HANDOFF.md` for "current state + what's next", then `docs/PROJECT_OVERVIEW.md`
@@ -30,6 +30,19 @@ the whole thing by changing one line.
 ---
 
 ## What it can do (capabilities)
+
+> **New (2026-08-01):** **Fusion** — type `/fuse <question>` and Nikki asks several models the same
+> question in parallel, then a judge synthesizes one best answer (great for hard questions).
+> **Content guardrails** now redact secrets and flag prompt-injection in web/file/MCP content before
+> an agent acts on it. **Smarter output handling** keeps the actual error lines when trimming long
+> command output, and safely shortens old prose without ever touching code/URLs/paths. **Automatic
+> model-catalog sync** (`python -m scripts.sync_catalog`) refreshes model context windows,
+> capabilities, and prices from models.dev — your hand-tuned values always win. **Sharper memory**
+> (fuses keyword + meaning search) and **cheaper repeat runs** (better prompt-cache hits). Nikki can
+> now also **be a tool for other tools**: `python -m server.mcp_server` exposes its memory, agents,
+> and Fusion over MCP so Claude Code / Cursor can call it. Free **Groq** and **Cerebras** models were
+> added, and a privacy note was corrected — for proprietary code, prefer DeepInfra-hosted or local
+> models over the direct DeepSeek API (which trains on inputs).
 
 ### 1. Have a conversation
 Chat naturally; it answers questions, explains things, and writes prose. Trivial messages
